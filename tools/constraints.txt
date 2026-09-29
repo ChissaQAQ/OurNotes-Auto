@@ -1,0 +1,13 @@
+# 发布包的依赖版本（tools/install.py 发布模式与 CI 使用）：和界面程序的版本一起验证过再改
+MaaFw==5.14.0
+numpy==2.5.3
+opencv-python-headless==5.0.0.93
+PyYAML==6.0.3
+RapidFuzz==3.14.6
+requests==2.34.2
+urllib3==2.8.0
+idna==3.20
+certifi==2026.7.22
+charset-normalizer==3.5.1
+strenum==0.4.15
+maaagentbinary==1.0.1

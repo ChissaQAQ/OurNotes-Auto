@@ -1,0 +1,309 @@
+{
+    "task": [
+        {
+            "name": "重复刷歌",
+            "entry": "OurNotes_Repeat",
+            "group": [
+                "play"
+            ],
+            "description": "在自由演出里连续演奏。LB 不够时游戏会消耗剩下的全部（没有就不消耗）；弹出「恢复LIVE BOOST」时只点取消，改为消耗 0 继续。",
+            "option": [
+                "SongMode",
+                "Difficulty",
+                "MaxPlays",
+                "LbCost"
+            ]
+        },
+        {
+            "name": "清体力",
+            "entry": "OurNotes_ClearLB",
+            "group": [
+                "play"
+            ],
+            "description": "在自由演出里连续演奏，直到 LIVE BOOST 用完（每局开始前看右上角的持有数，为 0 就结束）。不会使用恢复道具或星钻。",
+            "option": [
+                "SongMode",
+                "Difficulty",
+                "ClearLbCost",
+                "MaxPlays"
+            ],
+            "default_check": true
+        },
+        {
+            "name": "AP补完",
+            "entry": "OurNotes_AP",
+            "group": [
+                "play"
+            ],
+            "description": "把所选难度里还没 ALL PERFECT 的歌打到 AP：选曲页切到「全部」分类，按难度筛选「未ALL PERFECT」后随机抽歌。一首歌打够次数还没 AP 就跳过；未解锁的歌会重抽。正常结束后把筛选和分类改回原样。",
+            "option": [
+                "ApExpert",
+                "ApHard",
+                "ApNormal",
+                "ApEasy",
+                "ApOrder",
+                "ApMaxAttempts",
+                "LbCost",
+                "MaxPlays"
+            ]
+        }
+    ],
+    "option": {
+        "LbCost": {
+            "type": "select",
+            "label": "每局消耗 LB",
+            "description": "开始第一局前在「消耗LB」设置里选好；持有不足时游戏会消耗剩余的全部 LB",
+            "cases": [
+                {
+                    "name": "keep",
+                    "label": "不修改游戏里的设置",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "lb_cost": "keep"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "0",
+                    "label": "0（不消耗）",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "lb_cost": 0
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "1",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "lb_cost": 1
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "2",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "lb_cost": 2
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "3",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "lb_cost": 3
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "keep"
+        },
+        "ClearLbCost": {
+            "type": "select",
+            "label": "每局消耗 LB",
+            "description": "LB 越多单局奖励越多；最后一局持有不足时游戏会消耗剩余的全部 LB",
+            "cases": [
+                {
+                    "name": "3",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "clear_lb_cost": 3
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "2",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "clear_lb_cost": 2
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "1",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "clear_lb_cost": 1
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "3"
+        },
+        "ApExpert": {
+            "type": "switch",
+            "label": "补 EXPERT",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_expert": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_expert": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "ApHard": {
+            "type": "switch",
+            "label": "补 HARD",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_hard": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_hard": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "ApNormal": {
+            "type": "switch",
+            "label": "补 NORMAL",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_normal": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_normal": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "ApEasy": {
+            "type": "switch",
+            "label": "补 EASY",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_easy": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_easy": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "ApOrder": {
+            "type": "select",
+            "label": "难度顺序",
+            "cases": [
+                {
+                    "name": "hard_first",
+                    "label": "从高难度开始",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_order": "hard_first"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "easy_first",
+                    "label": "从低难度开始",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ap_order": "easy_first"
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "hard_first"
+        },
+        "ApMaxAttempts": {
+            "type": "input",
+            "label": "每首最多尝试",
+            "inputs": [
+                {
+                    "name": "count",
+                    "label": "同一首歌最多打几次（没 AP 就跳过）",
+                    "default": "3",
+                    "pipeline_type": "int",
+                    "verify": "^[1-9]\\d?$",
+                    "pattern_msg": "请输入 1~99"
+                }
+            ],
+            "pipeline_override": {
+                "OurNotesParam": {
+                    "attach": {
+                        "ap_max_attempts": "{count}"
+                    }
+                }
+            }
+        }
+    }
+}

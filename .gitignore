@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.claude/
+
+# 参考资料与调研产物（体积大、非本项目代码）
+_reference/
+
+# 运行时数据
+cache/
+data/
+debug/
+config.yaml
+
+# MaaFramework 运行时产物
+resource/model/ocr/
+maa_option.json
+
+# tools/install.py 组装的界面运行目录
+install/

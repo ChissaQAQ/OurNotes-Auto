@@ -1,0 +1,96 @@
+{
+    "OurNotesParam": {
+        "attach": {
+            "song_mode": "current",
+            "song_list": "",
+            "difficulty": "expert",
+            "max_plays": 0,
+            "lb_cost": "keep",
+            "clear_lb_cost": 3,
+            "touch": "minitouch",
+            "watch_combo": false,
+            "human_great": 0,
+            "human_timing": 0,
+            "human_position": false,
+            "ap_expert": true,
+            "ap_hard": true,
+            "ap_normal": true,
+            "ap_easy": true,
+            "ap_order": "hard_first",
+            "ap_max_attempts": 3,
+            "daily_studio": true,
+            "daily_story": false,
+            "daily_missions": true,
+            "daily_pass": true,
+            "daily_limited": true,
+            "daily_beginner": true,
+            "daily_gifts": true
+        }
+    },
+    "OurNotes_Start": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "start"
+                }
+            }
+        }
+    },
+    "OurNotes_Daily": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "daily"
+                }
+            }
+        }
+    },
+    "OurNotes_Repeat": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "repeat"
+                }
+            }
+        }
+    },
+    "OurNotes_ClearLB": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "clear_lb"
+                }
+            }
+        }
+    },
+    "OurNotes_AP": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "ap"
+                }
+            }
+        }
+    },
+    "OurNotes_Records": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "records"
+                }
+            }
+        }
+    }
+}

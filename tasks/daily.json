@@ -1,0 +1,220 @@
+{
+    "task": [
+        {
+            "name": "领取日常",
+            "entry": "OurNotes_Daily",
+            "group": [
+                "daily"
+            ],
+            "description": "依次打开选中的页面，「一键领取」亮着才点；领取后弹出的「获得奖励」只点 OK，认不出的确认框不点、报错停下。不会招募、购买、使用星钻，不强化成员。游戏没在运行时先启动；结束时停在主界面。打完歌每日任务才满，放在演奏任务后面能一起领到。",
+            "option": [
+                "DailyStudio",
+                "DailyStory",
+                "DailyMissions",
+                "DailyPass",
+                "DailyLimited",
+                "DailyBeginner",
+                "DailyGifts"
+            ],
+            "default_check": true
+        }
+    ],
+    "option": {
+        "DailyStudio": {
+            "type": "switch",
+            "label": "录音室练习（收获）",
+            "description": "领取成员练习的奖励。练习时间超过 12 小时后效率降低，一天领两次比较划算",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_studio": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_studio": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "DailyStory": {
+            "type": "switch",
+            "label": "看故事（跳过）",
+            "description": "把没看过的乐队故事、视角故事、羁绊故事逐话跳过：看特定的话会解锁乐曲，看完还能领星钻等奖励。每话第一次看要下载数据（选无语音，乐队故事约 30MB），没看过的多时比较慢，默认不开。锁着的（没达成解锁条件、羁绊等级不够）不看",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_story": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_story": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "No"
+        },
+        "DailyMissions": {
+            "type": "switch",
+            "label": "任务",
+            "description": "任务的每日、常规、乐曲解锁、主页解锁四个分页",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_missions": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_missions": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "DailyPass": {
+            "type": "switch",
+            "label": "通行证",
+            "description": "先领通行证任务（每日、常规）的 pt，再领任务通行证的奖励。只领免费档，不购买、不点高级档",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_pass": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_pass": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "DailyLimited": {
+            "type": "switch",
+            "label": "限定任务",
+            "description": "活动期间主界面左侧的限定任务；没有这个入口时跳过",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_limited": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_limited": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "DailyBeginner": {
+            "type": "switch",
+            "label": "新手任务",
+            "description": "主界面左侧的新手任务（按天分页）；没有这个入口时跳过",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_beginner": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_beginner": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "DailyGifts": {
+            "type": "switch",
+            "label": "礼物盒",
+            "description": "最后领取礼物盒（任务奖励超过持有上限时会被送到这里）",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_gifts": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_gifts": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        }
+    }
+}

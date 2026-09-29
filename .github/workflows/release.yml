@@ -1,0 +1,76 @@
+name: Release
+
+# 打 v* 标签：测试 → 组装 MFAAvalonia / MXU 两个发布包 → 建立草稿 Release（人工检查后再发布）
+# 手动运行：只组装并上传构建产物，不建立 Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  # 改版本时同步 THIRD_PARTY_NOTICES.md
+  MFAA_VERSION: v2.16.2
+  MXU_VERSION: v2.6.1
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: 安装依赖
+        run: python -m pip install -c tools/constraints.txt -e .[dev]
+
+      - name: 下载 OCR 模型
+        run: python tools/fetch_ocr.py
+
+      - name: 测试
+        run: python -m pytest -q
+
+      - name: 下载界面程序与嵌入式 Python
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p downloads
+          gh release download "$MFAA_VERSION" -R SweetSmellFox/MFAAvalonia -p "MFAAvalonia-$MFAA_VERSION-win-x64.zip" -D downloads
+          gh release download "$MXU_VERSION" -R MistEO/MXU -p "MXU-win-x86_64-$MXU_VERSION.zip" -D downloads
+          # MFAAvalonia（GPL-3.0）的压缩包里没有许可证，单独下载放进发布包；MXU 自带
+          curl -fsSL "https://github.com/SweetSmellFox/MFAAvalonia/raw/$MFAA_VERSION/LICENSE" -o downloads/LICENSE-MFAA
+          PYV=$(python -c "import platform; print(platform.python_version())")
+          curl -fsSL "https://www.python.org/ftp/python/$PYV/python-$PYV-embed-amd64.zip" -o downloads/python-embed.zip
+
+      - name: 组装并打包
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then VERSION="$GITHUB_REF_NAME"; else VERSION="dev-${GITHUB_SHA::7}"; fi
+          for ui in MFAA MXU; do
+            case $ui in
+              MFAA) zip=downloads/MFAAvalonia-$MFAA_VERSION-win-x64.zip ;;
+              MXU) zip=downloads/MXU-win-x86_64-$MXU_VERSION.zip ;;
+            esac
+            python tools/install.py --ui "$zip" --python downloads/python-embed.zip --version "$VERSION" --out "dist/$ui"
+            if [[ ! -f "dist/$ui/LICENSE-$ui" ]]; then cp "downloads/LICENSE-$ui" "dist/$ui/"; fi
+            (cd "dist/$ui" && 7z a -tzip "../ournotes-auto-$VERSION-win-x64-$ui.zip" . > /dev/null)
+          done
+          ls -la dist/*.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ournotes-auto
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: 建立草稿 Release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --draft --generate-notes --title "$GITHUB_REF_NAME"

@@ -1,0 +1,37 @@
+# 复制为 config.yaml 后按需修改；未写出的项使用默认值（全部参数见 ournotes_auto/config.py，
+# 或执行 ournotes-auto init-config 生成完整配置）
+
+device:
+  backend: mumu
+  mumu_path: D:\MuMuPlayer   # MuMu 安装目录
+  instance: 0                # MuMu 多开器里的实例编号
+  touch: minitouch           # 触控：minitouch（推荐，启动失败自动改用 mumu）/ mumu（MuMu IPC）
+
+game:
+  difficulty: expert         # easy / normal / hard / expert
+  note_speed: 5.0            # 游戏内「节奏图示速度」，须与 play.sync.tau_s 对应
+  # 每局消耗的 LIVE BOOST：0~3，null 为不改游戏里的设置。第一局前自动在「消耗LB」弹窗里选好；
+  # LB 不够时游戏会消耗剩余全部；用完时弹出「恢复LIVE BOOST」只点取消，之后 30 分钟内改为 0
+  # （loop.until_lb_empty 为 true 时则就此结束）
+  lb_cost: null
+
+play:
+  # 全局时间偏移（毫秒），正值整体更晚按下。每局结算后会按 FAST/SLOW 自动修正，
+  # 学到的偏移另存于 data/state.json（在此基础上叠加）
+  offset_ms: -16
+  sync:
+    tau_s: 0.835             # 流速 5.00 实测值；改了流速用 calibrate motion 重新测量
+
+autotune:
+  enabled: true
+  step_ms: 1.0               # 结果全 FAST 或全 SLOW 时的单次修正量
+
+loop:
+  song_mode: current         # current：一直打当前曲目；random：每局后随机选曲；ap：全曲 AP 补完；
+                             # ap_first：当前难度优先打没 AP 的歌，没有了再随机；list：按歌单依次打
+  song_list: ""              # 歌单：曲目 ID 或曲名，逗号分隔，可加 @难度，如 "100010, 碧天伴走@hard"
+  max_plays: 0               # 0 为不限
+  until_lb_empty: false      # true：打到 LB 用完为止（清体力，需要 game.lb_cost 为 1~3）
+  max_failures: 5            # 连续失败这么多次后停止
+  ap_difficulties: expert,hard,normal,easy  # AP 补完依次处理的难度
+  ap_max_attempts: 3         # AP 补完 / ap_first 时同一首歌最多打几次

@@ -1,0 +1,242 @@
+"""用合成画面验证首音符跟踪同步的外推精度。"""
+
+import numpy as np
+import pytest
+
+from ournotes_auto.charts.model import Span
+from ournotes_auto.config import SyncParams
+from ournotes_auto.geometry import Geometry, GeometryParams
+from ournotes_auto.player.sync import NoteTracker, SyncTimeout
+
+W, H = 1280, 720
+
+
+def render(geo: Geometry, span: Span, y_lead: float, height_px: float, rng) -> np.ndarray:
+    frame = np.full((H, W, 3), 40, np.uint8)
+    frame += rng.integers(0, 4, frame.shape, dtype=np.uint8)
+    if y_lead <= 0:
+        return frame
+    y0 = max(int(y_lead - height_px), 0)
+    for y in range(y0, min(int(y_lead), H)):
+        x0 = int(geo.x_at(span.left, y))
+        x1 = int(geo.x_at(span.right, y))
+        frame[y, x0:x1] = (250, 240, 255)
+    return frame
+
+
+def simulate(true_geo, tracker_geo, fps, tau_s, rng, jitter_s=0.002, params=None):
+    """按指数逼近模型渲染首音符下落，返回同步结果与真实到达时刻。"""
+    span = Span(8, 14)
+    first_ms = 5000.0
+    arrival = 12.3456
+
+    tr = NoteTracker(tracker_geo, params or SyncParams(), first_ms, [span])
+    t = arrival - 4.0 * tau_s + rng.uniform(0, 1 / fps)
+    while t < arrival + 1.0:
+        y = true_geo.note_y(arrival - t, tau_s)
+        frame = render(true_geo, span, y, 0.04 * (y - true_geo.motion_horizon_y), rng)
+        result = tr.feed(frame, t + rng.uniform(0, jitter_s))
+        if result is not None:
+            return result, arrival
+        t += 1 / fps
+    raise AssertionError("未得到同步结果")
+
+
+@pytest.mark.parametrize("fps,tau_s", [(30, 0.835), (60, 0.835), (60, 0.5), (60, 1.3), (120, 0.835)])
+def test_tracker_extrapolates_arrival(fps, tau_s):
+    """τ 与配置不同（流速改了）时也要准：样本足够多，先验不起主导作用。"""
+    errs = []
+    for seed in range(4):
+        rng = np.random.default_rng(seed)
+        geo = Geometry(W, H)
+        result, arrival = simulate(geo, geo, fps, tau_s, rng)
+        assert result.ok, result
+        assert result.lead_ms > 120  # 在音符落下前就给出结果
+        assert result.t0 == pytest.approx(result.arrival - 5.0)
+        assert result.tau_s == pytest.approx(tau_s, rel=0.02)
+        # 减去截图时刻抖动的均值 1ms
+        errs.append((result.arrival - arrival) * 1000 - 1.0)
+    # 前沿按整像素检测，有约 -1ms 的固定偏差（由 offset_ms 吸收）；随机误差要小
+    assert abs(np.mean(errs)) < 3, errs
+    assert np.std(errs) < 1.5, errs
+
+
+def test_horizon_error_gives_constant_bias():
+    """运动消失线的误差产生的偏差约 3ms / 0.001 屏高，且基本与流速无关，可以被 offset_ms 吸收。"""
+    guess = Geometry(W, H)
+    for true_h, lo, hi in ((-0.0536, -5, 0), (-0.058, -14, -6)):
+        true_geo = Geometry(W, H, GeometryParams(horizon_y=true_h))
+        means = []
+        for tau_s in (0.5, 1.2):
+            errs = []
+            for seed in range(2):
+                result, arrival = simulate(true_geo, guess, 60, tau_s, np.random.default_rng(seed))
+                assert result.ok, result
+                errs.append((result.arrival - arrival) * 1000 - 1.0)
+            means.append(np.mean(errs))
+        assert all(lo < m < hi for m in means), means
+        assert abs(means[0] - means[1]) < 4, means
+
+
+@pytest.mark.parametrize("true_h", [-0.12, -0.0526, -0.02])
+def test_full_track_measures_motion(true_h):
+    """calibrate motion 模式：跟踪完整轨迹，拟合消失线与 τ。"""
+    from ournotes_auto.calibrate import motion_params
+
+    true_geo = Geometry(W, H, GeometryParams(horizon_y=true_h))
+    params = motion_params(SyncParams())
+    for seed in range(2):
+        result, arrival = simulate(true_geo, Geometry(W, H), 60, 0.7, np.random.default_rng(seed), params=params)
+        assert result.ok, result
+        assert abs((result.arrival - arrival) * 1000 - 1.0) < 3.0, result
+        assert result.horizon_y / H == pytest.approx(true_h, abs=0.004)
+        assert result.tau_s == pytest.approx(0.7, rel=0.01)
+
+
+def test_fit_arrival_prior():
+    """样本很少时 τ 先验让外推保持合理；无先验时两参数拟合也能精确恢复。"""
+    from ournotes_auto.player.sync import fit_arrival
+
+    geo = Geometry(W, H)
+    dts = np.linspace(2.0, 1.5, 6)
+    ts = 10.0 - dts
+    ys = np.array([geo.note_y(d, 0.9) for d in dts])
+    free = fit_arrival(ts, ys, geo.judge_y, geo.motion_horizon_y)
+    assert free.arrival == pytest.approx(10.0, abs=1e-6) and free.tau == pytest.approx(0.9)
+    noisy = ys + np.array([0.5, -0.5, 0.5, -0.5, 0.5, -0.5])
+    loose = fit_arrival(ts, noisy, geo.judge_y, geo.motion_horizon_y)
+    tight = fit_arrival(ts, noisy, geo.judge_y, geo.motion_horizon_y, tau_prior=0.9, tau_rel_sigma=0.01)
+    assert abs(tight.arrival - 10.0) < abs(loose.arrival - 10.0)
+    assert tight.tau == pytest.approx(0.9, rel=0.02)
+
+
+def test_tracker_waits_for_static_scene():
+    rng = np.random.default_rng(2)
+    geo = Geometry(W, H)
+    tr = NoteTracker(geo, SyncParams(stable_frames=5), 1000.0, [Span(0, 6)])
+    for i in range(30):
+        frame = rng.integers(0, 255, (H, W, 3), dtype=np.uint8)
+        assert tr.feed(frame, i / 60) is None
+    assert not tr.armed
+
+
+def test_tracker_rejects_fast_jump():
+    """前沿跳得比音符可能的速度快得多（如介绍卡片淡出）时放弃这条轨迹，重新等待静止。"""
+    geo = Geometry(W, H)
+    tr = NoteTracker(geo, SyncParams(stable_frames=2), 1000.0, [Span(0, 6)])
+    rng = np.random.default_rng(3)
+    blank = render(geo, Span(0, 6), -1, 0, rng)
+    for i in range(5):
+        tr.feed(blank, i / 60)
+    assert tr.feed(render(geo, Span(0, 6), H * 0.05, 6, rng), 0.1) is None
+    assert tr.feed(render(geo, Span(0, 6), H * 0.3, 60, rng), 0.12) is None
+    assert not tr.armed and not tr.samples
+
+
+def test_tracker_rejects_implausible_track():
+    """每帧变化都不大、但整体运动规律不像音符的轨迹也要放弃。"""
+    geo = Geometry(W, H)
+    tr = NoteTracker(geo, SyncParams(stable_frames=2), 1000.0, [Span(8, 14)])
+    rng = np.random.default_rng(6)
+    for i in range(5):
+        tr.feed(render(geo, Span(8, 14), -1, 0, rng), i / 60)
+    rejected = False
+    for k in range(40):  # 屏幕上匀速下移，比音符在画面上部快得多
+        y = 12 + 6 * k
+        tr.feed(render(geo, Span(8, 14), y, 10, rng), 0.1 + k / 60)
+        if not tr.armed:
+            rejected = True
+            break
+    assert rejected
+
+
+def test_tracker_rearms_after_scene_change():
+    """介绍卡淡出等整体变化不能被当成音符。"""
+    rng = np.random.default_rng(4)
+    geo = Geometry(W, H)
+    tr = NoteTracker(geo, SyncParams(stable_frames=3), 1000.0, [Span(8, 14)])
+    for i in range(5):
+        tr.feed(render(geo, Span(8, 14), -1, 0, rng), i / 60)
+    assert tr.armed
+    flash = render(geo, Span(8, 14), -1, 0, rng)
+    flash[:] = 230
+    assert tr.feed(flash, 6 / 60) is None
+    assert not tr.armed and tr._first_seen is None
+    # 画面重新静止后再次就绪
+    for i in range(7, 12):
+        tr.feed(render(geo, Span(8, 14), -1, 0, rng), i / 60)
+    assert tr.armed
+
+
+def test_tracker_ignores_colored_glow():
+    """走在音符前面的彩色特效（如紫色光锥）不能当成音符：只跟偏白的像素。"""
+    geo = Geometry(W, H)
+    span = Span(8, 14)
+    tau_s, arrival = 0.835, 12.3456
+
+    def run(params):
+        rng = np.random.default_rng(8)
+        tr = NoteTracker(geo, params, 5000.0, [span])
+        t = arrival - 4.5 * tau_s
+        while t < arrival + 1.0:
+            y = geo.note_y(arrival - t, tau_s)
+            frame = render(geo, span, y, 0.04 * (y - geo.motion_horizon_y), rng)
+            if t < arrival - 0.6:  # 光锥比音符早 0.6s 到达判定线
+                yg = geo.note_y(arrival - 0.6 - t, tau_s)
+                y0 = max(int(yg - 0.1 * (yg - geo.motion_horizon_y)), 0)
+                for yy in range(y0, min(int(yg), H)):
+                    frame[yy, int(geo.x_at(span.left, yy)) : int(geo.x_at(span.right, yy))] = (200, 60, 230)
+            result = tr.feed(frame, t)
+            if result is not None:
+                return result
+            t += 1 / 60
+        raise AssertionError("未得到同步结果")
+
+    result = run(SyncParams())
+    assert result.ok, result
+    assert abs(result.arrival - arrival) * 1000 < 5
+    fooled = run(SyncParams(min_whiteness=0))
+    assert abs(fooled.arrival - arrival) > 0.3
+
+
+def test_tracker_rejects_late_start():
+    """推算的歌曲开始时刻离开始同步太远，说明错过了第一个音符，跟上的是后面的音符。"""
+    geo = Geometry(W, H)
+
+    def run(lead_s: float):
+        rng = np.random.default_rng(7)
+        span = Span(8, 14)
+        tr = NoteTracker(geo, SyncParams(max_start_delay_s=20.0), 1000.0, [span])
+        arrival = lead_s + 1.0 + 4 * 0.835
+        tr.feed(render(geo, span, -1, 0, rng), 0.0)  # 开始同步的时刻
+        t = arrival - 4 * 0.835
+        while t < arrival + 1.0:
+            y = geo.note_y(arrival - t, 0.835)
+            result = tr.feed(render(geo, span, y, 0.04 * (y - geo.motion_horizon_y), rng), t)
+            if result is not None:
+                return result
+            t += 1 / 60
+        raise AssertionError("未得到同步结果")
+
+    assert run(9.0).ok
+    late = run(25.0)
+    assert not late.ok
+    assert any("第一个音符" in n for n in late.notes), late.notes
+
+
+def test_dump_and_replay(tmp_path):
+    from ournotes_auto.player.sync import replay_dump
+
+    rng = np.random.default_rng(5)
+    geo = Geometry(W, H)
+    span = Span(8, 14)
+    tr = NoteTracker(geo, SyncParams(), 5000.0, [span], record_frames=400)
+    arrival = 12.0
+    t, result = arrival - 3.0, None
+    while result is None:
+        y = geo.note_y(arrival - t, 0.835)
+        result = tr.feed(render(geo, span, y, 0.04 * (y - geo.motion_horizon_y), rng), t)
+        t += 1 / 60
+    path = tr.dump(tmp_path / "sync.npz", result)
+    again = replay_dump(path, geo, SyncParams())
+    assert again is not None and again.arrival == pytest.approx(result.arrival, abs=1e-9)

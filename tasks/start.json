@@ -1,0 +1,13 @@
+{
+    "task": [
+        {
+            "name": "启动游戏",
+            "entry": "OurNotes_Start",
+            "group": [
+                "play"
+            ],
+            "description": "游戏没在运行时启动它，等到进入主界面：会点掉标题画面、领取登录奖励、关闭公告。放在其他任务前面。",
+            "default_check": true
+        }
+    ]
+}

@@ -1,0 +1,58 @@
+{
+    "interface_version": 2,
+    "name": "OurNotesAuto",
+    "label": "Our Notes 自动打歌",
+    "version": "v0.1.0",
+    "description": "《BanG Dream! Our Notes》国际服自动演奏：按谱面发送触控，自动导航自由演出、连续演奏。",
+    "welcome": "docs/ui/welcome.md",
+    "controller": [
+        {
+            "name": "MuMu",
+            "label": "MuMu 模拟器",
+            "description": "MuMu 模拟器 12，分辨率 1280×720",
+            "type": "Adb"
+        }
+    ],
+    "resource": [
+        {
+            "name": "国际服",
+            "path": [
+                "./resource"
+            ]
+        }
+    ],
+    "agent": {
+        "child_exec": "./.venv/Scripts/python.exe",
+        "child_args": [
+            "./agent/main.py"
+        ]
+    },
+    "group": [
+        {
+            "name": "play",
+            "label": "演奏"
+        },
+        {
+            "name": "daily",
+            "label": "日常"
+        },
+        {
+            "name": "tools",
+            "label": "工具"
+        }
+    ],
+    "import": [
+        "tasks/common.json",
+        "tasks/start.json",
+        "tasks/play.json",
+        "tasks/daily.json",
+        "tasks/tools.json"
+    ],
+    "global_option": [
+        "Touch",
+        "HumanGreat",
+        "HumanTiming",
+        "HumanPosition",
+        "WatchCombo"
+    ]
+}

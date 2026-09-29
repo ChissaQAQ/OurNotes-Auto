@@ -1,0 +1,195 @@
+{
+    "option": {
+        "SongMode": {
+            "type": "select",
+            "label": "选曲方式",
+            "cases": [
+                {
+                    "name": "current",
+                    "label": "当前曲目",
+                    "description": "一直打选曲页当前选中的曲目",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "current" } } }
+                },
+                {
+                    "name": "random",
+                    "label": "随机",
+                    "description": "每局用选曲页的随机按钮换一首",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "random" } } }
+                },
+                {
+                    "name": "ap_first",
+                    "label": "优先没 AP 的歌",
+                    "description": "在所选难度里筛选「未ALL PERFECT」随机抽歌（同一首最多打 3 次）；没有要补的歌了就改回不筛选、随机选曲。结束后把筛选和分类改回原样",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "ap_first" } } }
+                },
+                {
+                    "name": "list",
+                    "label": "歌单",
+                    "description": "按歌单依次打，打完一轮从头再来。每局在「全部」分类的列表里找到下一首（边滚边认封面，第一次找可能要二三十秒）；未解锁或找不到的歌跳过。结束后把分类改回原样",
+                    "option": ["SongList"],
+                    "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "list" } } }
+                }
+            ],
+            "default_case": "current"
+        },
+        "SongList": {
+            "type": "input",
+            "label": "歌单",
+            "inputs": [
+                {
+                    "name": "songs",
+                    "label": "曲目 ID 或曲名，逗号分隔；可加 @难度，如 100010, 碧天伴走@hard",
+                    "default": "",
+                    "pipeline_type": "string",
+                    "verify": "\\S",
+                    "pattern_msg": "请填写至少一首歌"
+                }
+            ],
+            "pipeline_override": { "OurNotesParam": { "attach": { "song_list": "{songs}" } } }
+        },
+        "Difficulty": {
+            "type": "select",
+            "label": "难度",
+            "cases": [
+                {
+                    "name": "expert",
+                    "label": "EXPERT",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "difficulty": "expert" } } }
+                },
+                {
+                    "name": "hard",
+                    "label": "HARD",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "difficulty": "hard" } } }
+                },
+                {
+                    "name": "normal",
+                    "label": "NORMAL",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "difficulty": "normal" } } }
+                },
+                {
+                    "name": "easy",
+                    "label": "EASY",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "difficulty": "easy" } } }
+                }
+            ],
+            "default_case": "expert"
+        },
+        "MaxPlays": {
+            "type": "input",
+            "label": "局数",
+            "inputs": [
+                {
+                    "name": "count",
+                    "label": "最多打几局（0 为不限）",
+                    "default": "0",
+                    "pipeline_type": "int",
+                    "verify": "^\\d+$",
+                    "pattern_msg": "请输入 0 或正整数"
+                }
+            ],
+            "pipeline_override": { "OurNotesParam": { "attach": { "max_plays": "{count}" } } }
+        },
+        "Touch": {
+            "type": "select",
+            "label": "触控方式",
+            "description": "minitouch 直接写模拟器的触摸屏设备，最稳定；启动失败时自动改用 MuMu 接口",
+            "cases": [
+                {
+                    "name": "minitouch",
+                    "label": "minitouch（推荐）",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "touch": "minitouch" } } }
+                },
+                {
+                    "name": "mumu",
+                    "label": "MuMu 接口",
+                    "description": "偶尔会丢失或延后同一时刻的一批触控",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "touch": "mumu" } } }
+                }
+            ],
+            "default_case": "minitouch"
+        },
+        "HumanGreat": {
+            "type": "select",
+            "label": "拟人化：随机 GREAT",
+            "description": "每局故意把一小部分音符打成 GREAT（只挑前后没有别的音符挨着的普通点击，提前或延后 64~69ms），成绩就不是 AP 了。AP补完和选曲方式「优先没 AP 的歌」不受影响",
+            "cases": [
+                {
+                    "name": "off",
+                    "label": "关闭",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 0 } } }
+                },
+                {
+                    "name": "1",
+                    "label": "约 1%",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 1 } } }
+                },
+                {
+                    "name": "3",
+                    "label": "约 3%",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 3 } } }
+                },
+                {
+                    "name": "5",
+                    "label": "约 5%",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 5 } } }
+                }
+            ],
+            "default_case": "off"
+        },
+        "HumanTiming": {
+            "type": "select",
+            "label": "拟人化：时机偏移",
+            "description": "按下的时机随时间慢慢地随机漂移，仍在 PERFECT 范围内，结算的 FAST/SLOW 更分散",
+            "cases": [
+                {
+                    "name": "off",
+                    "label": "关闭",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_timing": 0 } } }
+                },
+                {
+                    "name": "small",
+                    "label": "小（±8ms）",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_timing": 8 } } }
+                },
+                {
+                    "name": "large",
+                    "label": "大（±16ms）",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_timing": 16 } } }
+                }
+            ],
+            "default_case": "off"
+        },
+        "HumanPosition": {
+            "type": "switch",
+            "label": "拟人化：触控位置随机",
+            "description": "在音符范围里随机选按下的位置（两侧各留一点边），不总按正中间",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_position": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_position": false } } }
+                }
+            ],
+            "default_case": "No"
+        },
+        "WatchCombo": {
+            "type": "switch",
+            "label": "连击监视（调试）",
+            "description": "演奏时监视连击数，结束后在日志里列出断连处附近的音符",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "watch_combo": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "watch_combo": false } } }
+                }
+            ],
+            "default_case": "No"
+        }
+    }
+}

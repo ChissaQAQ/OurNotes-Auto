@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ournotes-auto"
+version = "0.1.0"
+description = "BanG Dream! Our Notes 自动演奏工具（MuMu 模拟器 + MaaFramework）"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = [
+    "MaaFw>=5.14",
+    "numpy>=2.0",
+    "opencv-python-headless>=4.10",
+    "PyYAML>=6.0",
+    "requests>=2.31",
+    "rapidfuzz>=3.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+ournotes-auto = "ournotes_auto.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ournotes_auto*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
