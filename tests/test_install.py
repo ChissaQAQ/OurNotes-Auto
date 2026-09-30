@@ -24,3 +24,13 @@ def test_setting_only_for_mxu(tmp_path):
     # MFAA 2.16.2 读到 setting 会连接卡住
     assert "setting" not in _written(tmp_path, "mfaa")
     assert "setting" not in json.loads((ROOT / "interface.json").read_text(encoding="utf-8"))
+
+
+def test_icon(tmp_path):
+    # MXU 读 interface.json 的 icon（相对项目根目录，组装后 docs 在同一位置）；MFAA 读 Assets/logo.ico
+    iface = json.loads((ROOT / "interface.json").read_text(encoding="utf-8"))
+    assert (ROOT / iface["icon"]).is_file()
+    install.install_icon(tmp_path / "mfaa", "mfaa")
+    assert (tmp_path / "mfaa" / "Assets" / "logo.ico").read_bytes() == install.ICON.read_bytes()
+    install.install_icon(tmp_path / "mxu", "mxu")
+    assert not (tmp_path / "mxu").exists()

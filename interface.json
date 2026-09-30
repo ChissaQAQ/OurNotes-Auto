@@ -5,6 +5,7 @@
     "version": "v0.1.0",
     "description": "《BanG Dream! Our Notes》国际服自动演奏：按谱面发送触控，自动导航自由演出、连续演奏。",
     "welcome": "docs/ui/welcome.md",
+    "icon": "docs/ui/icon.png",
     "controller": [
         {
             "name": "MuMu",

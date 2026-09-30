@@ -39,6 +39,7 @@ UIS = {
     "mxu": ("mxu.exe", "maafw", {"mxu.pdb", "README.md"}),
 }
 RENAME = {"LICENSE": "LICENSE-{kind}"}  # 界面自带的许可证改名保留，不和本项目的 LICENSE 冲突
+ICON = ROOT / "docs" / "ui" / "logo.ico"  # 由 tools/make_icon.py 生成
 
 
 def _remove(path: Path) -> None:
@@ -124,6 +125,12 @@ def place(src: Path, dst: Path, link: bool) -> None:
         shutil.copy2(src, dst)
 
 
+def install_icon(out: Path, kind: str) -> None:
+    """MFAA 从 Assets/logo.ico 读窗口和托盘图标；MXU 用 interface.json 的 icon，不用放文件。"""
+    if kind == "mfaa":
+        place(ICON, out / "Assets" / "logo.ico", link=False)
+
+
 def install_python(embed_zip: Path, out: Path) -> None:
     """解压嵌入式 Python，打开 site-packages 与项目根目录的导入，再装依赖。"""
     py = out / PY_DIR
@@ -187,6 +194,7 @@ def main() -> int:
     maafw = install_maafw(out, kind)
     for name in ("resource", "tasks", "docs"):
         place(ROOT / name, out / name, link=args.dev)
+    install_icon(out, kind)
     if args.dev:
         write_interface(out, kind, args.version, str(ROOT / ".venv" / "Scripts" / "python.exe"), [str(ROOT / "agent" / "main.py")])
     else:

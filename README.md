@@ -1,4 +1,15 @@
+<div align="center">
+
+<img src="docs/ui/icon.png" alt="图标" width="128">
+
 # ournotes-auto
+
+[![最新版本](https://img.shields.io/github/v/release/ChissaQAQ/ournotes-auto)](https://github.com/ChissaQAQ/ournotes-auto/releases/latest)
+[![下载量](https://img.shields.io/github/downloads/ChissaQAQ/ournotes-auto/total)](https://github.com/ChissaQAQ/ournotes-auto/releases)
+[![Star](https://img.shields.io/github/stars/ChissaQAQ/ournotes-auto)](https://github.com/ChissaQAQ/ournotes-auto/stargazers)
+[![许可证](https://img.shields.io/github/license/ChissaQAQ/ournotes-auto)](LICENSE)
+
+</div>
 
 《BanG Dream! Our Notes》（国际服，包名 `com.bilibili.sirius.official`）自动演奏工具。MuMu 模拟器 + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework)。
 
@@ -199,6 +210,8 @@ Copyright (C) 2026 ChissaQAQ
 本项目按 [AGPL-3.0](LICENSE)（仅第 3 版）开源，另按 AGPL-3.0 第 7 条附加两项条款：传播时保留作者署名和「免费开源」声明，修改版要标明已修改。详见[用户协议](TERMS_OF_SERVICE.md)第 2 条。使用本软件还需遵守用户协议里的社区规范与免责声明。
 
 发布包里的第三方组件按各自的许可证分发，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+软件图标（`docs/ui/icon.png`、`docs/ui/logo.ico`）取自《BanG Dream! It's MyGO!!!!!》动画官网，版权归 ©BanG Dream! Project，**不在** AGPL-3.0 授权范围内，见用户协议 2.5。
 
 ## 致谢
 
