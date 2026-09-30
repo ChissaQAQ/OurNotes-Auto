@@ -62,10 +62,12 @@ class JacketMatcher:
     @classmethod
     def load(cls, client, catalog) -> JacketMatcher:
         """下载（有缓存）目录中每首曲目的封面缩略图；个别下载失败只少认这几首。"""
+        songs = [s for s in catalog.songs.values() if s.jacket_url]
+        missing = sum(not client.jacket_cached(s.music_id) for s in songs)
+        if missing:
+            logger.info("下载 %d 张曲目封面（用来认歌，之后有缓存）", missing)
         images = {}
-        for song in catalog.songs.values():
-            if not song.jacket_url:
-                continue
+        for song in songs:
             try:
                 images[song.music_id] = decode(client.jacket(song.music_id, song.jacket_url))
             except (ConnectionError, LookupError, ValueError) as e:

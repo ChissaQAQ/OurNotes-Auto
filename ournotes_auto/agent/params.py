@@ -16,14 +16,15 @@ TASKS = {
     "daily": "领取日常",
     "repeat": "重复刷歌",
     "clear_lb": "清体力",
+    "idle": "挂机",
     "ap": "AP补完",
     "records": "记录汇总",
 }
 LOCAL_TASKS = {"records"}  # 不需要连接模拟器
 # 领取日常的各项（与 ``daily --jobs`` 一致），界面上的开关是 attach 里的 ``daily_<项目>``
 DAILY_JOBS = ("studio", "story", "missions", "pass", "limited", "beginner", "tgw", "gifts")
-LOOP_SONG_MODES = ("current", "random", "ap_first", "list")  # 重复刷歌 / 清体力可选的选曲方式
-# 重复刷歌 / 清体力的难度：优先高难度（high_first）在「优先没 AP 的歌」时从高到低依次补，其他选曲方式按 EXPERT
+LOOP_SONG_MODES = ("current", "random", "ap_first", "list")  # 重复刷歌 / 清体力 / 挂机可选的选曲方式
+# 重复刷歌 / 清体力 / 挂机的难度：优先高难度（high_first）在「优先没 AP 的歌」时从高到低依次补，其他选曲方式按 EXPERT
 LOOP_DIFFICULTIES = (*DIFFICULTIES, "high_first")
 AP_ORDERS = ("hard_first", "easy_first")
 TOUCH_MODES = ("minitouch", "mumu")
@@ -166,6 +167,7 @@ def _ap_settings(attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.ap_max_attempts": str(_int(attach, "ap_max_attempts", 1, 99)),
         "game.lb_cost": _lb_cost(attach),
         "loop.until_lb_empty": "false",
+        "loop.wait_lb": "false",
     }
 
 
@@ -182,12 +184,12 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     """任务名 + 界面选项 → ``--set`` 配置项。
 
     共用 attach 键：``max_plays`` ``touch`` 和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
-    重复刷歌 / 清体力另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有 ``song_list``）；
-    重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
-    清体力另有 ``clear_lb_cost``（1~3）；AP补完另有 ``ap_expert`` 等四个难度开关、``ap_order``、
+    重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
+    ``song_list``）；重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
+    清体力 / 挂机另有 ``clear_lb_cost``（1~3）；AP补完另有 ``ap_expert`` 等四个难度开关、``ap_order``、
     ``ap_max_attempts`` 和 ``lb_cost``。
     """
-    if task not in ("repeat", "clear_lb", "ap"):
+    if task not in ("repeat", "clear_lb", "idle", "ap"):
         raise ParamError(f"未知任务：{task}")
     sets = {
         "device.touch": _choice(attach, "touch", TOUCH_MODES),
@@ -213,6 +215,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     else:
         sets["game.lb_cost"] = str(_int(attach, "clear_lb_cost", 1, 3))
         sets["loop.until_lb_empty"] = "true"
+    sets["loop.wait_lb"] = "true" if task == "idle" else "false"
     return sets
 
 

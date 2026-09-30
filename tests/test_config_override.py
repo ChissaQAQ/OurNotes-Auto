@@ -82,6 +82,12 @@ def test_check_run_config():
         check_run_config(cfg)
     cfg.game.lb_cost = 3
     check_run_config(cfg)
+    cfg = Config()
+    cfg.loop.wait_lb = True
+    with pytest.raises(SetupError, match="挂机"):
+        check_run_config(cfg)
+    cfg.game.lb_cost = 1
+    check_run_config(cfg)
 
 
 @pytest.mark.parametrize(

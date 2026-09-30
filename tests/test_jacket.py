@@ -101,3 +101,49 @@ def test_jacket_level_conflict():
     # 等级与曲名都对不上封面：不打
     with pytest.raises(NavigationError):
         ident("", 26, 100034)
+
+
+class JacketClient:
+    def __init__(self, cached=()):
+        self.cached = set(cached)
+        self.fetched = []
+
+    def jacket_cached(self, music_id):
+        return music_id in self.cached
+
+    def jacket(self, music_id, url):
+        self.fetched.append(music_id)
+        if music_id == 3:
+            raise ConnectionError("timeout")
+        ok, buf = cv2.imencode(".png", jacket(music_id))
+        return buf.tobytes()
+
+
+def catalog_with_jackets():
+    songs = {mid: Song(mid, [str(mid)]) for mid in (1, 2, 3, 4)}
+    for mid in (1, 2, 3):
+        songs[mid].jacket_url = f"/j/{mid}.png"
+    return Catalog(songs)
+
+
+def test_load_skips_failed_jackets(caplog):
+    client = JacketClient(cached=(1,))
+    with caplog.at_level("INFO"):
+        m = JacketMatcher.load(client, catalog_with_jackets())
+    assert m.ids == [1, 2] and client.fetched == [1, 2, 3]
+    assert "下载 2 张曲目封面" in caplog.text
+
+
+def test_load_jackets_async(monkeypatch):
+    from ournotes_auto import context
+    from ournotes_auto.config import Config
+
+    monkeypatch.setattr(JacketMatcher, "load", classmethod(lambda cls, client, catalog: ("matcher", catalog)))
+    assert context.load_jackets_async(Config(), "catalog").result(timeout=5) == ("matcher", "catalog")
+
+    def fail(cls, client, catalog):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(JacketMatcher, "load", classmethod(fail))
+    with pytest.raises(OSError):
+        context.load_jackets_async(Config(), "catalog").result(timeout=5)

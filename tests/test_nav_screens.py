@@ -11,6 +11,7 @@ from ournotes_auto.nav.screens import (
     band_confirm_song,
     classify,
     lb_bar_held,
+    lb_bar_timer,
     lb_held,
     note_speed,
     parse_difficulty,
@@ -45,6 +46,7 @@ def load(name: str) -> list[OcrItem]:
         ("song_select", Screen.SONG_SELECT),
         ("band_confirm", Screen.BAND_CONFIRM),
         ("band_confirm_avemujica", Screen.BAND_CONFIRM),
+        ("band_confirm_lb_timer", Screen.BAND_CONFIRM),  # LB 没满，顶栏有恢复倒计时
         ("live_options", Screen.LIVE_OPTIONS),
         ("live_top", Screen.LIVE_TOP),
         ("home", Screen.HOME),
@@ -86,6 +88,7 @@ def test_title_startable():
 def test_band_confirm_song():
     assert band_confirm_song(load("band_confirm")) == ("迷星叫", "expert")
     assert band_confirm_song(load("band_confirm_avemujica")) == ("AveMujica", "expert")
+    assert band_confirm_song(load("band_confirm_lb_timer")) == ("無路矢", "expert")
 
 
 def test_parse_difficulty_tolerates_ocr_noise():
@@ -118,6 +121,18 @@ def test_lb_bar_held(text, held):
     assert lb_bar_held(load("band_confirm")) == 14  # 夹具里是 ]4/10
     assert lb_bar_held([OcrItem(1056, 25, 45, 20, text)]) == held
     assert lb_bar_held([OcrItem(650, 563, 67, 24, "0/99")]) is None  # 消耗设置弹窗上的持有数不算
+
+
+@pytest.mark.parametrize(
+    "text, left",
+    [("15:24", 924), ("©21:11", 1271), ("O9:5]", 591), ("29:59", 1799), ("6/10", None), ("12:75", None), ("", None)],
+)
+def test_lb_bar_timer(text, left):
+    assert lb_bar_timer(load("band_confirm_lb_timer")) == 924
+    assert lb_bar_held(load("band_confirm_lb_timer")) == 6  # 倒计时在持有数下面一行，不会混淆
+    assert lb_bar_timer(load("band_confirm")) is None  # 持有数到上限后不显示
+    assert lb_bar_timer([OcrItem(1034, 46, 75, 29, text)]) == left
+    assert lb_bar_timer([OcrItem(1054, 21, 50, 26, "21:11")]) is None  # 持有数那一行
 
 
 def test_result_cells_follow_labels():

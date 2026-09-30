@@ -30,6 +30,20 @@
             "default_check": true
         },
         {
+            "name": "挂机",
+            "entry": "OurNotes_Idle",
+            "group": [
+                "play"
+            ],
+            "description": "和清体力一样打到 LIVE BOOST 用完，然后停在乐队确认页，看右上角的恢复倒计时等 LB 恢复到每局消耗数（每 30 分钟恢复 1 个），再接着打；一直运行到手动停止（或打够局数）。等待期间遇到日期变更会重新登录。不会使用恢复道具或星钻。它不会自己结束，请放在任务列表的最后。",
+            "option": [
+                "SongMode",
+                "Difficulty",
+                "ClearLbCost",
+                "MaxPlays"
+            ]
+        },
+        {
             "name": "AP补完",
             "entry": "OurNotes_AP",
             "group": [

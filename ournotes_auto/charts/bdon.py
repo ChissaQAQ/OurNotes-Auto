@@ -148,3 +148,6 @@ class BdonClient:
     def jacket(self, music_id: int, url: str) -> bytes:
         """封面缩略图（PNG）；``url`` 为曲目表里的 jacketThumbUrl（相对 titles_url 所在站点）。"""
         return self._cached(f"jackets/{music_id}.png", urljoin(self.cfg.titles_url, url))
+
+    def jacket_cached(self, music_id: int) -> bool:
+        return (self.cache / f"jackets/{music_id}.png").exists()

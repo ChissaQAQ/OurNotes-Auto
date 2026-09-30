@@ -74,6 +74,17 @@
             }
         }
     },
+    "OurNotes_Idle": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "idle"
+                }
+            }
+        }
+    },
     "OurNotes_AP": {
         "action": {
             "type": "Custom",

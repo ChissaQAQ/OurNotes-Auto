@@ -166,6 +166,8 @@ class LoopConfig:
     song_list: str = ""
     max_plays: int = 0  # 0 表示不限次数
     until_lb_empty: bool = False  # 打到 LB 用完为止（需要 game.lb_cost 为 1~3；用完后不再改为消耗 0 继续）
+    # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 1~3）
+    wait_lb: bool = False
     max_failures: int = 5  # 连续失败次数上限
     ap_difficulties: str = "expert,hard,normal,easy"  # AP 补完依次处理的难度（逗号分隔）
     # ap_first 依次补的难度（逗号分隔，如 "expert,hard,normal,easy"），都补完了按 game.difficulty 随机；

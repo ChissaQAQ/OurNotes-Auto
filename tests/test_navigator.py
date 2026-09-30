@@ -2,6 +2,8 @@
 
 import json
 import math
+import threading
+from concurrent.futures import Future
 from pathlib import Path
 
 import cv2
@@ -218,14 +220,15 @@ def test_abort_needs_second_confirm():
 class LbGame(FakeGame):
     """乐队确认页 + LB 消耗设置弹窗（按当前选中项画出白色单选按钮）；``held`` 为 0 且消耗不为 0 时
     LIVE START 弹出恢复 LIVE BOOST（``popup``，实机大多直接开始、不消耗）。顶栏和弹窗上的持有数按 ``held``
-    改写，``bar`` 指定顶栏的识别结果（模拟读错）。"""
+    改写，``bar`` 指定顶栏的识别结果（模拟读错），``timer`` 为顶栏下一行的恢复倒计时（LB 没满时才有）。"""
 
-    def __init__(self, cost: int, held: int = 24, popup: bool = True, bar: str | None = None):
+    def __init__(self, cost: int, held: int = 24, popup: bool = True, bar: str | None = None, timer: str | None = None):
         super().__init__("band_confirm")
         self.cost = cost
         self.held = held
         self.popup = popup
         self.bar = bar
+        self.timer = timer
 
     def grab(self):
         if self.state != "lb_setting":
@@ -243,7 +246,10 @@ class LbGame(FakeGame):
             return items
         bar = f"{self.held}/10" if self.bar is None else self.bar
         texts = {"10": bar, "99": f"{self.held}/99"}
-        return [OcrItem(it.x, it.y, it.w, it.h, texts.get(it.text.rpartition("/")[2], it.text)) for it in items]
+        items = [OcrItem(it.x, it.y, it.w, it.h, texts.get(it.text.rpartition("/")[2], it.text)) for it in items]
+        if name == "band_confirm" and self.timer is not None:
+            items.append(OcrItem(1037, 46, 73, 28, self.timer))
+        return items
 
     def tap(self, x, y):
         p = (x * 1280 / self.size[0], y * 720 / self.size[1])
@@ -355,6 +361,34 @@ def test_lb_stop_rechecks_misread_bar():
     assert tapped(game, (920, 665)) == ["band_confirm"]  # 核对时已设好消耗，不再打开第二次
 
 
+def test_lb_status_reads_bar_and_timer():
+    """挂机等 LB 恢复：读顶栏的持有数和恢复倒计时，不点任何东西；``check`` 时打开消耗设置弹窗核对（顺便设好消耗）。"""
+    game = LbGame(cost=0, held=2, timer="©15:24")
+    nav = make_nav(game, game, game)
+    nav.cfg.game.lb_cost = 3
+    assert nav.lb_status() == (2, 924)
+    assert not game.taps
+    game.bar = "3/10"  # 顶栏读多了
+    assert nav.lb_status() == (3, 924)
+    assert nav.lb_status(check=True) == (2, 924)
+    assert game.cost == 3 and game.state == "band_confirm"
+    assert tapped(game, (920, 665)) == ["band_confirm"]
+    assert not tapped(game, (1140, 648))  # 没点 LIVE START
+    assert not tapped(game, (920, 575), radius=60)  # 弹窗里的「恢复」绝不点
+
+
+def test_lb_status_falls_back_to_popup():
+    game = LbGame(cost=3, held=5, bar="")  # 顶栏漏读
+    nav = make_nav(game, game, game)
+    nav.cfg.game.lb_cost = 3
+    assert nav.lb_status() == (5, None)
+    assert tapped(game, (920, 665)) == ["band_confirm"] and game.state == "band_confirm"
+    game.state = "song_select"
+    nav.save_debug = lambda *a: None
+    with pytest.raises(NavigationError, match="不在乐队确认页"):
+        nav.lb_status()
+
+
 def test_lb_recover_cancelled_while_navigating():
     game = FakeGame("lb_recover")
     nav = make_nav(game, game, game)
@@ -367,6 +401,24 @@ def test_invalid_lb_cost():
     cfg.game.lb_cost = 4
     with pytest.raises(ValueError):
         GameNavigator(cfg, None, None, None)
+
+
+def test_jackets_loaded_in_background():
+    """封面在后台加载时，第一次用到才等它；等的时候可以停止，加载出错在用到的地方抛出。"""
+    future = Future()
+    nav = GameNavigator(Config(), None, None, None, jackets=future)
+    threading.Timer(0.05, future.set_result, ["matcher"]).start()
+    assert nav.jackets == "matcher" and nav.jackets == "matcher"
+    stop = threading.Event()
+    nav = GameNavigator(Config(), None, None, None, stop=stop, jackets=Future())
+    stop.set()
+    with pytest.raises(NavigationError, match="已停止"):
+        nav.jackets
+    future = Future()
+    future.set_exception(OSError("disk full"))
+    with pytest.raises(OSError):
+        GameNavigator(Config(), None, None, None, jackets=future).jackets
+    assert GameNavigator(Config(), None, None, None).jackets is None
 
 
 def test_relogin_after_date_change():

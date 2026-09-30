@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import threading
+from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -80,6 +81,24 @@ def load_catalog(cfg: Config, refresh: bool = False) -> tuple[BdonClient, Catalo
     return client, Catalog.load(client, refresh=refresh)
 
 
+def load_jackets_async(cfg: Config, catalog: Catalog) -> Future:
+    """在后台线程里加载封面（第一次运行要下载，约半分钟），同时去连模拟器、进乐曲选择页；
+    导航第一次用到封面时再等它（见 :attr:`GameNavigator.jackets`）。用自己的连接，仍是逐个下载。"""
+    from .charts.bdon import BdonClient
+    from .nav.jacket import JacketMatcher
+
+    future: Future = Future()
+
+    def work() -> None:
+        try:
+            future.set_result(JacketMatcher.load(BdonClient(cfg.charts), catalog))
+        except BaseException as e:  # 在用到封面的地方抛出
+            future.set_exception(e)
+
+    threading.Thread(target=work, name="jackets", daemon=True).start()
+    return future
+
+
 @dataclass
 class TaskContext:
     cfg: Config
@@ -100,8 +119,7 @@ def open_context(
     record: bool = False,
     data_dir: str = "data",
 ):
-    """连接模拟器、加载曲库与封面，产出 :class:`TaskContext`；``stop`` 置位后导航与演奏会尽快退出。"""
-    from .nav.jacket import JacketMatcher
+    """连接模拟器、加载曲库（封面在后台加载），产出 :class:`TaskContext`；``stop`` 置位后导航与演奏会尽快退出。"""
     from .nav.navigator import GameNavigator
     from .player.monitor import combo_reader
     from .player.session import PlaySession
@@ -109,7 +127,7 @@ def open_context(
 
     ocr = open_ocr(cfg)
     client, catalog = load_catalog(cfg)
-    jackets = JacketMatcher.load(client, catalog)
+    jackets = load_jackets_async(cfg, catalog)
     stop = stop or threading.Event()
     with open_device(cfg) as (source, touch):
         from .device import adb

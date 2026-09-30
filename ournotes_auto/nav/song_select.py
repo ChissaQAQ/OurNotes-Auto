@@ -252,6 +252,7 @@ class SongSelectMixin:
 
     list_positions: ListPositions
     _rows_matcher: JacketMatcher | None
+    _filter_status: str | None
 
     def ensure_song_select(self, timeout_s: float = 60.0) -> list[OcrItem]:
         """回到乐曲选择页（筛选面板是关着的），返回这一帧的识别结果。"""
@@ -358,41 +359,62 @@ class SongSelectMixin:
             return changed
         raise self._fail(f"筛选「{text}」选不中")
 
+    def _known_status(self) -> str | None:
+        """本次运行设好的游玩状况筛选；漏斗颜色对不上（游戏里被改过）时作废。要在乐曲选择页的一帧上调用。"""
+        if self._filter_status is not None and funnel_active(self._frame) != (self._filter_status != "any"):
+            self._filter_status = None
+        return self._filter_status
+
     def set_song_filter(self, difficulty: str | None = None, status: str | None = None, reset: bool = False) -> None:
-        """打开筛选面板，（``reset`` 时先重置）选好难度和游玩状况，再关上。"""
+        """打开筛选面板，（``reset`` 时先重置）选好难度和游玩状况，再关上。
+
+        游玩状况已经是本次运行上次设好的（且漏斗颜色对得上）时不再去选：选项在面板下方，要拖动才看得到。
+        """
         self.ensure_song_select()
+        if status is not None and not reset and self._known_status() == status:
+            logger.debug("游玩状况已是「%s」", STATUS_OPTIONS[status])
+            status = None
+            if difficulty is None:
+                return
         self._open_filter()
         self.list_positions.clear()
         if reset:
+            self._filter_status = None  # 重置后是「不指定」，但不确定点上了没有
             self.tap(BTN_FILTER_RESET, "重置")
             self._sleep(1.0)
         if difficulty is not None:
             self._select_filter_option(DIFFICULTY_OPTIONS[difficulty])
         if status is not None:
+            self._filter_status = None
             self._select_filter_option(STATUS_OPTIONS[status])
+            self._filter_status = status
         self._close_filter()
-        logger.debug(
-            "筛选：%s%s%s",
-            "重置，" if reset else "",
-            f"难度 {DIFFICULTY_OPTIONS[difficulty]}，" if difficulty else "",
-            f"游玩状况「{STATUS_OPTIONS[status]}」" if status else "",
-        )
+        done = ["重置"] if reset else []
+        if difficulty:
+            done.append(f"难度 {DIFFICULTY_OPTIONS[difficulty]}")
+        if status:
+            done.append(f"游玩状况「{STATUS_OPTIONS[status]}」")
+        logger.debug("筛选：%s", "，".join(done))
 
     def clear_status_filter(self) -> None:
         """「游玩状况」筛选不是「不指定」时改回来（随机选曲只在筛选后的列表里抽）。漏斗不是青色就不用管。"""
         self.ensure_song_select()
         if not funnel_active(self._frame):
+            self._filter_status = "any"
             return
         self._open_filter()
+        self._filter_status = None
         if self._select_filter_option(STATUS_OPTIONS["any"]):
             self.list_positions.clear()
             logger.info("游玩状况筛选已改回「不指定」")
+        self._filter_status = "any"
         self._close_filter()
 
     def read_song_pick(self) -> SongPick:
         """当前选中的歌；随机选曲后列表还在滚动，封面连续两次认成同一首才采用。
 
-        「没有可以随机选择的乐曲。」的提示条挡着封面时认不准，等它消失再认。
+        「没有可以随机选择的乐曲。」的提示条挡着封面时认不准，等它消失再认；但选中的是未解锁的歌时
+        （「解锁条件」在提示条下面，读得到）不用等：抽不到别的歌，这首又打不了。
         """
         prev = pick = None
         only = False
@@ -403,6 +425,8 @@ class SongSelectMixin:
             if list_empty(items):
                 return SongPick(None, empty=True)
             if find(items, NO_RANDOM_TEXT):
+                if song_locked(items):
+                    return SongPick(None, locked=True, only=True)
                 only, prev = True, None
             else:
                 pick = SongPick(self._center_song(), song_locked(items), only=only)

@@ -1,5 +1,7 @@
 """用假对象验证全自动循环的编排逻辑。"""
 
+import threading
+
 import pytest
 
 from ournotes_auto.charts.catalog import Catalog, Song
@@ -33,6 +35,10 @@ class FakeNav:
 
     def start_live(self, lb_short="zero"):
         self.calls.append(f"start:{lb_short}")
+
+    def lb_status(self, check=False):
+        self.calls.append("lb_check" if check else "lb")
+        return None, None
 
     def read_result(self, expected_total=None):
         self.calls.append("result")
@@ -214,13 +220,95 @@ def test_until_lb_empty(tmp_path):
     assert starts == ["stop"] * 3
 
 
-def test_until_lb_empty_needs_lb_cost(tmp_path):
-    import pytest
-
+@pytest.mark.parametrize("flag", ["until_lb_empty", "wait_lb"])
+def test_until_lb_empty_needs_lb_cost(tmp_path, flag):
     cfg = Config()
-    cfg.loop.until_lb_empty = True
+    setattr(cfg.loop, flag, True)
     with pytest.raises(ValueError):
         Runner(cfg, FakeNav(), FakeSession(), FakeClient(), Catalog({}), RecordStore(tmp_path))
+
+
+class FakeStop(threading.Event):
+    """记下挂机每次睡多久，不真的睡。"""
+
+    def __init__(self):
+        super().__init__()
+        self.waits = []
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        return self.is_set()
+
+
+def idle(tmp_path, statuses, exhausted_at=(2,)):
+    """挂机：第 ``exhausted_at`` 次 LIVE START 时 LB 用完，之后 ``lb_status`` 依次读到 ``statuses``。"""
+    from ournotes_auto.runner import LbExhausted
+
+    runner, nav, store = make(tmp_path, mode="random")
+    runner.cfg.loop.max_plays = 3
+    runner.cfg.loop.wait_lb = True
+    runner.cfg.game.lb_cost = 3
+    runner.stop = FakeStop()
+    statuses = list(statuses)
+    starts = []
+
+    def start_live(lb_short="zero"):
+        starts.append(lb_short)
+        nav.calls.append("start")
+        if len(starts) in exhausted_at:
+            raise LbExhausted("LB 已用完")
+
+    def lb_status(check=False):
+        nav.calls.append("lb_check" if check else "lb")
+        status = statuses.pop(0)
+        if isinstance(status, Exception):
+            raise status
+        return status
+
+    nav.start_live, nav.lb_status = start_live, lb_status
+    return runner, nav, starts, statuses
+
+
+def test_wait_lb_resumes_same_song(tmp_path):
+    """LB 用完后停在乐队确认页，按恢复倒计时睡到恢复够每局消耗数（弹窗核对过）再接着打这首。"""
+    from ournotes_auto.runner import LB_POLL_MARGIN_S, LB_POLL_S
+
+    seq = [(0, 120), (None, None), (3, 1700), (2, None), (3, 1500), (3, None)]
+    runner, nav, starts, statuses = idle(tmp_path, seq)
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 0 and not statuses
+    assert starts == ["stop"] * 4
+    assert runner.stop.waits == [120 + LB_POLL_MARGIN_S, LB_POLL_S, LB_POLL_S]
+    # 用完时不换歌：从 LB 用完到恢复后再开始之间只有等待
+    waiting = ["ensure:expert", "lb"] * 3 + ["lb_check", "ensure:expert", "lb", "lb_check"]
+    expected = ["ensure:expert", "start", "next:random", "ensure:expert", "start", *waiting]
+    expected += ["ensure:expert", "start", "next:random", "ensure:expert", "start"]
+    calls = [c for c in nav.calls if c not in ("result", "leave", "clear_status")]
+    assert calls[: len(expected)] == expected
+
+
+def test_stop_while_waiting_lb_is_not_a_failure(tmp_path):
+    runner, nav, starts, _ = idle(tmp_path, [(1, 600)])
+
+    def wait(timeout=None):
+        runner.stop.waits.append(timeout)
+        runner.stop.set()
+        return True
+
+    runner.stop.wait = wait
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0 and len(starts) == 2
+
+
+def test_wait_lb_keeps_waiting_after_navigation_error(tmp_path):
+    """等待中导航失败（如日期变更后重新登录失败）算一次失败，下一轮接着等，不换歌。"""
+    from ournotes_auto.runner import NavigationError
+
+    runner, nav, starts, statuses = idle(tmp_path, [NavigationError("假导航失败"), (3, None), (3, None)])
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 1 and not statuses
+    assert nav.calls.count("next:random") == 2
+    assert runner.stop.waits == []
 
 
 def test_stop_during_navigation_is_not_a_failure(tmp_path):

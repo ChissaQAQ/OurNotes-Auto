@@ -272,7 +272,38 @@ def test_clear_status_filter():
     # 漏斗不是青色时不打开面板
     taps = len(game.taps)
     nav.clear_status_filter()
+    nav.set_song_filter(status="any")  # 已经改回了
     assert len(game.taps) == taps
+
+
+def test_set_filter_skips_status_already_set():
+    game = SongSelectGame()
+    nav = make_nav(game)
+    nav.set_song_filter("expert", "not_ap", reset=True)
+    drags = game.drags
+    nav.set_song_filter("hard", "not_ap")  # 只换难度：游玩状况不用再拖出来选
+    assert game.selected["diff"] == "HARD" and game.selected["status"] == "未ALLPERFECT"
+    assert game.drags == drags
+    taps = len(game.taps)
+    nav.set_song_filter(status="not_ap")  # 没有要改的：不打开面板
+    assert len(game.taps) == taps and not game.panel
+    # 游戏里被改掉了（漏斗不是青色了）：照常去选
+    game.selected["status"] = "不指定"
+    nav.set_song_filter(status="not_ap")
+    assert game.selected["status"] == "未ALLPERFECT" and game.drags > drags
+
+
+def test_set_filter_forgets_status_after_title():
+    game = SongSelectGame()
+    nav = make_nav(game)
+    nav.set_song_filter("expert", "not_ap", reset=True)
+    game.selected["status"] = "未FUL_COMBO"  # 重新登录后变了（漏斗还是青色，看不出来）
+    title = load_items("title")
+    game.read = lambda frame, roi=None: title
+    assert nav.look()[0] is Screen.TITLE
+    del game.read
+    nav.set_song_filter(status="not_ap")
+    assert game.selected["status"] == "未ALLPERFECT"
 
 
 def test_closes_open_panel_before_other_actions():
@@ -299,6 +330,15 @@ def test_random_song_waits_out_no_random_toast():
     assert nav.random_song() == SongPick(100021)
     assert nav.random_song() == SongPick(100021, only=True)
     assert game.toast == 0
+
+
+def test_random_song_locked_under_toast_returns_at_once():
+    # 提示条挡着封面，但「解锁条件」读得到：不用等提示条消失
+    game = SongSelectGame(songs=[(100021, True), None])
+    nav = make_nav(game)
+    assert nav.random_song() == SongPick(100021, locked=True)
+    assert nav.random_song() == SongPick(None, locked=True, only=True)
+    assert game.toast == 2
 
 
 def test_random_song_empty_list():

@@ -33,7 +33,7 @@ UPDATE = UpdateCheck(ROOT)
 
 @AgentServer.custom_action("OurNotesRun")
 class OurNotesRun(CustomAction):
-    """``custom_action_param`` 为 ``{"task": "start" | "repeat" | "clear_lb" | "ap" | "records"}``，
+    """``custom_action_param`` 为 ``{"task": "start" | "repeat" | "clear_lb" | "idle" | "ap" | "records"}``，
     选项在 ``OurNotesParam`` 节点的 attach 里。"""
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:

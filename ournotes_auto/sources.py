@@ -99,6 +99,7 @@ class ApComplete(_Source):
         self.max_rerolls = max_rerolls
         self._index = 0
         self._filtered = False  # 当前难度的筛选已经设好
+        self._reset = False  # 已经重置过筛选
         self._touched = False  # 改过游戏里的分类 / 筛选
         self._category: str | None = None  # 开始前的分类
         self.attempts: Counter[tuple[int, str]] = Counter()
@@ -116,8 +117,9 @@ class ApComplete(_Source):
                     self._touched = True
                     self._category = nav.set_song_category(AP_CATEGORY)
                 logger.info("AP 补完：%s", diff.upper())
-                nav.set_song_filter(diff, "not_ap", reset=True)
-                self._filtered = True
+                # 第一次先重置（清掉收藏等别的筛选），之后只换难度
+                nav.set_song_filter(diff, "not_ap", reset=not self._reset)
+                self._reset = self._filtered = True
             for _ in range(self.max_rerolls):
                 pick = nav.random_song()
                 if pick.empty:

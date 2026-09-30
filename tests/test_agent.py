@@ -108,6 +108,7 @@ def test_run_settings_repeat():
         "loop.max_plays": "0",
         "game.lb_cost": "null",
         "loop.until_lb_empty": "false",
+        "loop.wait_lb": "false",
         **HUMAN_OFF,
     }
     sets = run_settings("repeat", {**ATTACH, "lb_cost": 3, "max_plays": "20", "difficulty": "HARD"})
@@ -127,6 +128,17 @@ def test_run_settings_clear_lb():
     assert "loop.song_list" not in sets
     sets = run_settings("clear_lb", {**ATTACH, "song_mode": "list", "song_list": " 100010, 碧天伴走@hard "})
     assert sets["loop.song_mode"] == "list" and sets["loop.song_list"] == "100010, 碧天伴走@hard"
+    assert sets["loop.wait_lb"] == "false"
+
+
+def test_run_settings_idle():
+    """挂机和清体力一样打到 LB 用完，只是之后等它恢复。"""
+    attach = {**ATTACH, "clear_lb_cost": 2, "song_mode": "ap_first", "difficulty": "high_first"}
+    sets = run_settings("idle", attach)
+    assert sets == {**run_settings("clear_lb", attach), "loop.wait_lb": "true"}
+    assert sets["game.lb_cost"] == "2" and sets["loop.until_lb_empty"] == "true"
+    with pytest.raises(ParamError, match="clear_lb_cost"):
+        run_settings("idle", {**ATTACH, "clear_lb_cost": 0})
 
 
 def test_run_settings_high_first():
@@ -146,6 +158,7 @@ def test_run_settings_ap():
         "loop.ap_max_attempts": "3",
         "game.lb_cost": "null",
         "loop.until_lb_empty": "false",
+        "loop.wait_lb": "false",
         **HUMAN_OFF,
     }
     sets = run_settings(
@@ -268,7 +281,15 @@ def test_worker_args_parse_back():
     check_run_config(cfg)
     assert cfg.device.mumu_path == r"D:\MuMu Player"
     assert cfg.device.instance == 1
-    assert cfg.game.lb_cost == 3 and cfg.loop.until_lb_empty
+    assert cfg.game.lb_cost == 3 and cfg.loop.until_lb_empty and not cfg.loop.wait_lb
+
+    args = build_parser().parse_args(worker_args("idle", ATTACH, device))
+    cfg = Config()
+    for item in args.set:
+        key, _, value = item.partition("=")
+        apply_override(cfg, key, value)
+    check_run_config(cfg)
+    assert cfg.game.lb_cost == 3 and cfg.loop.until_lb_empty and cfg.loop.wait_lb
 
     args = build_parser().parse_args(worker_args("ap", {**ATTACH, "ap_normal": False}, device))
     cfg = Config()

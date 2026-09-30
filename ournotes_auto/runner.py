@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 挂机等 LB 恢复：按顶栏的恢复倒计时睡到恢复后再看（多等几秒），最多隔这么久看一次
+# （倒计时读不到时；等待期间游戏也可能日期变更，要重新登录）
+LB_POLL_S = 600.0
+LB_POLL_MARGIN_S = 5.0
+
 
 class NavigationError(RuntimeError):
     pass
@@ -64,6 +69,10 @@ class Navigator(Protocol):
 
         LB 用完（弹出恢复 LIVE BOOST）时：``zero`` 改为消耗 0 继续；``stop`` 抛出 :class:`LbExhausted`。
         """
+        ...
+
+    def lb_status(self, check: bool = False) -> tuple[int | None, int | None]:
+        """乐队确认页上的 LB 持有数和下一个恢复的倒计时（秒），读不到的项为 None；``check`` 时再用消耗设置弹窗核对持有数。"""
         ...
 
     def read_result(self, expected_total: int | None = None) -> ResultCounts:
@@ -149,8 +158,9 @@ class Runner:
         self.stop = stop or threading.Event()
         self.source = source or make_source(config, catalog)
         self.stats = RunStats()
-        if config.loop.until_lb_empty and not config.game.lb_cost:
-            raise ValueError("打到 LB 用完需要设置 game.lb_cost 为 1~3")
+        lc = config.loop
+        if (lc.until_lb_empty or lc.wait_lb) and not config.game.lb_cost:
+            raise ValueError(f"{'挂机' if lc.wait_lb else '打到 LB 用完'}需要设置 game.lb_cost 为 1~3")
 
     def _identify(self):
         label = self.nav.selected_song()
@@ -172,7 +182,8 @@ class Runner:
             self.source.done(song, diff, None, playable=False)
             raise NavigationError(f"谱面站没有 {song.music_id}_{diff}") from e
         self.session.learned_offset_ms = self.store.learned_offset_ms
-        self.nav.start_live("stop" if self.cfg.loop.until_lb_empty else "zero")
+        lc = self.cfg.loop
+        self.nav.start_live("stop" if lc.until_lb_empty or lc.wait_lb else "zero")
         outcome: PlayOutcome | None = None
         try:
             outcome = self.session.play(chart, self.stop)
@@ -278,6 +289,30 @@ class Runner:
             logger.info("没有要打的曲目了")
         return more
 
+    def _wait_lb(self) -> None:
+        """挂机：停在乐队确认页等 LB 恢复到每局消耗数（LB 少于它时每局奖励也少）。
+        每次醒来都重新进入乐队确认页：等待期间游戏可能日期变更、回到标题画面重新登录。"""
+        need = self.cfg.game.lb_cost
+        last: int | None = -1
+        while True:
+            self.nav.ensure_band_confirm(self.source.difficulty)
+            held, left = self.nav.lb_status()
+            if held is not None and held >= need:
+                # 顶栏的小字偶尔读错：继续前用弹窗核对（读多了会一开始又说用完，反复点 LIVE START）
+                held, _ = self.nav.lb_status(check=True)
+            if held is not None and held >= need:
+                logger.info("LB 恢复到 %d 个，继续", held)
+                return
+            wait = LB_POLL_S if left is None else min(LB_POLL_S, left + LB_POLL_MARGIN_S)
+            if held != last:  # 每恢复一个报一次
+                eta = "" if left is None else f"，下一个约 {left // 60}:{left % 60:02d} 后恢复"
+                logger.info("LB 持有 %s 个，每局消耗 %d 个：等待恢复%s", "?" if held is None else held, need, eta)
+                last = held
+            else:
+                logger.debug("LB 持有 %s 个，%.0fs 后再看", held, wait)
+            if self.stop.wait(wait):
+                raise NavigationError("已停止")
+
     def run(self) -> RunStats:
         try:
             self._loop()
@@ -305,15 +340,22 @@ class Runner:
         consecutive = 0
         self._change_failures = 0
         first = True
+        wait_lb = False  # 上一局因 LB 用完没开始（挂机）：等恢复后接着打这首，不换歌
         while not self.stop.is_set() and (lc.max_plays <= 0 or self.stats.plays < lc.max_plays):
-            if not self._advance(first) or self.stop.is_set():
+            if not wait_lb and (not self._advance(first) or self.stop.is_set()):
                 break
             first = False
             try:
+                if wait_lb:
+                    self._wait_lb()
+                    wait_lb = False
                 result = self.play_once()
             except LbExhausted as e:
-                logger.info("%s，结束", e)
-                break
+                if not lc.wait_lb:
+                    logger.info("%s，结束", e)
+                    break
+                wait_lb = True
+                continue
             except ScreenFrozen:
                 raise
             except (NavigationError, TimeoutError) as e:

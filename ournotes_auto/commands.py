@@ -171,6 +171,8 @@ def check_run_config(cfg: Config) -> None:
         raise SetupError(f"每局 LB 消耗应为 0~3：{cfg.game.lb_cost}")
     if cfg.loop.until_lb_empty and not cfg.game.lb_cost:
         raise SetupError("打到 LB 用完需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
+    if cfg.loop.wait_lb and not cfg.game.lb_cost:
+        raise SetupError("挂机需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
     touch = cfg.play.touch
     if not 0 <= touch.great_ratio <= MAX_GREAT_RATIO:
         raise SetupError(f"故意打 GREAT 的比例应在 0~{MAX_GREAT_RATIO}：{touch.great_ratio}")
@@ -204,6 +206,8 @@ def cmd_run(cfg: Config, args) -> int:
         cfg.game.lb_cost = args.lb_cost
     if args.until_lb_empty:
         cfg.loop.until_lb_empty = True
+    if args.wait_lb:
+        cfg.loop.wait_lb = True
     if args.ap_difficulties:
         cfg.loop.ap_difficulties = args.ap_difficulties
     if args.ap_attempts is not None:
@@ -391,6 +395,9 @@ def register(sub) -> None:
     sp.add_argument("-n", "--max-plays", type=int, help="覆盖 loop.max_plays（0 为不限）")
     sp.add_argument("--lb-cost", type=int, choices=(0, 1, 2, 3), help="覆盖 game.lb_cost（每局消耗的 LB）")
     sp.add_argument("--until-lb-empty", action="store_true", help="打到 LB 用完为止（清体力）")
+    sp.add_argument(
+        "--wait-lb", action="store_true", help="挂机：LB 用完后在乐队确认页等它恢复到每局消耗数再继续，一直运行"
+    )
     sp.add_argument("--ap-difficulties", metavar="D,D", help="覆盖 loop.ap_difficulties（如 expert,hard）")
     sp.add_argument("--ap-attempts", type=int, help="覆盖 loop.ap_max_attempts（AP 补完每首最多打几次）")
     sp.add_argument("--watch-combo", action="store_true", help=WATCH_COMBO_HELP)

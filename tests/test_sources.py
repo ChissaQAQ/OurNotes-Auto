@@ -58,6 +58,7 @@ def test_ap_filters_each_difficulty_and_restores():
     assert nav.calls == ["category:全部", "filter:expert:not_ap:True", "random"]
     src.done(song(1), "expert", result(1, "expert", 0))  # AP
     assert src.advance(nav, False) and src.difficulty == "hard"
+    assert nav.calls[3:] == ["random", "filter:hard:not_ap:False", "random"]  # 只在第一个难度前重置
     src.done(song(2), "hard", result(2, "hard", 0))
     assert not src.advance(nav, False)
     assert nav.calls.count("category:全部") == 1
@@ -184,11 +185,11 @@ def test_ap_first_goes_through_difficulties_then_random_at_fallback():
     src.done(song(1), "expert", result(1, "expert", 0))
     nav.calls.clear()
     assert src.advance(nav, False) and src.difficulty == "normal"  # HARD 已经全部 AP
-    assert nav.calls == ["random", "filter:hard:not_ap:True", "random", "filter:normal:not_ap:True", "random"]
+    assert nav.calls == ["random", "filter:hard:not_ap:False", "random", "filter:normal:not_ap:False", "random"]
     src.done(song(2), "normal", result(2, "normal", 0))
     nav.calls.clear()
     assert src.advance(nav, False) and src.difficulty == "expert"  # 都补完了，按 EXPERT 随机
-    assert nav.calls == ["random", "filter:easy:not_ap:True", "random", "filter:None:any:False", "choose:random"]
+    assert nav.calls == ["random", "filter:easy:not_ap:False", "random", "filter:None:any:False", "choose:random"]
     assert nav.calls.count("category:全部") == 0
 
 

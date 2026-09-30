@@ -27,6 +27,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import Future
 from pathlib import Path
 
 import cv2
@@ -56,6 +57,7 @@ from .screens import (
     classify,
     find,
     lb_bar_held,
+    lb_bar_timer,
     lb_held,
     note_speed,
     parse_level,
@@ -130,7 +132,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         ocr: MaaOcr,
         stop: threading.Event | None = None,
         settle_s: float = 1.0,
-        jackets: JacketMatcher | None = None,
+        jackets: JacketMatcher | Future | None = None,
         restart_app: Callable[[], None] | None = None,
         app_running: Callable[[], bool] | None = None,
     ):
@@ -140,9 +142,10 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         self.ocr = ocr
         self.stop = stop or threading.Event()
         self.settle_s = settle_s
-        self.jackets = jackets
+        self._jackets = jackets
         self._rows_matcher: JacketMatcher | None = None  # 认列表缩略图用（第一次按曲目选歌时建）
         self.list_positions = ListPositions()
+        self._filter_status: str | None = None  # 本次运行设好的「游玩状况」筛选（STATUS_OPTIONS 的键），不确定时为 None
         self.restart_app = restart_app
         self.app_running = app_running
         self.last_screen = Screen.UNKNOWN
@@ -165,6 +168,17 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         if self.stop.wait(seconds):
             raise NavigationError("已停止")
 
+    @property
+    def jackets(self) -> JacketMatcher | None:
+        """封面匹配器；还在后台加载（见 :func:`~ournotes_auto.context.load_jackets_async`）时等它加载完。"""
+        if isinstance(self._jackets, Future):
+            if not self._jackets.done():
+                logger.info("等曲目封面下载完…")
+                while not self._jackets.done():
+                    self._sleep(0.2)
+            self._jackets = self._jackets.result()
+        return self._jackets
+
     def look(self, still_ok: bool = False) -> tuple[Screen, list[OcrItem]]:
         """截图并判断画面。``still_ok``：画面长时间不动也正常（等结算时歌可能还在放），不按 FROZEN_S 判断卡住。"""
         frame, _ = self.source.grab()
@@ -176,6 +190,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         self.last_screen = screen
         if screen not in (Screen.TITLE, Screen.UNKNOWN):
             self._title_since = None
+        if screen in (Screen.TITLE, Screen.DATE_CHANGE):
+            self._filter_status = None  # 重新登录后游戏里的筛选不一定还是原来的
         if screen is Screen.HOME:
             self._restarts = 0
         if screen is Screen.UNKNOWN:
@@ -523,6 +539,20 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         held = lb_bar_held(items)
         logger.debug("顶栏 LB 持有数：%s", held)
         return held == 0
+
+    def lb_status(self, check: bool = False) -> tuple[int | None, int | None]:
+        """乐队确认页右上角的 LB 持有数和下一个恢复的倒计时（秒），读不到的项为 None。
+        ``check`` 时再打开消耗设置弹窗核对持有数（顶栏的字很小，偶尔读错；顺便按配置设好消耗），
+        顶栏漏读持有数时也这样读。"""
+        screen, items = self.look()
+        if screen is not Screen.BAND_CONFIRM:
+            raise self._fail("不在乐队确认页，无法读取 LB")
+        held, left = lb_bar_held(items), lb_bar_timer(items)
+        want = self._lb_want()
+        if (check or held is None) and want:
+            held = self.set_lb_cost(want)
+        logger.debug("LB 持有数：%s，恢复倒计时：%s", held, left)
+        return held, left
 
     def _lb_selected(self) -> int | None:
         lit = [c for c, p in LB_RADIO.items() if self._lit(p)]

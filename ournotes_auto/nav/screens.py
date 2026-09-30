@@ -225,8 +225,15 @@ def lb_held(items: list[OcrItem]) -> int | None:
     return None
 
 
-# 乐队确认页右上角的 LB 持有数「14/10」（可以超过上限），下面一行是恢复倒计时
+# 乐队确认页右上角的 LB 持有数「14/10」（可以超过上限），下面一行是下一个 LB 恢复的倒计时「⏱21:11」
+# （mm:ss，实时走；持有数到上限后不显示）
 LB_BAR_ROI: Rect = (990, 10, 150, 45)
+LB_TIMER_ROI: Rect = (1020, 42, 130, 38)
+
+
+def _digits(text: str) -> str:
+    """小号数字常把 1 识别成 ]、| 等，0 识别成 O。"""
+    return re.sub(r"[|Il!iT\]\[]", "1", _compact(text)).replace("O", "0").replace("o", "0")
 
 
 def lb_bar_held(items: list[OcrItem]) -> int | None:
@@ -235,10 +242,20 @@ def lb_bar_held(items: list[OcrItem]) -> int | None:
     for it in items:
         if not in_roi(it, LB_BAR_ROI):
             continue
-        t = re.sub(r"[|Il!iT\]\[]", "1", _compact(it.text)).replace("O", "0").replace("o", "0")
-        m = re.fullmatch(r"(\d{1,3})/\d{1,3}", t)
+        m = re.fullmatch(r"(\d{1,3})/\d{1,3}", _digits(it.text))
         if m:
             return int(m.group(1))
+    return None
+
+
+def lb_bar_timer(items: list[OcrItem]) -> int | None:
+    """乐队确认页顶栏的 LB 恢复倒计时（秒）。前面的时钟图标有时识别成 ©。"""
+    for it in items:
+        if not in_roi(it, LB_TIMER_ROI):
+            continue
+        m = re.search(r"(\d{1,2})[:：;](\d{2})$", _digits(it.text))
+        if m and int(m.group(2)) < 60:
+            return int(m.group(1)) * 60 + int(m.group(2))
     return None
 
 
