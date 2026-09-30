@@ -9,16 +9,17 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import unquote
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 REPO = "ChissaQAQ/ournotes-auto"
-LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"  # 只返回正式发布的，不含草稿和预发布
-DOWNLOAD_URL = f"https://github.com/{REPO}/releases/latest"
+DOWNLOAD_URL = f"https://github.com/{REPO}/releases/latest"  # 跳转到最新正式发布的，不含草稿和预发布
 CACHE_TTL_S = 6 * 3600  # MXU 每次运行任务都重启 Agent，查过的结果缓存一阵，免得每次都访问 GitHub
 _VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+_TAG_URL = re.compile(r"/releases/tag/([^/?#]+)$")
 
 
 def parse_version(text: str | None) -> tuple[int, ...] | None:
@@ -41,10 +42,16 @@ def current_version(root: Path) -> str | None:
 
 
 def fetch_latest(timeout_s: float = 5.0) -> str:
-    """GitHub 上最新正式发布的 tag。"""
-    resp = requests.get(LATEST_API, headers={"Accept": "application/vnd.github+json"}, timeout=timeout_s)
-    resp.raise_for_status()
-    return str(resp.json()["tag_name"])
+    """GitHub 上最新正式发布的 tag：``/releases/latest`` 会跳转到 ``/releases/tag/<tag>``。
+
+    不用 REST API：不带认证时每个 IP 每小时只有 60 次，公司、学校等共用出口的网络很容易用完。
+    """
+    resp = requests.head(DOWNLOAD_URL, allow_redirects=False, timeout=timeout_s)
+    location = resp.headers.get("Location", "")
+    m = _TAG_URL.search(location)
+    if not resp.is_redirect or m is None:
+        raise ValueError(f"没有找到发布的版本（HTTP {resp.status_code}，跳转到 {location or '无'}）")
+    return unquote(m.group(1))
 
 
 def latest_tag(

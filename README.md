@@ -34,7 +34,7 @@
 - Windows，MuMu 模拟器 12（本项目在 MuMu 6.6.x、Android 15 实例上测试）
 - 模拟器分辨率 **1280×720**（其他 16:9 分辨率会按比例换算，但未充分测试）
 - Python ≥ 3.11
-- 能访问谱面站 `assets.bdon.moe` 与曲名接口 `haneoka.org`（检查更新另外访问 `api.github.com`，可以关掉）
+- 能访问谱面站 `assets.bdon.moe` 与曲名接口 `haneoka.org`（检查更新另外访问 `github.com`，可以关掉）
 
 ## 图形界面（发布包）
 

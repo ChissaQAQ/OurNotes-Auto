@@ -4,8 +4,9 @@ import json
 import logging
 
 import pytest
+import requests
 
-from ournotes_auto.agent.update import DOWNLOAD_URL, UpdateCheck, is_newer, latest_tag, parse_version
+from ournotes_auto.agent.update import DOWNLOAD_URL, UpdateCheck, fetch_latest, is_newer, latest_tag, parse_version
 
 
 def test_parse_version():
@@ -28,6 +29,26 @@ def test_parse_version():
 )
 def test_is_newer(latest, current, newer):
     assert is_newer(latest, current) is newer
+
+
+def _head(monkeypatch, status, location=None):
+    resp = requests.Response()
+    resp.status_code = status
+    if location:
+        resp.headers["Location"] = location
+    monkeypatch.setattr(requests, "head", lambda url, **kw: resp)
+
+
+def test_fetch_latest(monkeypatch):
+    _head(monkeypatch, 302, "https://github.com/ChissaQAQ/ournotes-auto/releases/tag/v0.2.0")
+    assert fetch_latest() == "v0.2.0"
+    # 还没有正式发布时跳转到发布列表
+    _head(monkeypatch, 302, "https://github.com/ChissaQAQ/ournotes-auto/releases")
+    with pytest.raises(ValueError, match="没有找到"):
+        fetch_latest()
+    _head(monkeypatch, 404)
+    with pytest.raises(ValueError, match="404"):
+        fetch_latest()
 
 
 def test_latest_tag_cache(tmp_path):
