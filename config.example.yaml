@@ -34,4 +34,5 @@ loop:
   until_lb_empty: false      # true：打到 LB 用完为止（清体力，需要 game.lb_cost 为 1~3）
   max_failures: 5            # 连续失败这么多次后停止
   ap_difficulties: expert,hard,normal,easy  # AP 补完依次处理的难度
+  ap_first_difficulties: ""  # ap_first 依次补的难度（如 expert,hard,normal,easy），都补完了按 game.difficulty 随机；留空只补 game.difficulty
   ap_max_attempts: 3         # AP 补完 / ap_first 时同一首歌最多打几次

@@ -63,6 +63,13 @@ def test_check_run_config():
     with pytest.raises(SetupError, match="选曲方式"):
         check_run_config(cfg)
     cfg = Config()
+    cfg.loop.song_mode = "ap_first"
+    cfg.loop.ap_first_difficulties = "expert,master"
+    with pytest.raises(SetupError, match="优先没 AP"):
+        check_run_config(cfg)
+    cfg.loop.ap_first_difficulties = ""
+    check_run_config(cfg)
+    cfg = Config()
     cfg.game.lb_cost = 4
     with pytest.raises(SetupError, match="0~3"):
         check_run_config(cfg)

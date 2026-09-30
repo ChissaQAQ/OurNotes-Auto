@@ -19,7 +19,7 @@
                 {
                     "name": "ap_first",
                     "label": "优先没 AP 的歌",
-                    "description": "在所选难度里筛选「未ALL PERFECT」随机抽歌（同一首最多打 3 次）；没有要补的歌了就改回不筛选、随机选曲。结束后把筛选和分类改回原样",
+                    "description": "在所选难度里筛选「未ALL PERFECT」随机抽歌（同一首最多打 3 次）；没有要补的歌了就改回不筛选、随机选曲。难度选「优先高难度」时按 EXPERT → HARD → NORMAL → EASY 依次补，都补完了按 EXPERT 随机。结束后把筛选和分类改回原样",
                     "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "ap_first" } } }
                 },
                 {
@@ -70,6 +70,12 @@
                     "name": "easy",
                     "label": "EASY",
                     "pipeline_override": { "OurNotesParam": { "attach": { "difficulty": "easy" } } }
+                },
+                {
+                    "name": "high_first",
+                    "label": "优先高难度",
+                    "description": "选曲方式为「优先没 AP 的歌」时按 EXPERT → HARD → NORMAL → EASY 依次补没 AP 的歌，都补完了按 EXPERT 随机选曲；其他选曲方式按 EXPERT 打",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "difficulty": "high_first" } } }
                 }
             ],
             "default_case": "expert"

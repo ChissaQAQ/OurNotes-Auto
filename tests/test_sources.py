@@ -162,7 +162,7 @@ class ChooseNav(PickNav):
 
 def test_ap_first_falls_back_to_random():
     nav = ChooseNav({"hard": [SongPick(4)]})
-    src = ApFirst("hard", max_attempts=2)
+    src = ApFirst(["hard"], max_attempts=2)
     assert src.advance(nav, True) and src.difficulty == "hard"
     assert nav.calls == ["category:全部", "filter:hard:not_ap:True", "random"]
     src.done(song(4), "hard", result(4, "hard", 0))  # AP 后列表空了
@@ -177,9 +177,24 @@ def test_ap_first_falls_back_to_random():
     assert nav.calls == ["category:原创"]  # 游玩状况已经改回，只恢复分类
 
 
+def test_ap_first_goes_through_difficulties_then_random_at_fallback():
+    nav = ChooseNav({"expert": [SongPick(1)], "normal": [SongPick(2)]})
+    src = ApFirst(["expert", "hard", "normal", "easy"], fallback="expert")
+    assert src.advance(nav, True) and src.difficulty == "expert"
+    src.done(song(1), "expert", result(1, "expert", 0))
+    nav.calls.clear()
+    assert src.advance(nav, False) and src.difficulty == "normal"  # HARD 已经全部 AP
+    assert nav.calls == ["random", "filter:hard:not_ap:True", "random", "filter:normal:not_ap:True", "random"]
+    src.done(song(2), "normal", result(2, "normal", 0))
+    nav.calls.clear()
+    assert src.advance(nav, False) and src.difficulty == "expert"  # 都补完了，按 EXPERT 随机
+    assert nav.calls == ["random", "filter:easy:not_ap:True", "random", "filter:None:any:False", "choose:random"]
+    assert nav.calls.count("category:全部") == 0
+
+
 def test_ap_first_close_before_fallback():
     nav = ChooseNav({"expert": [SongPick(1)]}, category="全部")
-    src = ApFirst("expert")
+    src = ApFirst(["expert"])
     assert src.advance(nav, True)
     nav.calls.clear()
     src.close(nav)
@@ -206,6 +221,9 @@ def test_make_source():
     cfg.game.difficulty = "normal"
     src = make_source(cfg)
     assert isinstance(src, ApFirst) and src.difficulties == ["normal"] and src.max_attempts == 5
+    cfg.loop.ap_first_difficulties = "expert,hard,normal,easy"
+    src = make_source(cfg)
+    assert src.difficulties == ["expert", "hard", "normal", "easy"] and src.fallback == "normal"
     cfg.loop.song_mode = "list"
     with pytest.raises(ValueError, match="曲目目录"):
         make_source(cfg)

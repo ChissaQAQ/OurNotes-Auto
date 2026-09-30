@@ -160,7 +160,7 @@ class LoopConfig:
     """全自动循环（界面导航）参数。"""
 
     # current：打当前选中曲目；random：每次随机选曲；ap：全曲 AP 补完；
-    # ap_first：在 game.difficulty 里优先打没 AP 的歌，没有了再随机；list：按 song_list 依次打
+    # ap_first：在 game.difficulty（或 ap_first_difficulties）里优先打没 AP 的歌，没有了再随机；list：按 song_list 依次打
     song_mode: str = "current"
     # 歌单：曲目 ID 或曲名，逗号或换行分隔，后面可加 @难度（默认 game.difficulty），如 "100010, 碧天伴走@hard"
     song_list: str = ""
@@ -168,6 +168,9 @@ class LoopConfig:
     until_lb_empty: bool = False  # 打到 LB 用完为止（需要 game.lb_cost 为 1~3；用完后不再改为消耗 0 继续）
     max_failures: int = 5  # 连续失败次数上限
     ap_difficulties: str = "expert,hard,normal,easy"  # AP 补完依次处理的难度（逗号分隔）
+    # ap_first 依次补的难度（逗号分隔，如 "expert,hard,normal,easy"），都补完了按 game.difficulty 随机；
+    # 留空只补 game.difficulty
+    ap_first_difficulties: str = ""
     ap_max_attempts: int = 3  # AP 补完 / ap_first 时同一首歌最多打几次
     ocr_model: str = ""  # 留空使用 resource/model/ocr 下的默认模型
 

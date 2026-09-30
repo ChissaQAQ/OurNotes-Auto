@@ -121,9 +121,18 @@ def test_run_settings_clear_lb():
     assert sets["loop.song_mode"] == "random"
     sets = run_settings("clear_lb", {**ATTACH, "song_mode": "ap_first", "difficulty": "hard"})
     assert sets["loop.song_mode"] == "ap_first" and sets["game.difficulty"] == "hard"
+    assert sets["loop.ap_first_difficulties"] == "hard"
     assert "loop.song_list" not in sets
     sets = run_settings("clear_lb", {**ATTACH, "song_mode": "list", "song_list": " 100010, 碧天伴走@hard "})
     assert sets["loop.song_mode"] == "list" and sets["loop.song_list"] == "100010, 碧天伴走@hard"
+
+
+def test_run_settings_high_first():
+    sets = run_settings("clear_lb", {**ATTACH, "song_mode": "ap_first", "difficulty": "high_first"})
+    assert sets["game.difficulty"] == "expert"  # 都补完了按 EXPERT 随机
+    assert sets["loop.ap_first_difficulties"] == "expert,hard,normal,easy"
+    sets = run_settings("repeat", {**ATTACH, "song_mode": "random", "difficulty": "high_first"})
+    assert sets["game.difficulty"] == "expert" and "loop.ap_first_difficulties" not in sets
 
 
 def test_run_settings_ap():
@@ -255,6 +264,15 @@ def test_worker_args_parse_back():
     check_run_config(cfg)
     assert cfg.loop.song_mode == "ap" and cfg.loop.ap_difficulties == "expert,hard,easy"
     assert cfg.loop.ap_max_attempts == 3 and cfg.game.lb_cost is None
+
+    attach = {**ATTACH, "song_mode": "ap_first", "difficulty": "high_first"}
+    args = build_parser().parse_args(worker_args("clear_lb", attach, device))
+    cfg = Config()
+    for item in args.set:
+        key, _, value = item.partition("=")
+        apply_override(cfg, key, value)
+    check_run_config(cfg)
+    assert cfg.game.difficulty == "expert" and cfg.loop.ap_first_difficulties == "expert,hard,normal,easy"
 
     # 拟人化选项开到最大也能通过校验
     human = {"human_great": 20, "human_timing": 20, "human_position": True}

@@ -157,6 +157,11 @@ def check_run_config(cfg: Config) -> None:
             raise SetupError(f"AP 补完的难度：{e}") from None
         if not diffs:
             raise SetupError("AP 补完至少要选一个难度")
+    if cfg.loop.song_mode == "ap_first":
+        try:
+            parse_difficulties(cfg.loop.ap_first_difficulties)
+        except ValueError as e:
+            raise SetupError(f"优先没 AP 的歌的难度：{e}") from None
     if cfg.loop.song_mode in ("ap", "ap_first"):
         if cfg.loop.ap_max_attempts < 1:
             raise SetupError(f"AP 补完每首最多尝试次数应至少为 1：{cfg.loop.ap_max_attempts}")
@@ -376,7 +381,8 @@ def register(sub) -> None:
     sp.add_argument(
         "--mode",
         choices=SONG_MODES,
-        help="覆盖 loop.song_mode（ap：全曲 AP 补完；ap_first：当前难度优先打没 AP 的歌，没有了再随机；list：按歌单打）",
+        help="覆盖 loop.song_mode（ap：全曲 AP 补完；ap_first：当前难度（或 loop.ap_first_difficulties）"
+        "优先打没 AP 的歌，没有了再随机；list：按歌单打）",
     )
     sp.add_argument("--songs", metavar="LIST", help="覆盖 loop.song_list（歌单：曲目 ID 或曲名，逗号分隔，可加 @难度）")
     sp.add_argument("-n", "--max-plays", type=int, help="覆盖 loop.max_plays（0 为不限）")

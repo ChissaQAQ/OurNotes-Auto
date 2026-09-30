@@ -171,20 +171,29 @@ class ApComplete(_Source):
 
 
 class ApFirst(ApComplete):
-    """优先打一个难度里还没 AP 的歌（重复刷歌 / 清体力用）：没有可打的了（都 AP 了或都放弃了），
-    就把游玩状况改回「不指定」，之后随机选曲，直到打够局数或 LB 用完。"""
+    """优先打还没 AP 的歌（重复刷歌 / 清体力用）：按 ``difficulties`` 依次补（规则同 AP 补完），
+    都没有可打的了（都 AP 了或都放弃了），就把游玩状况改回「不指定」，之后按 ``fallback`` 难度
+    （默认第一个难度）随机选曲，直到打够局数或 LB 用完。"""
 
-    def __init__(self, difficulty: str, max_attempts: int = 3):
-        super().__init__([difficulty], max_attempts)
+    def __init__(self, difficulties: list[str], max_attempts: int = 3, fallback: str | None = None):
+        super().__init__(difficulties, max_attempts)
+        fallback = fallback or self.difficulties[0]
+        if fallback not in DIFFICULTIES:
+            raise ValueError(f"未知的难度：{fallback}")
+        self.fallback = fallback
         self._random = False
+
+    @property
+    def difficulty(self) -> str:
+        return self.fallback if self._random else super().difficulty
 
     def advance(self, nav: Navigator, first: bool) -> bool:
         if not self._random:
             if super().advance(nav, first):
                 return True
-            logger.info("%s 没有要补的歌了，改为随机选曲", self.difficulty.upper())
-            nav.set_song_filter(status="any")
             self._random = True
+            logger.info("没有要补的歌了，改为 %s 随机选曲", self.difficulty.upper())
+            nav.set_song_filter(status="any")
         nav.choose_next_song("random")
         return True
 
@@ -310,7 +319,8 @@ def make_source(cfg: Config, catalog: Catalog | None = None) -> SongSource:
     if mode == "random":
         return RandomSong(difficulty)
     if mode == "ap_first":
-        return ApFirst(difficulty, cfg.loop.ap_max_attempts)
+        diffs = parse_difficulties(cfg.loop.ap_first_difficulties) or [difficulty]
+        return ApFirst(diffs, cfg.loop.ap_max_attempts, fallback=difficulty)
     if mode == "list":
         if catalog is None:
             raise ValueError("歌单模式需要曲目目录")
