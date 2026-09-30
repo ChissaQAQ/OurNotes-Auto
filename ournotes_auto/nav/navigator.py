@@ -8,6 +8,10 @@
 
 结算页出现后可能陆续弹出达成奖励列表、最高分评级等，都点「关闭」。
 
+活动期间羁绊页只有「下一步」，后面还有（第一次）活动故事解锁 -[关闭]-> 获得活动pt达成奖励 -[OK]->
+活动结算页（活动pt），它和平时的羁绊页一样有「再次演出」。以后的活动可能还会多出别的页面：离开结算页时
+看到「下一步」就点；认不出、画面又一直不动时直接停下（见 :data:`FROZEN_S`），不再反复重试。
+
 每天游戏日期变更时弹窗要求回到标题画面::
 
     日期变更 -[前往标题画面]-> 标题 -[TAP TO START]-> 加载 → 登录奖励（×n，每页领取后弹「获得奖励」-[OK]->）
@@ -26,11 +30,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from ..config import Config
 from ..device.base import FrameSource
 from ..result_reader import OcrItem, ResultCounts, merge, parse_int, parse_totals
-from ..runner import LbExhausted, NavigationError, SongLabel
+from ..runner import LbExhausted, NavigationError, ScreenFrozen, SongLabel
 from .jacket import JacketMatcher, crop_jacket
 from .ocr import MaaOcr
 from .screens import (
@@ -38,6 +43,7 @@ from .screens import (
     LB_ALL_CHECK,
     LB_RADIO,
     LEVEL_ROI,
+    NEXT_ROI,
     RELOGIN_SCREENS,
     RESULT_COMBO_ROI,
     RESULT_SCORE_ROI,
@@ -100,6 +106,11 @@ TITLE_STUCK_S = 60.0
 MAX_RESTARTS = 2
 # 连续这么久认不出画面就检查一次游戏是否还在运行（闪退后停在桌面上）
 APP_CHECK_S = 30.0
+# 认不出（或以为还在播动画）的画面这么久一点没变，就是停在了没见过的页面或弹窗上，干等不会变（比 APP_CHECK_S 长，
+# 闪退后的桌面先由 _check_app 处理）。模拟器截图没有噪声，停住的画面逐像素相同；动画、转圈的缩略图会变几十上百
+FROZEN_S = 60.0
+FROZEN_THUMB = (160, 90)
+FROZEN_DIFF = 4
 # LB 用完改为消耗 0 后，这么久之内不再尝试按配置消耗（LB 随时间恢复；玩家升级时回满，看到升级画面就重新尝试）
 LB_EMPTY_RETRY_S = 30 * 60
 # 结算页出现约 1s 后可能叠上来的弹窗（首次达成奖励、评级提升及其奖励等），读数前先关掉
@@ -146,6 +157,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         self._title_tap_at = -TITLE_TAP_GAP_S
         self._restarts = 0
         self._unknown_since: float | None = None  # 连续认不出画面的起点（每检查一次游戏进程重新计）
+        self._still = None  # (起点, 缩略图)：认不出的画面从什么时候起没变过
 
     # ------------------------------------------------------------ 基础操作
 
@@ -153,7 +165,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         if self.stop.wait(seconds):
             raise NavigationError("已停止")
 
-    def look(self) -> tuple[Screen, list[OcrItem]]:
+    def look(self, still_ok: bool = False) -> tuple[Screen, list[OcrItem]]:
+        """截图并判断画面。``still_ok``：画面长时间不动也正常（等结算时歌可能还在放），不按 FROZEN_S 判断卡住。"""
         frame, _ = self.source.grab()
         self._frame = frame
         items = self._items = self.ocr.read(frame)
@@ -169,6 +182,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
             self._check_app()
         else:
             self._unknown_since = None
+        self._check_frozen(screen, still_ok)
         return screen, items
 
     def _check_app(self) -> None:
@@ -193,6 +207,33 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         logger.warning("游戏没有在运行（可能闪退了），重新启动")
         self._restarts += 1
         self.restart_app()
+
+    def _check_frozen(self, screen: Screen, still_ok: bool) -> None:
+        """认不出（或以为还在播动画）的画面 FROZEN_S 内一点没变：抛 :class:`ScreenFrozen` 让任务停下，不再反复重试。
+        要能确认游戏还在运行才判断。"""
+        if still_ok or screen not in (Screen.UNKNOWN, Screen.RESULT_OTHER) or self.app_running is None:
+            self._still = None
+            return
+        if not isinstance(self._frame, np.ndarray):  # 测试里用画面名代替截图
+            return
+        gray = cv2.cvtColor(self._frame, cv2.COLOR_BGR2GRAY)
+        thumb = cv2.resize(gray, FROZEN_THUMB, interpolation=cv2.INTER_AREA)
+        now = time.monotonic()
+        if self._still is None or int(cv2.absdiff(self._still[1], thumb).max()) > FROZEN_DIFF:
+            self._still = (now, thumb)
+            return
+        since = self._still[0]
+        if now - since < FROZEN_S:
+            return
+        try:
+            running = self.app_running()
+        except (OSError, subprocess.SubprocessError) as e:
+            logger.warning("检查游戏进程失败：%s", e)
+            running = False
+        if not running:
+            self._still = (now, thumb)  # 过一阵再查
+            return
+        raise self._fail(f"画面 {now - since:.0f}s 没有变化，也认不出是什么页面（可能是没见过的页面或弹窗）", ScreenFrozen)
 
     def tap(self, point: tuple[int, int], what: str = "") -> None:
         w, h = self.source.size
@@ -227,9 +268,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         path.write_bytes(buf.tobytes())
         return path
 
-    def _fail(self, message: str) -> NavigationError:
+    def _fail(self, message: str, error: type[NavigationError] = NavigationError) -> NavigationError:
         path = self.save_debug(self.last_screen.name.lower())
-        return NavigationError(f"{message}（画面：{self.last_screen}{f'，截图 {path}' if path else ''}）")
+        return error(f"{message}（画面：{self.last_screen}{f'，截图 {path}' if path else ''}）")
 
     def _common_step(self, screen: Screen, items: list[OcrItem]) -> bool:
         """与目标无关的通用处理（关弹窗、翻页），做了操作返回 True。"""
@@ -241,8 +282,11 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
             what = find(items, "现在可以选择") or find(items, "已解锁")
             logger.info("解锁：%s", what.text.strip() if what else "（没认出内容）")
             self.tap(self._button(items, "关闭", BTN_UNLOCK_CLOSE, UNLOCK_CLOSE_ROI), "关闭")
-        elif screen in (Screen.RESULT, Screen.RESULT_REWARD):
+        elif screen in (Screen.RESULT, Screen.RESULT_REWARD, Screen.RESULT_EXP_NEXT):
             self.tap(self._button(items, "下一步", BTN_NEXT), "下一步")
+        elif screen is Screen.RESULT_OTHER and (it := find(items, "下一步", NEXT_ROI, exact=True)):
+            # 没见过的结算页（活动可能多出几页）。读判定数时不经过这里，所以看到「下一步」就点
+            self.tap(center(it), "下一步")
         elif screen is Screen.RESULT_EXP:
             self.tap(self._button(items, "再次演出", BTN_AGAIN), "再次演出")
         elif screen is Screen.RANK_UP:
@@ -516,7 +560,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         """
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            screen, items = self.look()
+            screen, items = self.look(still_ok=True)
             if screen is Screen.RESULT:
                 return self._read_result_page(items, expected_total)
             if screen in RELOGIN_SCREENS:
@@ -527,6 +571,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
             elif screen in (
                 Screen.RESULT_REWARD,
                 Screen.RANK_UP,
+                Screen.RESULT_EXP_NEXT,
                 Screen.RESULT_EXP,
                 Screen.SONG_SELECT,
                 Screen.BAND_CONFIRM,
@@ -619,7 +664,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         return rc
 
     def leave_result(self, timeout_s: float = 60.0) -> None:
-        """结算页 → 下一步 ×2 → 再次演出，停在乐曲选择页（同一首歌）。"""
+        """结算页 → 下一步 ×2（活动期间更多）→ 再次演出，停在乐曲选择页（同一首歌）。"""
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             screen, items = self.look()

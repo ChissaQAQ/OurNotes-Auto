@@ -27,6 +27,7 @@ class Screen(StrEnum):
     RESULT = "结算"  # 判定数页
     RESULT_REWARD = "结算-奖励"
     RESULT_EXP = "结算-羁绊"  # 有「再次演出」的最后一页
+    RESULT_EXP_NEXT = "结算-羁绊（下一步）"  # 活动期间的羁绊页只有「下一步」，后面还有活动结算页
     RESULT_OTHER = "结算-过渡"  # 标题已出现但内容还在动画中
     RANK_UP = "玩家等级提升"  # 结算奖励页上弹出，LB 同时回满
     GRADE_UP = "评级提升"  # 结算页上弹出的「GRADE UP」（最高分评级升段），只有「OK」
@@ -80,6 +81,8 @@ UNLOCK_TITLE_ROI: Rect = (440, 90, 400, 60)
 UNLOCK_CLOSE_ROI: Rect = (440, 530, 400, 80)
 # 只有「OK」的弹窗顶部的标题：「获得奖励」「领取奖励」（两种弹窗标题高度不同）、GRADE UP 大字
 REWARD_ROI: Rect = (440, 10, 400, 160)
+# 结算页右下角的「下一步」
+NEXT_ROI: Rect = (980, 630, 260, 60)
 # 标题画面右上角的 CRIWARE 标志（整页只有它读得稳）；「TAP TO START」读不准，只看那一带有没有字：
 # 刚启动时标题画面要加载一阵才出现这行字，这之前点击无效
 TITLE_LOGO_ROI: Rect = (1060, 50, 100, 35)
@@ -151,6 +154,9 @@ def classify(items: list[OcrItem]) -> Screen:
             return Screen.RESULT
         if find(items, "玩家等级"):
             return Screen.RESULT_REWARD
+        # 「羁绊」常读成「霜绊」
+        if find(items, "下一步", NEXT_ROI, exact=True) and (find(items, "详情") or find(items, "绊EXP")):
+            return Screen.RESULT_EXP_NEXT
         return Screen.RESULT_OTHER
     for text, screen in _TITLES.items():
         if find(items, text, TITLE_ROI):

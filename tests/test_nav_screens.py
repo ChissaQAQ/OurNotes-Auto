@@ -35,6 +35,10 @@ def load(name: str) -> list[OcrItem]:
         ("result_timing", Screen.RESULT),
         ("result_reward", Screen.RESULT_REWARD),
         ("result_exp", Screen.RESULT_EXP),
+        ("result_exp_next", Screen.RESULT_EXP_NEXT),  # 活动期间的羁绊页只有「下一步」
+        ("result_event", Screen.RESULT_EXP),  # 活动结算页（活动pt），也有「再次演出」
+        ("event_story_unlock", Screen.UNLOCK),  # 故事解锁：活动故事
+        ("event_pt_reward", Screen.REWARD),  # 获得活动pt达成奖励
         ("live_clear", Screen.LIVE_END),
         ("live_finish", Screen.LIVE_END),
         ("achievement", Screen.ACHIEVEMENT),

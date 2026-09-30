@@ -13,7 +13,7 @@ from ournotes_auto.nav import navigator
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import LB_RADIO, RESULT_ROW_Y
 from ournotes_auto.result_reader import OcrItem
-from ournotes_auto.runner import LbExhausted, NavigationError
+from ournotes_auto.runner import LbExhausted, NavigationError, ScreenFrozen
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MODEL_DIR = Path("resource") / "model" / "ocr"
@@ -53,6 +53,11 @@ TRANSITIONS = {
     "bond_up": [((640, 660), "bond_story_unlock")],
     "bond_story_unlock": [((640, 570), "result_exp")],
     "result_exp": [((1104, 660), "song_select")],
+    # 活动期间：羁绊页只有「下一步」→ 活动故事解锁 → 活动pt达成奖励 → 活动结算页
+    "result_exp_next": [((1105, 660), "event_story_unlock")],
+    "event_story_unlock": [((640, 569), "event_pt_reward")],
+    "event_pt_reward": [((640, 658), "result_event")],
+    "result_event": [((1074, 658), "song_select")],
     # 日期变更 → 重新登录
     "date_change": [((640, 572), "title")],
     "title": [((950, 585), "login_bonus")],
@@ -141,6 +146,32 @@ def test_bond_up_after_result():
     assert game.state == "song_select"
     assert nav._lb_empty_at == 1.0
     assert [s for s, _ in game.taps][:2] == ["bond_up", "bond_story_unlock"]
+
+
+def test_event_result_pages():
+    """活动期间羁绊页只有「下一步」，后面是活动故事解锁、活动pt达成奖励、活动结算页（再次演出）。"""
+    game = FakeGame("result_exp_next")
+    nav = make_nav(game, game, game)
+    nav.leave_result()
+    assert game.state == "song_select"
+    assert [s for s, _ in game.taps] == ["result_exp_next", "event_story_unlock", "event_pt_reward", "result_event"]
+
+
+def test_unknown_result_page_taps_next():
+    """没见过的结算页（认不出，右下角有「下一步」）：离开结算页时照样点「下一步」。"""
+
+    class UnknownPage(FakeGame):
+        def read(self, frame, roi=None):
+            items = super().read(frame, roi)
+            if frame == "result_exp_next":
+                items = [it for it in items if it.text != "详情" and "绊EXP" not in it.text]
+            return items
+
+    game = UnknownPage("result_exp_next")
+    nav = make_nav(game, game, game)
+    assert navigator.classify(game.read("result_exp_next")) is navigator.Screen.RESULT_OTHER
+    nav.leave_result()
+    assert game.state == "song_select" and game.taps[0][0] == "result_exp_next"
 
 
 def test_popup_over_result():
@@ -498,6 +529,69 @@ def test_crashed_game_without_restart_fails(monkeypatch):
     with pytest.raises(NavigationError, match="没有在运行"):
         nav.ensure_band_confirm()
     assert game.restarts == 0
+
+
+class FrozenGame(FakeGame):
+    """一直停在 ``state`` 上（点了也没反应）。截图是真图像，``moving`` 时每帧都不一样；识别结果仍按画面名。"""
+
+    def __init__(self, state, moving=False, running=True, drop=()):
+        super().__init__(state)
+        self.moving, self.running, self.drop = moving, running, drop
+        self.grabs = 0
+
+    def grab(self):
+        self.grabs += 1
+        return np.full((90, 160, 3), self.grabs % 2 * 100 if self.moving else 40, np.uint8), 0.0
+
+    def tap(self, x, y):
+        self.taps.append((self.state, (x, y)))
+
+    def read(self, frame, roi=None):
+        return [it for it in load_items(self.state) if it.text not in self.drop]
+
+
+def frozen_nav(monkeypatch, game):
+    nav = make_nav(game, game, game)
+    nav.save_debug = lambda *a: None
+    nav.app_running = lambda: game.running
+    return nav, fake_clock(monkeypatch, nav)
+
+
+@pytest.mark.parametrize(
+    "state, drop",
+    [
+        ("intro_card", ()),  # 认不出的画面
+        ("result_exp_next", ("详情", "下一步")),  # 认不出、也没有「下一步」的结算页（当成还在播动画）
+    ],
+)
+def test_frozen_screen_stops_early(monkeypatch, state, drop):
+    """画面一直不动、游戏还在运行：FROZEN_S 后就抛 ScreenFrozen，不等到超时。"""
+    game = FrozenGame(state, drop=drop)
+    nav, now = frozen_nav(monkeypatch, game)
+    start = now[0]
+    with pytest.raises(ScreenFrozen, match="没有变化"):
+        nav.ensure_in_game()
+    assert navigator.FROZEN_S <= now[0] - start < navigator.FROZEN_S + 5
+    assert game.taps == []
+
+
+@pytest.mark.parametrize("moving, running, error", [(True, True, "未能进入游戏"), (False, False, "没有在运行")])
+def test_moving_or_crashed_screen_is_not_frozen(monkeypatch, moving, running, error):
+    """画面在动（加载动画）时照常等到超时；游戏不在运行时按闪退处理。"""
+    game = FrozenGame("intro_card", moving=moving, running=running)
+    nav, _ = frozen_nav(monkeypatch, game)
+    with pytest.raises(NavigationError, match=error) as e:
+        nav.ensure_in_game(timeout_s=150)
+    assert not isinstance(e.value, ScreenFrozen)
+
+
+def test_read_result_waits_through_still_screen(monkeypatch):
+    """等结算时歌可能还在放（同步失败），画面不动也不算卡住。"""
+    game = FrozenGame("intro_card")
+    nav, _ = frozen_nav(monkeypatch, game)
+    with pytest.raises(NavigationError, match="没有出现结算页") as e:
+        nav.read_result(timeout_s=150)
+    assert not isinstance(e.value, ScreenFrozen)
 
 
 # ---------------------------------------------------------------- 真实 OCR（需要模型）

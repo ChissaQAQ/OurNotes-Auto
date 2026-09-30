@@ -307,3 +307,45 @@ def test_runner_skips_close_when_stopped(tmp_path):
     nav.start_live = stopped
     runner.run()
     assert ("close",) not in src.log
+
+
+def test_failed_leave_keeps_result(tmp_path):
+    """离开结算页失败（如没见过的结算页）：这一局已经记下，只算导航失败。"""
+    from ournotes_auto.runner import NavigationError
+
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.max_plays = 1
+    runner.source = src = ApSource()
+
+    def broken():
+        raise NavigationError("未能离开结算页")
+
+    nav.leave_result = broken
+    stats = runner.run()
+    assert stats.plays == 1 and stats.full_combo == 1 and stats.failures == 1
+    assert len(store.history()) == 1
+    assert ("done", 100008, "expert", True, True) in src.log
+
+
+@pytest.mark.parametrize("where", ["leave", "advance"])
+def test_frozen_screen_stops_at_once(tmp_path, where):
+    """画面卡住不动：不再重试，也不去恢复选曲页的设置。"""
+    from ournotes_auto.runner import ScreenFrozen
+
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.max_plays = 0
+    runner.source = src = ApSource(songs=5)
+
+    def frozen(*a):
+        raise ScreenFrozen("画面 60s 没有变化")
+
+    if where == "leave":
+        nav.leave_result = frozen
+    else:
+        advance = src.advance
+        src.advance = lambda nav, first: advance(nav, first) if first else frozen()
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 1
+    assert len(store.history()) == 1
+    assert ("close",) not in src.log
+    assert [e for e in src.log if e[0] == "advance"] == [("advance", True)]

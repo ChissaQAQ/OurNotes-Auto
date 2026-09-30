@@ -29,6 +29,10 @@ class NavigationError(RuntimeError):
     pass
 
 
+class ScreenFrozen(NavigationError):
+    """停在认不出的画面上、画面一直不动（多半是没见过的页面或弹窗在等人操作），重试也没用。"""
+
+
 class LbExhausted(Exception):
     """LB 已用完（且不允许改为消耗 0 继续打）。"""
 
@@ -179,9 +183,14 @@ class Runner:
             # 暂停菜单、闪退后的桌面等交给下一局开头的导航处理
             raise NavigationError(str(e)) from e
         counts = self.nav.read_result(chart.judged_count or None)
-        self.nav.leave_result()
+        # 先记下这一局再离开结算页：离开时出错（如遇到没见过的结算页）也不丢记录
         result = None if outcome is None else self._record(outcome, counts)
         self.source.done(song, diff, result)
+        if result is not None:
+            self.stats.plays += 1
+            self.stats.full_combo += bool(result.full_combo)
+            self.stats.all_perfect += bool(result.all_perfect)
+        self.nav.leave_result()
         return result
 
     def _record(self, outcome: PlayOutcome, rc: ResultCounts) -> PlayResult:
@@ -253,6 +262,8 @@ class Runner:
         """换到下一局的曲目；换歌失败只记录（下一局的 ensure_band_confirm 会从任意画面恢复，只是这次没换成歌）。"""
         try:
             more = self.source.advance(self.nav, first)
+        except ScreenFrozen:
+            raise
         except (NavigationError, TimeoutError) as e:
             if self.stop.is_set():
                 return False
@@ -268,6 +279,28 @@ class Runner:
         return more
 
     def run(self) -> RunStats:
+        try:
+            self._loop()
+        except ScreenFrozen as e:
+            # 干等画面不会变，重试也没用（恢复选曲页的设置同样做不了）
+            logger.error("%s，停止", e)
+            self.stats.failures += 1
+        else:
+            if not self.stop.is_set():
+                try:
+                    self.source.close(self.nav)
+                except (NavigationError, TimeoutError) as e:
+                    logger.warning("恢复选曲页的设置失败：%s", e)
+        logger.info(
+            "共演奏 %d 局：FC %d，AP %d，失败 %d",
+            self.stats.plays,
+            self.stats.full_combo,
+            self.stats.all_perfect,
+            self.stats.failures,
+        )
+        return self.stats
+
+    def _loop(self) -> None:
         lc = self.cfg.loop
         consecutive = 0
         self._change_failures = 0
@@ -281,6 +314,8 @@ class Runner:
             except LbExhausted as e:
                 logger.info("%s，结束", e)
                 break
+            except ScreenFrozen:
+                raise
             except (NavigationError, TimeoutError) as e:
                 if self.stop.is_set():
                     break
@@ -294,19 +329,3 @@ class Runner:
                     break
             else:
                 consecutive = 0
-                self.stats.plays += 1
-                self.stats.full_combo += bool(result.full_combo)
-                self.stats.all_perfect += bool(result.all_perfect)
-        if not self.stop.is_set():
-            try:
-                self.source.close(self.nav)
-            except (NavigationError, TimeoutError) as e:
-                logger.warning("恢复选曲页的设置失败：%s", e)
-        logger.info(
-            "共演奏 %d 局：FC %d，AP %d，失败 %d",
-            self.stats.plays,
-            self.stats.full_combo,
-            self.stats.all_perfect,
-            self.stats.failures,
-        )
-        return self.stats
