@@ -6,7 +6,7 @@
             "group": [
                 "daily"
             ],
-            "description": "依次打开选中的页面，「一键领取」亮着才点；领取后弹出的「获得奖励」只点 OK，认不出的确认框不点、报错停下。不会招募、购买、使用星钻，不强化成员。游戏没在运行时先启动；结束时停在主界面。打完歌每日任务才满，放在演奏任务后面能一起领到。",
+            "description": "依次打开选中的页面，「一键领取」亮着才点；领取后弹出的「获得奖励」只点 OK，认不出的确认框不点、报错停下。不会招募、使用星钻（商店里只领价格是「免费」的商品），不强化成员。游戏没在运行时先启动；结束时停在主界面。打完歌每日任务才满，放在演奏任务后面能一起领到。",
             "option": [
                 "DailyStudio",
                 "DailyStory",
@@ -14,6 +14,7 @@
                 "DailyPass",
                 "DailyLimited",
                 "DailyBeginner",
+                "DailyTgw",
                 "DailyGifts"
             ],
             "default_check": true
@@ -181,6 +182,34 @@
                         "OurNotesParam": {
                             "attach": {
                                 "daily_beginner": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "DailyTgw": {
+            "type": "switch",
+            "label": "T.G.W CARD",
+            "description": "在商店的 T.G.W CARD 页领每日积分和每日奖励，再到「T.G.W CARD 专享商品目录」领价格写着「免费」的商品（每天 23:00 重置）。只点「免费」的，要星钻的商品和礼包不点；领完核对星钻数没变",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_tgw": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_tgw": false
                             }
                         }
                     }

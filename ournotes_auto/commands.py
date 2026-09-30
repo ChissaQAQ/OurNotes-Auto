@@ -362,12 +362,15 @@ def register(sub) -> None:
     sp.add_argument("--timeout", type=float, default=180.0, help="多久没进入游戏就报错（秒，重新登录时重新计时）")
     sp.set_defaults(func=cmd_start)
 
-    sp = sub.add_parser("daily", help="领取日常奖励（录音室练习、任务、通行证、限定/新手任务、礼物盒），可选看故事")
+    sp = sub.add_parser(
+        "daily", help="领取日常奖励（录音室练习、任务、通行证、限定/新手任务、T.G.W CARD、礼物盒），可选看故事"
+    )
     sp.add_argument(
         "--jobs",
         type=_daily_jobs,
         help="只做这几项，逗号分隔：studio 录音室练习、story 看故事（跳过没看过的乐队 / 视角 / 羁绊故事）、missions 任务、"
-        "pass 通行证、limited 限定任务、beginner 新手任务、gifts 礼物盒（默认除 story 外全部，总是按这个顺序）",
+        "pass 通行证、limited 限定任务、beginner 新手任务、tgw T.G.W CARD（每日积分、每日奖励、商店里的免费商品）、"
+        "gifts 礼物盒（默认除 story 外全部，总是按这个顺序）",
     )
     sp.set_defaults(func=cmd_daily)
 

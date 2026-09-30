@@ -24,6 +24,7 @@
             "daily_pass": true,
             "daily_limited": true,
             "daily_beginner": true,
+            "daily_tgw": true,
             "daily_gifts": true
         }
     },

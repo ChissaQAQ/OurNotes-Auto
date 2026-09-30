@@ -44,7 +44,7 @@
 | 重复刷歌 | 在自由演出里连续演奏，可选选曲方式（当前曲 / 随机 / 优先未 AP / 指定歌单）、难度、局数、每局消耗的 LB。难度选「优先高难度」时，「优先未 AP」从 EXPERT 到 EASY 依次补，都补完了按 EXPERT 随机；其他选曲方式按 EXPERT 打 |
 | 清体力 | 连续演奏到 LIVE BOOST 用完（每局前看持有数，为 0 就结束），不用恢复道具或星钻。升级会回满 LB，所以局数可能比预计的多 |
 | AP补完 | 把所选难度（EXPERT / HARD / NORMAL / EASY）里还没 ALL PERFECT 的歌打到 AP。会临时把选曲页切到「全部」分类、筛选「未ALL PERFECT」，正常结束后改回原样 |
-| 领取日常 | 依次领取录音室练习（收获）、任务、通行证任务与 PASS 普通档、限定任务、新手任务、礼物盒的奖励，每项可单独关掉。只点亮着的「一键领取」和奖励弹窗的 OK；不认得的弹窗不点，报错停下。打完歌后每日任务才满，所以排在演奏任务后面。可选「看故事（跳过）」（默认关）：把没看过的乐队故事、视角故事、羁绊故事逐话跳过，解锁乐曲、领看完的奖励，每话第一次看要下载数据（无语音，乐队故事约 30MB） |
+| 领取日常 | 依次领取录音室练习（收获）、任务、通行证任务与 PASS 普通档、限定任务、新手任务、T.G.W CARD、礼物盒的奖励，每项可单独关掉。只点亮着的「一键领取」和奖励弹窗的 OK；T.G.W CARD 领每日积分、每日奖励和商店专享商品目录里价格写着「免费」的商品，要星钻的不点；不认得的弹窗不点，报错停下。打完歌后每日任务才满，所以排在演奏任务后面。可选「看故事（跳过）」（默认关）：把没看过的乐队故事、视角故事、羁绊故事逐话跳过，解锁乐曲、领看完的奖励，每话第一次看要下载数据（无语音，乐队故事约 30MB） |
 | 记录汇总 | 在日志里列出本工具的演奏记录，不操作模拟器 |
 
 需要调整默认值以外的参数（如时间偏移）时，把 [config.example.yaml](config.example.yaml) 复制为解压目录里的 `config.yaml` 再修改。界面里的选项优先于它。
@@ -93,10 +93,10 @@ ournotes-auto run                          # 按配置
 ournotes-auto run -n 3 --mode random -d expert   # 随机选曲、EXPERT、打 3 局后停止
 ournotes-auto run --watch-combo --record   # 调试：日志里列出断连处的音符；同步失败时保存截图到 debug/sync
 
-# 启动游戏并进入主界面；领取日常奖励（默认除看故事外六项全领，--jobs 只做其中几项）
+# 启动游戏并进入主界面；领取日常奖励（默认除看故事外七项全领，--jobs 只做其中几项）
 ournotes-auto start
 ournotes-auto daily
-ournotes-auto daily --jobs studio,missions,pass,limited,beginner,gifts   # 录音室练习、任务、通行证、限定任务、新手任务、礼物盒
+ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,gifts   # 录音室练习、任务、通行证、限定任务、新手任务、T.G.W CARD、礼物盒
 ournotes-auto daily --jobs story   # 跳过没看过的乐队 / 视角 / 羁绊故事（要写明才做）
 
 # 汇总本地演奏记录（总局数、AP 过的谱面、还没 AP 的谱面、最近几局）

@@ -229,9 +229,9 @@ def test_worker_args_daily():
     args = worker_args("daily", attach, {"device.instance": "1"})
     assert args == [
         "--set", "device.instance=1", "--set", "device.touch=mumu",
-        "daily", "--jobs", "studio,story,missions,pass,beginner,gifts",
+        "daily", "--jobs", "studio,story,missions,pass,beginner,tgw,gifts",
     ]
-    assert build_parser().parse_args(args).jobs == ["studio", "story", "missions", "pass", "beginner", "gifts"]
+    assert build_parser().parse_args(args).jobs == ["studio", "story", "missions", "pass", "beginner", "tgw", "gifts"]
     with pytest.raises(ParamError, match="至少要选一项"):
         worker_args("daily", {"touch": "mumu", **{f"daily_{j}": False for j in DAILY_JOBS}}, {})
     with pytest.raises(SystemExit):

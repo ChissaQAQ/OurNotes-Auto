@@ -1,13 +1,16 @@
-"""日常：领取录音室练习、任务、通行证、限定任务、新手任务、礼物盒的奖励（坐标均为 1280x720 设计尺寸）。
+"""日常：领取录音室练习、任务、通行证、限定任务、新手任务、T.G.W CARD、礼物盒的奖励（坐标均为 1280x720 设计尺寸）。
 
 - 入口都在主界面。右侧一排从上到下是：礼物盒、任务、PASS（任务通行证）、交换所、录音室练习、消息。
-  左侧一列是：新手任务、好友邀请、限定任务。左侧的入口随活动增减，位置可能变化，所以打开后都要核对标题。
+  左侧一列是：新手任务、好友邀请、限定任务。底部是招募、商店。左侧的入口随活动增减，位置可能变化，所以打开后都要核对标题。
 - 任务、礼物盒、通行证任务是弹窗，左下角有「关闭」。其余是整页，左上角有主页按钮（房子图标）。
 - 「一键领取」没有可领的奖励时是灰的，亮着才点。
   - 录音室练习的一键领取总是亮的，没有奖励时提示「没有可领取的奖励。」。
-- 领取后依次弹出的「获得奖励」只点 OK；练习等级提升点空白处继续；其他弹窗只点「关闭」「取消」。
+- 领取后依次弹出的「获得奖励」只点 OK（T.G.W CARD 积分的只有「关闭」）；练习等级提升点空白处继续；其他弹窗只点「关闭」「取消」。
   - 认不出的确认框一律不点，报错停下。
-- 不碰招募、商店、礼包、交换所、通行证高级档和 pt 旁的「+」，不用星钻。
+- T.G.W CARD 在商店里：T.G.W CARD 页领每日积分和每日奖励，专享商品目录里只领价格是「免费」的商品。
+  - 免费商品点「购买」直接买下（没有确认框），弹出「购买完成」只点 OK。
+  - 领完后面的商品会补到同一格（可能要星钻），所以不按位置点：每次都重新认「免费」，领完核对星钻数没变。
+- 不碰招募、礼包、交换所、通行证高级档和 pt 旁的「+」，不用星钻。
 - 看故事（跳过没看过的乐队故事、视角故事、羁绊故事）在 story.py。
 """
 
@@ -34,6 +37,7 @@ DAILY_JOBS = {
     "pass": "任务通行证",
     "limited": "限定任务",
     "beginner": "新手任务",
+    "tgw": "T.G.W CARD",
     "gifts": "礼物盒",
 }
 # 不指定项目时不做的（要下载数据、比较慢，界面上默认也不勾）
@@ -47,13 +51,15 @@ HOME_ENTRIES = {
     "限定任务": (40, 325),
     "新手任务": (40, 152),
     "礼物盒": (1232, 150),
+    "商店": (690, 620),
 }
 # 页面标题（左上角）必须完全相等：「任务」「通行证任务」「任务通行证」互相包含，「录音室练习奖励」是领取后的弹窗
 POPUP_PAGES = ("任务", "礼物盒", "通行证任务")  # 左下角「关闭」
-FULL_PAGES = ("录音室练习", "任务通行证", "限定任务", "新手任务", "好友邀请", "交换所")  # 左上角主页按钮
+FULL_PAGES = ("录音室练习", "任务通行证", "限定任务", "新手任务", "好友邀请", "交换所", "商店", "T.G.WCARD")  # 左上角主页按钮
 BTN_PAGE_CLOSE = (497, 655)
 PAGE_CLOSE_ROI: Rect = (400, 620, 200, 70)
 BTN_HOME = (164, 40)  # 左上角主页按钮
+BTN_BACK = (60, 40)  # 主页按钮左边的返回
 
 # 各页「一键领取」的位置。按钮底色亮着约 180，灰的约 90，在文字左侧取样
 CLAIM_BUTTONS = {
@@ -81,6 +87,25 @@ _DAY_TAB = re.compile(r"\d+天")
 # 任务通行证页右上角的「通行证任务」（左边 pt 旁的「+」是购买，不要点）
 BTN_PASS_MISSIONS = (1165, 40)
 PASS_MISSIONS_ROI: Rect = (1080, 10, 190, 60)
+# 商店左下角的 T.G.W CARD 入口；左侧分页从上到下是星钻、礼包、T.G.W CARD 专享商品目录、交织的乐章通行证
+BTN_TGW = (113, 555)
+TGW_ROI: Rect = (0, 480, 240, 140)
+BTN_CATALOG_TAB = (113, 268)
+SHOP_TAB_ROI: Rect = (0, 90, 260, 300)
+# 选中的分页是青色（G 约 170、R 约 90），没选中的是蓝紫色（G 约 90），在分页左侧取样
+SHOP_TAB_SAMPLE_X = 40
+# T.G.W CARD 页的领取按钮：(名称, 按钮文字, 默认位置, 在文字左边多远取亮度)
+TGW_CLAIMS = (("积分", "领取积分", (136, 663), -50), ("每日奖励", "领取", (1016, 657), -75))
+# 商店的商品格：「购买」正下方是价格（「免费」或星钻数）
+SHOP_GRID_ROI: Rect = (250, 90, 1000, 630)
+FREE_BUY_DX = 25
+FREE_BUY_DY = 50
+SHOP_FREE_MAX = 5  # 一次最多领这么多件，领完还有就停下
+GEM_ROI: Rect = (1040, 5, 140, 55)  # 右上角的星钻数
+_GEMS = re.compile(r"\d{1,3}(,\d{3})*")
+PURCHASE_TITLE_ROI: Rect = (400, 0, 480, 70)  # 「购买完成」在画面顶部中央
+PURCHASE_WAIT_S = 8.0  # 点了「购买」这么久还停在商店就算没反应
+PURCHASE_RETAP_S = 5.0  # 点了 OK 这么久「购买完成」还在才再点
 TAP_LEVEL_UP = (640, 660)  # 练习等级 LEVEL UP：点下方空白处继续
 BOTTOM_ROI: Rect = (0, 600, 1280, 120)
 # 只有 OK 的提示弹窗（领取奖励、通行证 pt 到账）的标题和 OK 所在范围
@@ -116,11 +141,54 @@ def reward_ok(items: list[OcrItem]) -> OcrItem | None:
     return find(items, "OK", REWARD_OK_ROI, exact=True)
 
 
+def reward_close(items: list[OcrItem]) -> OcrItem | None:
+    """只有「关闭」的获得奖励弹窗（T.G.W CARD 领积分后「已获得T.G.W CARD pt。」，关闭在中间偏下）上的关闭。"""
+    if find(items, "获得奖励", TITLE_BAR_ROI, exact=True) is None:
+        return None
+    if any(find(items, text, exact=True) for text in ("取消", "确定", "OK", "购买")):
+        return None
+    return find(items, "关闭", REWARD_OK_ROI, exact=True)
+
+
 def gift_confirm(items: list[OcrItem]) -> OcrItem | None:
     """礼物盒「一键领取」后的确认弹窗「领取礼物：是否一键领取礼物？※最多可领取100件。」上的 OK。"""
     if find(items, "领取礼物", TITLE_BAR_ROI, exact=True) is None or find(items, "一键领取礼物") is None:
         return None
     return find(items, "OK", REWARD_OK_ROI, exact=True)
+
+
+def purchase_ok(items: list[OcrItem]) -> OcrItem | None:
+    """免费商品「购买」后的「购买完成」弹窗上的 OK（弹窗上没有「取消」「确定」「购买」按钮才算）。"""
+    if find(items, "购买完成", PURCHASE_TITLE_ROI, exact=True) is None:
+        return None
+    if any(find(items, text, exact=True) for text in ("取消", "确定", "购买")):
+        return None
+    return find(items, "OK", REWARD_OK_ROI, exact=True)
+
+
+def free_buys(items: list[OcrItem]) -> list[tuple[int, int]]:
+    """商店商品格里价格是「免费」的商品的「购买」按钮（从上到下、从左到右）。"""
+    buys = [center(it) for it in items if in_roi(it, SHOP_GRID_ROI) and _compact(it.text) == "购买"]
+    found = []
+    for it in items:
+        if not in_roi(it, SHOP_GRID_ROI) or _compact(it.text) != "免费":
+            continue
+        fx, fy = center(it)
+        found += [(bx, by) for bx, by in buys if abs(bx - fx) <= FREE_BUY_DX and 0 < fy - by <= FREE_BUY_DY][:1]
+    return sorted(found, key=lambda p: (p[1], p[0]))
+
+
+def gem_balance(items: list[OcrItem]) -> int | None:
+    """商店右上角的星钻数。"""
+    for it in items:
+        text = _compact(it.text)
+        if in_roi(it, GEM_ROI) and _GEMS.fullmatch(text):
+            return int(text.replace(",", ""))
+    return None
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", text)
 
 
 def practice_level_up(items: list[OcrItem]) -> bool:
@@ -146,7 +214,7 @@ def day_tabs(items: list[OcrItem]) -> list[tuple[str, tuple[int, int]]]:
 class DailyMixin:
     """:class:`~ournotes_auto.nav.navigator.GameNavigator` 的日常领取。
 
-    用到它的 ``look`` ``tap`` ``_button`` ``_lit`` ``_sleep`` ``_fail`` ``_common_step`` ``stop`` 等。
+    用到它的 ``look`` ``tap`` ``_button`` ``_lit`` ``_patch`` ``_sleep`` ``_fail`` ``_common_step`` ``stop`` 等。
     """
 
     def run_daily(self, jobs) -> list[str]:
@@ -202,6 +270,22 @@ class DailyMixin:
     def _daily_beginner(self) -> None:
         if self._open_page("新手任务"):
             self._claim_days("新手任务")
+
+    def _daily_tgw(self) -> None:
+        """商店 → T.G.W CARD 页领每日积分、每日奖励 → 返回商店，在专享商品目录领免费商品。"""
+        if not self._open_page("商店"):
+            return
+        self.tap(self._button(self._items, "T.G.W", BTN_TGW, TGW_ROI), "T.G.W")
+        if not self._wait_page("T.G.WCARD"):
+            raise self._fail("没能打开 T.G.W CARD")
+        for name, text, default, lit_dx in TGW_CLAIMS:
+            self._claim_button("T.G.WCARD", text, default, f"T.G.W CARD·{name}", lit_dx=lit_dx)
+        self.tap(BTN_BACK, "返回")
+        if not self._wait_page("商店"):
+            raise self._fail("从 T.G.W CARD 返回后不在商店")
+        self.tap(self._button(self._items, "专享商品目录", BTN_CATALOG_TAB, SHOP_TAB_ROI), "专享商品目录")
+        bought = self._claim_free()
+        logger.info("T.G.W CARD·专享商品目录：%s", f"领了 {bought} 件免费商品" if bought else "没有免费商品")
 
     def _daily_gifts(self) -> None:
         if self._open_page("礼物盒"):
@@ -293,9 +377,9 @@ class DailyMixin:
 
     def _dismiss(self, screen: Screen, items: list[OcrItem]) -> bool:
         """关掉领取后（或打开页面时）弹出的已知弹窗，做了操作返回 True。"""
-        ok = reward_ok(items)
+        ok = reward_ok(items) or reward_close(items)
         if ok is not None:
-            self.tap(center(ok), "OK")
+            self.tap(center(ok), ok.text.strip())
         elif practice_level_up(items):
             self.tap(TAP_LEVEL_UP, "LEVEL UP")
         elif screen in KNOWN_POPUPS:
@@ -329,15 +413,26 @@ class DailyMixin:
 
     def _claim(self, title: str, label: str | None = None, always_lit: bool = False) -> bool:
         """一键领取亮着就点，处理完领取后的弹窗、回到 ``title`` 页。领了返回 True。"""
-        label = label or title
-        x, y = CLAIM_BUTTONS[title]
+        return self._claim_button(title, "一键领取", CLAIM_BUTTONS[title], label or title, always_lit)
+
+    def _claim_button(
+        self,
+        title: str,
+        text: str,
+        default: tuple[int, int],
+        label: str,
+        always_lit: bool = False,
+        lit_dx: int = CLAIM_LIT_DX,
+    ) -> bool:
+        """同 :meth:`_claim`，按钮文字是 ``text``、默认在 ``default``，在文字左边 ``-lit_dx`` 处看亮不亮。"""
+        x, y = default
         s = CLAIM_SEARCH
-        it = find(self._items, "一键领取", (x - s, y - s, 2 * s, 2 * s), exact=True)
+        it = find(self._items, text, (x - s, y - s, 2 * s, 2 * s), exact=True)
         point = center(it) if it is not None else (x, y)
-        if not always_lit and not self._lit((point[0] + CLAIM_LIT_DX, point[1])):
+        if not always_lit and not self._lit((point[0] + lit_dx, point[1])):
             logger.info("%s：没有可领取的奖励", label)
             return False
-        self.tap(point, "一键领取")
+        self.tap(point, text)
         popups = self._settle_claim(title)
         if popups is None:
             logger.info("%s：没有可领取的奖励", label)
@@ -386,3 +481,76 @@ class DailyMixin:
             elif has_confirm(items):
                 raise self._fail("领取奖励后出现认不出的弹窗（没有点）")
         raise self._fail(f"领取奖励后 {timeout_s:.0f}s 没有回到{title}页")
+
+    # ------------------------------------------------------------ 商店的免费商品
+
+    def _claim_free(self) -> int:
+        """在商店的 T.G.W CARD 专享商品目录逐件领价格是「免费」的商品，返回领了几件。"""
+        bought = 0
+        buy, gems = self._next_free()
+        while buy is not None:
+            if bought >= SHOP_FREE_MAX:
+                raise self._fail(f"领了 {bought} 件免费商品后还有，停下")
+            self.tap(buy, "购买（免费）")
+            self._settle_purchase()
+            bought += 1
+            buy, after = self._next_free()
+            if after != gems:
+                raise self._fail(f"领免费商品后星钻数变了（{gems} → {after}）")
+        return bought
+
+    def _next_free(self, timeout_s: float = 15.0) -> tuple[tuple[int, int] | None, int]:
+        """等商店停在专享商品目录、连续两帧认出的免费商品和星钻数都一样，
+        返回第一件免费商品的「购买」按钮（没有为 None）和星钻数。"""
+        start = time.monotonic()
+        prev = None
+        while time.monotonic() - start < timeout_s:
+            self._sleep(1.0)
+            items = self._catalog_items()
+            cur = None if items is None else (free_buys(items), gem_balance(items))
+            if cur is not None and cur[1] is not None and prev is not None and cur[1] == prev[1]:
+                buys, last = cur[0], prev[0]
+                if len(buys) == len(last) and all(math.dist(a, b) <= 8 for a, b in zip(buys, last)):
+                    return (buys[0] if buys else None), cur[1]
+            prev = cur
+        raise self._fail("没能停在商店的 T.G.W CARD 专享商品目录")
+
+    def _catalog_items(self) -> list[OcrItem] | None:
+        """截一帧，停在商店的专享商品目录分页、没有弹窗时返回识别结果，否则返回 None。"""
+        _, items = self.look()
+        tab = find(items, "专享商品目录", SHOP_TAB_ROI, exact=True)
+        if page_title(items) != "商店" or has_confirm(items) or tab is None:
+            return None
+        _, g, r = (float(v) for v in self._patch((SHOP_TAB_SAMPLE_X, center(tab)[1]), 3).reshape(-1, 3).mean(axis=0))
+        return items if g > 130 and g - r > 50 else None
+
+    def _settle_purchase(self, timeout_s: float = 20.0) -> None:
+        """点了免费商品的「购买」之后：「购买完成」上点一次 OK，等回到商店。
+
+        OK 正下方是第二排商品的「购买」，弹窗淡出时不能再点 OK。认不出的弹窗有「取消」就点取消，然后报错。
+        """
+        start = time.monotonic()
+        tapped_at = None
+        while time.monotonic() - start < timeout_s:
+            self._sleep(0.8)
+            _, items = self.look()
+            ok = purchase_ok(items)
+            if ok is not None:
+                if tapped_at is None or time.monotonic() - tapped_at > PURCHASE_RETAP_S:
+                    self.tap(center(ok), "OK（购买完成）")
+                    tapped_at = time.monotonic()
+                continue
+            if page_title(items) == "商店" and not has_confirm(items):
+                if tapped_at is not None:
+                    return
+                if time.monotonic() - start > PURCHASE_WAIT_S:
+                    raise self._fail("点了免费商品的「购买」没有反应")
+                continue
+            cancel = find(items, "取消", exact=True)
+            if cancel is not None:
+                self.tap(center(cancel), "取消")
+                self._sleep(1.0)
+                raise self._fail("点「购买」后弹出了认不出的确认框（点了取消，没有买）")
+            if has_confirm(items):
+                raise self._fail("点「购买」后弹出了认不出的弹窗（没有点）")
+        raise self._fail(f"点「购买」后 {timeout_s:.0f}s 没有回到商店")

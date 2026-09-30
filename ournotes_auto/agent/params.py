@@ -21,7 +21,7 @@ TASKS = {
 }
 LOCAL_TASKS = {"records"}  # 不需要连接模拟器
 # 领取日常的各项（与 ``daily --jobs`` 一致），界面上的开关是 attach 里的 ``daily_<项目>``
-DAILY_JOBS = ("studio", "story", "missions", "pass", "limited", "beginner", "gifts")
+DAILY_JOBS = ("studio", "story", "missions", "pass", "limited", "beginner", "tgw", "gifts")
 LOOP_SONG_MODES = ("current", "random", "ap_first", "list")  # 重复刷歌 / 清体力可选的选曲方式
 # 重复刷歌 / 清体力的难度：优先高难度（high_first）在「优先没 AP 的歌」时从高到低依次补，其他选曲方式按 EXPERT
 LOOP_DIFFICULTIES = (*DIFFICULTIES, "high_first")
