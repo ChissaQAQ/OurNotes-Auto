@@ -7,6 +7,8 @@
 - 读取结算页的 FAST/SLOW，自动修正时间偏移
 - 自由演出界面自动导航：选曲、开始演出、读结算、再来一局，可无人值守连续演奏
 
+本软件免费开源，使用前请阅读[用户协议](TERMS_OF_SERVICE.md)。如果你是花钱买到的，说明被倒卖了，可以要求退款并举报卖家。
+
 ## ⚠️ 风险声明
 
 **使用自动化工具很可能违反游戏的服务条款，可能导致账号被警告、限制或封禁。后果由使用者自行承担。**
@@ -192,7 +194,11 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 
 ## 许可证
 
-本项目按 [GPL-3.0](LICENSE)（或更新版本）发布。发布包里的第三方组件按各自的许可证分发，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+Copyright (C) 2026 ChissaQAQ
+
+本项目按 [AGPL-3.0](LICENSE)（仅第 3 版）开源，另按 AGPL-3.0 第 7 条附加两项条款：传播时保留作者署名和「免费开源」声明，修改版要标明已修改。详见[用户协议](TERMS_OF_SERVICE.md)第 2 条。使用本软件还需遵守用户协议里的社区规范与免责声明。
+
+发布包里的第三方组件按各自的许可证分发，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 致谢
 

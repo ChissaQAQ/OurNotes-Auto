@@ -1,5 +1,9 @@
 # ⚠️ 使用前请阅读
 
+本软件由 ChissaQAQ 开发，按 AGPL-3.0 免费开源，源码：https://github.com/ChissaQAQ/ournotes-auto
+
+如果你是花钱买到的，说明被倒卖了，可以要求退款并举报卖家。使用本软件即表示同意《用户协议》（发布包里的 `TERMS_OF_SERVICE.md`）。
+
 **使用自动化工具很可能违反游戏的服务条款，可能导致账号被警告、限制或封禁。后果由使用者自行承担。**
 
 - 本项目仅供学习与技术研究。与 Bushiroad、Craft Egg、bilibili 及游戏的任何运营方无关，也未获得其授权或认可

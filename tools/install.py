@@ -190,7 +190,7 @@ def main() -> int:
     if args.dev:
         write_interface(out, kind, args.version, str(ROOT / ".venv" / "Scripts" / "python.exe"), [str(ROOT / "agent" / "main.py")])
     else:
-        for name in ("agent", "ournotes_auto", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "config.example.yaml"):
+        for name in ("agent", "ournotes_auto", "README.md", "LICENSE", "TERMS_OF_SERVICE.md", "THIRD_PARTY_NOTICES.md", "config.example.yaml"):
             if (ROOT / name).exists():
                 place(ROOT / name, out / name, link=False)
         install_python(args.python, out)
