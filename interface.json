@@ -54,6 +54,8 @@
         "HumanGreat",
         "HumanTiming",
         "HumanPosition",
-        "WatchCombo"
+        "WatchCombo",
+        "DebugLog",
+        "CheckUpdate"
     ]
 }

@@ -71,7 +71,7 @@ class MinitouchTouch:
         self._run("push", str(_local_binary(abi)), REMOTE_BIN, timeout_s=30)
         self._run("shell", "chmod", "755", REMOTE_BIN)
         self._spawn()
-        logger.info("minitouch 已启动（%s，触摸屏 %dx%d）", self._serial, self.max_x, self.max_y)
+        logger.debug("minitouch 已启动（%s，触摸屏 %dx%d）", self._serial, self.max_x, self.max_y)
 
     def _spawn(self) -> None:
         self._kill_server()

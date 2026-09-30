@@ -11,13 +11,24 @@ from maa.agent.agent_server import AgentServer
 from maa.context import Context
 from maa.custom_action import CustomAction
 
-from .logs import setup_logging
-from .params import LOCAL_TASKS, PARAM_NODE, TASKS, ParamError, device_from_controller, worker_args
+from .logs import set_ui_debug, setup_logging
+from .params import (
+    LOCAL_TASKS,
+    PARAM_NODE,
+    TASKS,
+    ParamError,
+    device_from_controller,
+    flag,
+    global_args,
+    worker_args,
+)
+from .update import UpdateCheck
 from .worker import run_worker
 
 logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
+UPDATE = UpdateCheck(ROOT)
 
 
 @AgentServer.custom_action("OurNotesRun")
@@ -30,9 +41,12 @@ class OurNotesRun(CustomAction):
             param = json.loads(argv.custom_action_param or "{}")
             task = str(param.get("task", "")) if isinstance(param, dict) else ""
             attach = (context.get_node_data(PARAM_NODE) or {}).get("attach") or {}
+            set_ui_debug(flag(attach, "debug_log"))
             logger.debug("任务 %s，参数 %s", task, attach)
+            if flag(attach, "check_update", default=True):
+                UPDATE.start()
             device = {} if task in LOCAL_TASKS else device_from_controller(context.tasker.controller.info)
-            args = worker_args(task, attach, device)
+            args = [*global_args(attach), *worker_args(task, attach, device)]
         except ParamError as e:
             logger.error("%s", e)
             return False
@@ -40,7 +54,7 @@ class OurNotesRun(CustomAction):
             logger.error("任务参数不是有效的 JSON：%s", e)
             return False
 
-        cmd = [sys.executable, "-m", "ournotes_auto", "--json-log", "--stdin-stop", *args]
+        cmd = [sys.executable, "-m", "ournotes_auto", *args]
         logger.info("开始%s", TASKS[task])
         logger.debug("启动演奏进程：%s", cmd)
         result = run_worker(cmd, cwd=ROOT, should_stop=lambda: context.tasker.stopping)
@@ -50,6 +64,7 @@ class OurNotesRun(CustomAction):
             logger.error("%s结束，退出码 %d（详细日志见 data/ournotes.log）", TASKS[task], result.returncode)
         else:
             logger.info("%s完成", TASKS[task])
+        UPDATE.report()
         return result.returncode == 0
 
 

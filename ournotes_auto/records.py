@@ -118,5 +118,5 @@ class RecordStore:
         if delta:
             new = self.learned_offset_ms + delta
             self.set_learned_offset(new)
-            logger.info("FAST=%s SLOW=%s → offset 修正 %+.1fms（学习值 %.1fms）", result.fast, result.slow, delta, new)
+            logger.debug("FAST=%s SLOW=%s → offset 修正 %+.1fms（学习值 %.1fms）", result.fast, result.slow, delta, new)
         return delta

@@ -116,7 +116,7 @@ class Executor:
                     except Exception:  # noqa: BLE001 - 收尾时尽力而为
                         logger.exception("抬起全部触点失败")
         if stats.lateness_ms:
-            logger.info(
+            logger.debug(
                 "执行完毕：%d 事件 / %d 批，平均迟到 %.2fms，最大 %.2fms，>4ms %d 批，跳过移动 %d",
                 stats.sent,
                 stats.batches,

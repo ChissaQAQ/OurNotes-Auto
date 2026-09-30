@@ -69,7 +69,7 @@ class Catalog:
             # 保持 haneoka 的语言顺序（日/英/繁/简/韩）；bdon 的日文曲名作为首项兜底
             song.titles = titles + [t for t in song.titles if t not in titles]
             song.jacket_url = entry.get("jacketThumbUrl") or ""
-        logger.info("曲目目录：%d 首，%d 个曲名", len(songs), sum(len(s.titles) for s in songs.values()))
+        logger.debug("曲目目录：%d 首，%d 个曲名", len(songs), sum(len(s.titles) for s in songs.values()))
         return cls(songs)
 
     def match(

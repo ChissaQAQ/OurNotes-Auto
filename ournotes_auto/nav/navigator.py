@@ -464,7 +464,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
                 if self._lit(LB_ALL_CHECK):
                     logger.warning("LB 消耗设置勾选了「全部消耗」，每局将消耗持有的全部 LB")
                 held = lb_held(items)
-                logger.info("LB 消耗设置为 %d（持有 %s）", cost, "?" if held is None else held)
+                logger.debug("LB 消耗设置为 %d（持有 %s）", cost, "?" if held is None else held)
                 self.tap(self._button(items, "OK", BTN_LB_OK), "OK")
                 ok_at = time.monotonic()
             elif screen is not Screen.UNKNOWN:  # UNKNOWN：弹窗淡入淡出

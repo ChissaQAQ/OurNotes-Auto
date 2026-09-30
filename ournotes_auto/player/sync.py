@@ -268,7 +268,7 @@ class NoteTracker:
 
     def _rearm(self, crop: np.ndarray, t: float, why: str) -> None:
         """放弃当前轨迹（转场、弹窗、介绍卡片等非音符变化），重新等待画面静止。"""
-        logger.info("跟踪区出现非音符变化（%s），重新等待静止", why)
+        logger.debug("跟踪区出现非音符变化（%s），重新等待静止", why)
         self._baseline = None
         self._prev = crop
         self._stable = 0
@@ -350,7 +350,7 @@ class NoteTracker:
             frames=self._frames,
             notes=notes,
         )
-        logger.info(
+        logger.debug(
             "同步%s：%d 个样本，τ=%.3fs，残差 %.2fms，外推误差 ±%.2fms，距到达 %.0fms，歌曲开始于 +%.1fs（%s）",
             "成功" if ok else "存疑",
             len(ts),

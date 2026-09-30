@@ -129,7 +129,7 @@ class ApComplete(_Source):
                 if pick.only:
                     logger.info("%s 没有别的歌可抽了（选中的这首：%s）", diff.upper(), why)
                     break
-                logger.info("重抽：%s", why)
+                logger.debug("重抽：%s", why)
             else:
                 logger.warning("%s 连续 %d 次抽到不打的歌，换下一个难度", diff.upper(), self.max_rerolls)
             self._index += 1

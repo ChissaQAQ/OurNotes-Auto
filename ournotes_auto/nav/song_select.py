@@ -297,7 +297,7 @@ class SongSelectMixin:
         for _ in range(len(CATEGORIES) + 1):
             if current == name:
                 if before != name:
-                    logger.info("分类：%s → %s", before or "?", name)
+                    logger.debug("分类：%s → %s", before or "?", name)
                 return before
             self.tap(BTN_CATEGORY, "分类")
             self.list_positions.clear()
@@ -371,7 +371,7 @@ class SongSelectMixin:
         if status is not None:
             self._select_filter_option(STATUS_OPTIONS[status])
         self._close_filter()
-        logger.info(
+        logger.debug(
             "筛选：%s%s%s",
             "重置，" if reset else "",
             f"难度 {DIFFICULTY_OPTIONS[difficulty]}，" if difficulty else "",
@@ -452,7 +452,7 @@ class SongSelectMixin:
                 center = positions.at(base)  # 未解锁的歌大封面上有锁认不出，按位置推
             if center == music_id:
                 pick = SongPick(music_id, song_locked(items))
-                logger.info("选中 %d%s", music_id, "（未解锁）" if pick.locked else "")
+                logger.debug("选中 %d%s", music_id, "（未解锁）" if pick.locked else "")
                 return pick
             y = next((y for y, mid in rows if mid == music_id), None)
             if y is not None:
@@ -467,7 +467,7 @@ class SongSelectMixin:
             if view == last:
                 ends += 1
                 if ends >= 2:
-                    logger.info("列表里没有 %d", music_id)
+                    logger.debug("列表里没有 %d", music_id)
                     return None
                 direction = -direction
             elif ends == 0 and base is not None and music_id in positions.pos:

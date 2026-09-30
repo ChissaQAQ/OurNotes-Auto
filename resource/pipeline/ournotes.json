@@ -9,6 +9,8 @@
             "clear_lb_cost": 3,
             "touch": "minitouch",
             "watch_combo": false,
+            "debug_log": false,
+            "check_update": true,
             "human_great": 0,
             "human_timing": 0,
             "human_position": false,

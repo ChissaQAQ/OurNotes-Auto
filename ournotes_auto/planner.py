@@ -316,7 +316,7 @@ class Planner:
             else:
                 logger.warning("%s#%d@%.0f 的按下会被附近的点击认领，提前按下也避不开", what, key, t)
         if note_leads or slide_leads:
-            logger.info("%d 个手势提前按下，避免被之后的点击认领", len(note_leads) + len(slide_leads))
+            logger.debug("%d 个手势提前按下，避免被之后的点击认领", len(note_leads) + len(slide_leads))
         return note_leads, slide_leads
 
     def _great_shifts(self, chart: Chart) -> dict[int, float]:

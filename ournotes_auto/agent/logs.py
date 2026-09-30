@@ -28,6 +28,7 @@ HTML_COLOR = {
     "ERROR": "crimson",
     "CRITICAL": "firebrick",
 }
+_ui: logging.Handler | None = None  # setup_logging 建的界面处理器
 
 
 def client_name() -> str:
@@ -55,11 +56,13 @@ class UiFormatter(logging.Formatter):
         return super().format(record)
 
 
-def setup_logging(log_file: str | None = "data/agent.log", client: str | None = None) -> None:
+def setup_logging(log_file: str | None = "data/agent.log", client: str | None = None) -> logging.Handler:
+    """返回输出到界面的处理器（默认只显示 INFO 及以上，见 ``set_ui_debug``）。"""
+    global _ui
     client = client_name() if client is None else client
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)
-    ui = logging.StreamHandler(sys.stdout if client == "MXU" else sys.stderr)
+    _ui = ui = logging.StreamHandler(sys.stdout if client == "MXU" else sys.stderr)
     ui.setLevel(logging.INFO)
     ui.setFormatter(UiFormatter(client))
     root.addHandler(ui)
@@ -69,3 +72,11 @@ def setup_logging(log_file: str | None = "data/agent.log", client: str | None = 
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(logging.Formatter("%(asctime)s %(levelname).1s %(name)s: %(message)s"))
         root.addHandler(fh)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)  # 检查更新时的连接细节
+    return ui
+
+
+def set_ui_debug(enabled: bool) -> None:
+    """界面日志是否也显示调试信息（「调试日志」选项）；文件日志总是完整的。"""
+    if _ui is not None:
+        _ui.setLevel(logging.DEBUG if enabled else logging.INFO)

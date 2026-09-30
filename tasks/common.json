@@ -196,6 +196,38 @@
                 }
             ],
             "default_case": "No"
+        },
+        "DebugLog": {
+            "type": "switch",
+            "label": "调试日志",
+            "description": "界面日志里也显示同步、谱面、触控、识图等细节；不开也会完整写进 data/ournotes.log",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "debug_log": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "debug_log": false } } }
+                }
+            ],
+            "default_case": "No"
+        },
+        "CheckUpdate": {
+            "type": "switch",
+            "label": "检查更新",
+            "description": "运行任务时到 GitHub 查有没有新发布的版本，有就在日志末尾提示（不会自动下载）",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "check_update": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "check_update": false } } }
+                }
+            ],
+            "default_case": "Yes"
         }
     }
 }

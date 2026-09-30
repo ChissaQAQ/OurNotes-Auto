@@ -115,7 +115,7 @@ class PlaySession:
         first_ms, spans = chart.first_hits()
         sp = self.cfg.play.sync
         tracker = NoteTracker(self.geometry, sp, first_ms, spans, record_frames=sp.record_frames)
-        logger.info(
+        logger.debug(
             "谱面 %s：%d 个手势 / %d 个触控事件，首音符 %.0fms（%d 个）",
             chart.key,
             len(plan.gestures),

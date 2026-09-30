@@ -151,7 +151,7 @@ class MuMuIpc:
             self.handle = h
             self.refresh_display_id()
             self._query_size()
-            logger.info("已连接 MuMu 实例 %d（handle %d，display %d，%dx%d）", self.index, h, self.display_id, self.width, self.height)
+            logger.debug("已连接 MuMu 实例 %d（handle %d，display %d，%dx%d）", self.index, h, self.display_id, self.width, self.height)
             return h
 
     def _disconnect_locked(self) -> None:

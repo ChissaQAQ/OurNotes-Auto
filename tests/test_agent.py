@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from ournotes_auto.agent.logs import UiFormatter
-from ournotes_auto.agent.params import ParamError, device_from_controller, run_settings, worker_args
+from ournotes_auto.agent.logs import UiFormatter, set_ui_debug, setup_logging
+from ournotes_auto.agent.params import ParamError, device_from_controller, flag, global_args, run_settings, worker_args
 from ournotes_auto.agent.worker import WORKER_LOGGER, parse_line, run_worker
 
 ATTACH = {
@@ -20,6 +20,8 @@ ATTACH = {
     "clear_lb_cost": 3,
     "touch": "minitouch",
     "watch_combo": False,
+    "debug_log": False,
+    "check_update": True,
     "ap_expert": True,
     "ap_hard": True,
     "ap_normal": True,
@@ -238,6 +240,18 @@ def test_worker_args_daily():
         build_parser().parse_args(["daily", "--jobs", "studio,shop"])
 
 
+def test_global_args():
+    """「调试日志」开着时子进程加 -v；旧资源的 attach 里没有这一项时按关闭。"""
+    from ournotes_auto.cli import build_parser
+
+    assert global_args(ATTACH) == global_args({}) == ["--json-log", "--stdin-stop"]
+    args = build_parser().parse_args([*global_args({**ATTACH, "debug_log": "Yes"}), *worker_args("records", {}, {})])
+    assert (args.verbose, args.json_log, args.stdin_stop, args.command) == (1, True, True, "records")
+    with pytest.raises(ParamError, match="debug_log"):
+        global_args({"debug_log": "maybe"})
+    assert flag({}, "check_update", default=True) and not flag({"check_update": "No"}, "check_update", default=True)
+
+
 def test_worker_args_parse_back():
     """生成的 --set 能被命令行原样解析、应用。"""
     from ournotes_auto.cli import build_parser
@@ -344,6 +358,18 @@ def test_ui_formatter():
     assert UiFormatter("MXU").format(_record(logging.INFO, "<1>")) == "<span>&lt;1&gt;</span>"
     assert UiFormatter("MXU").format(_record(logging.ERROR, "x")) == '<span style="color:crimson;">x</span>'
     assert UiFormatter("").format(_record(logging.INFO, "hi")).endswith(" I hi")
+
+
+def test_ui_debug_switch():
+    ui = setup_logging(None, client="")
+    try:
+        assert ui.level == logging.INFO  # 默认不显示调试信息
+        set_ui_debug(True)
+        assert ui.level == logging.DEBUG
+        set_ui_debug(False)
+        assert ui.level == logging.INFO
+    finally:
+        logging.getLogger().removeHandler(ui)
 
 
 def test_parse_line():

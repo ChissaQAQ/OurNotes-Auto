@@ -70,7 +70,7 @@ class JacketMatcher:
                 images[song.music_id] = decode(client.jacket(song.music_id, song.jacket_url))
             except (ConnectionError, LookupError, ValueError) as e:
                 logger.warning("封面 %d 获取失败：%s", song.music_id, e)
-        logger.info("封面：%d 张", len(images))
+        logger.debug("封面：%d 张", len(images))
         return cls(images)
 
     def variant(self, **params) -> JacketMatcher:

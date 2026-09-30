@@ -142,6 +142,11 @@ def _bool(attach: Mapping[str, Any], key: str) -> bool:
     raise ParamError(f"参数 {key} 应为 true/false：{raw!r}")
 
 
+def flag(attach: Mapping[str, Any], key: str, default: bool = False) -> bool:
+    """可选开关（``debug_log`` ``check_update`` 等）：资源是旧版、attach 里没有这一项时用默认值。"""
+    return _bool(attach, key) if key in attach else default
+
+
 def _lb_cost(attach: Mapping[str, Any]) -> str:
     """``lb_cost``：``keep``（不改游戏里的设置）或 0~3。"""
     if str(_get(attach, "lb_cost")).strip().lower() == "keep":
@@ -218,8 +223,13 @@ def _daily_jobs(attach: Mapping[str, Any]) -> str:
     return ",".join(jobs)
 
 
+def global_args(attach: Mapping[str, Any]) -> list[str]:
+    """子进程的全局参数：日志按 JSON 行输出、从标准输入接收停止；「调试日志」开着时加 ``-v``。"""
+    return ["--json-log", "--stdin-stop", *(["-v"] if flag(attach, "debug_log") else [])]
+
+
 def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str]) -> list[str]:
-    """``python -m ournotes_auto`` 之后的参数（不含日志 / 停止相关的全局参数）。"""
+    """``python -m ournotes_auto`` 之后的参数（不含日志 / 停止相关的全局参数，见 ``global_args``）。"""
     if task == "records":
         return ["records"]
     if task == "start":

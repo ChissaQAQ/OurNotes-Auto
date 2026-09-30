@@ -34,7 +34,7 @@
 - Windows，MuMu 模拟器 12（本项目在 MuMu 6.6.x、Android 15 实例上测试）
 - 模拟器分辨率 **1280×720**（其他 16:9 分辨率会按比例换算，但未充分测试）
 - Python ≥ 3.11
-- 能访问谱面站 `assets.bdon.moe` 与曲名接口 `haneoka.org`
+- 能访问谱面站 `assets.bdon.moe` 与曲名接口 `haneoka.org`（检查更新另外访问 `api.github.com`，可以关掉）
 
 ## 图形界面（发布包）
 
@@ -61,6 +61,10 @@
 | 记录汇总 | 在日志里列出本工具的演奏记录，不操作模拟器 |
 
 需要调整默认值以外的参数（如时间偏移）时，把 [config.example.yaml](config.example.yaml) 复制为解压目录里的 `config.yaml` 再修改。界面里的选项优先于它。
+
+界面日志默认只显示进度和结果。打开全局选项「调试日志」后，同步、谱面、触控等细节也会显示；完整日志总是写在 `data/ournotes.log`。
+
+全局选项「检查更新」默认开启：每次任务结束时，如果 GitHub 上有新发布的版本，会在日志里提示下载地址。它不会自动下载，更新要手动下载新的压缩包。
 
 ## 从源码安装（命令行）
 
@@ -184,6 +188,7 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 | `data/records.jsonl` | 每局结果（判定数、FAST/SLOW、偏移、同步误差） |
 | `data/state.json` | 自动修正学到的偏移 |
 | `cache/charts/` | 谱面与曲目索引缓存 |
+| `cache/update.json` | 检查更新的结果（缓存 6 小时） |
 | `debug/nav/` | 导航出错、结算读数矛盾时的截图 |
 | `debug/sync/` | `play --record` 保存的首音符跟踪画面 |
 | `debug/combo/` | `--watch-combo --record` 保存的连击数截图；检测到断连时自动保存到 `breaks/`（只留最新 20 个） |
