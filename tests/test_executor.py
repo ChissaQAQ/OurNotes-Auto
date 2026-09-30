@@ -35,7 +35,9 @@ def test_executor_timing():
         events += [TouchEvent(t, Action.DOWN, i % 4, 10, 10), TouchEvent(t + 20, Action.UP, i % 4, 10, 10)]
     events.sort(key=lambda e: e.t_ms)
     backend = FakeBackend()
-    t0 = now() + 0.05
+    # CI 的虚拟机上开头会卡一下（第一批迟到 55~67ms，之后都准时），先空跑一次、多留提前量，只测稳定后的调度误差
+    Executor(FakeBackend()).run([TouchEvent(0, Action.DOWN, 0, 1, 1)], now() + 0.02)
+    t0 = now() + 0.2
     stats = Executor(backend).run(events, t0, offset_ms=5)
     assert stats.sent == len(events)
     assert not backend.released
