@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ournotes-auto"
-version = "0.1.1"
+version = "0.1.2"
 description = "BanG Dream! Our Notes 自动演奏工具（MuMu 模拟器 + MaaFramework）"
 readme = "README.md"
 license = "AGPL-3.0-only"
