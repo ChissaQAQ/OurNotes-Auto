@@ -8,7 +8,7 @@ from ournotes_auto.charts.catalog import Catalog, Song
 from ournotes_auto.charts.model import Chart
 from ournotes_auto.config import Config
 from ournotes_auto.player.executor import ExecStats
-from ournotes_auto.player.guard import PlayInterrupted
+from ournotes_auto.player.guard import LifeDepleted, PlayInterrupted
 from ournotes_auto.player.session import PlayOutcome, SyncFailed
 from ournotes_auto.player.sync import SyncResult
 from ournotes_auto.records import RecordStore
@@ -36,6 +36,9 @@ class FakeNav:
     def start_live(self, lb_short="zero"):
         self.calls.append(f"start:{lb_short}")
 
+    def retry_live(self):
+        self.calls.append("retry")
+
     def lb_status(self, check=False):
         self.calls.append("lb_check" if check else "lb")
         return None, None
@@ -60,17 +63,27 @@ class FakeClient:
 
 
 class FakeSession:
-    def __init__(self, fail=False, max_late=0.2, interrupt=False, stalls=()):
+    def __init__(self, fail=False, max_late=0.2, interrupt=False, stalls=(), fails=0, life_zeros=0):
+        """``fail``：同步总是失败；``fails``：前几次同步失败，之后成功；``life_zeros``：前几次演奏中生命值归零。"""
         self.fail, self.max_late, self.interrupt = fail, max_late, interrupt
+        self.fails = fails
+        self.life_zeros = life_zeros
         self.stalls = list(stalls)
         self.learned_offset_ms = 0.0
+        self.retries: list[bool] = []  # 每次 play 的 retry 参数
 
-    def play(self, chart, stop=None):
-        sync = SyncResult(1.0, 0.0, [], -40.0, 0.835, 1.0, 1.0, 190.0, not self.fail)
-        if self.fail:
+    def play(self, chart, stop=None, retry=False):
+        self.retries.append(retry)
+        failed = self.fail or self.fails > 0
+        self.fails -= 1
+        sync = SyncResult(1.0, 0.0, [], -40.0, 0.835, 1.0, 1.0, 190.0, not failed)
+        if failed:
             raise SyncFailed("假失败", sync)
         if self.interrupt:
             raise PlayInterrupted("演奏中途离开了演奏画面")
+        self.life_zeros -= 1
+        if self.life_zeros >= 0:
+            raise LifeDepleted("演奏中生命值降到 0（整体对不上了）")
         stats = ExecStats(sent=10, lateness_ms=[self.max_late] * 5)
         return PlayOutcome(chart, None, sync, stats, 3.0 + self.learned_offset_ms, self.stalls)
 
@@ -111,8 +124,67 @@ def test_runner_stops_after_consecutive_failures(tmp_path):
     runner.cfg.loop.max_failures = 3
     stats = runner.run()
     assert stats.failures == 3 and stats.plays == 0
-    # 失败的局也要等结算并离开，才能继续下一局
+    # 每局先重试 sync_retries 次；失败的局也要等结算并离开，才能继续下一局
+    assert nav.calls.count("retry") == 3 * runner.cfg.loop.sync_retries
     assert nav.calls.count("result") == 3 and nav.calls.count("leave") == 3
+    assert store.history() == []
+
+
+def test_sync_failure_retries_same_live(tmp_path):
+    """首音符同步失败：暂停后从头重试这一局，不干等歌曲放完（消耗的 LB 不浪费）。"""
+    runner, nav, store = make(tmp_path, fails=1)
+    runner.cfg.loop.max_plays = 1
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "result", "leave"]
+    assert len(store.history()) == 1
+    assert runner.session.retries == [False, True]  # 重试后歌曲立即开始，同步要沿用上一次的基线
+
+
+def test_life_zero_retries_same_live(tmp_path):
+    """演奏中生命值归零（整体对不上了）：和同步失败一样暂停从头重试，重试次数用完了等结算、不记录。"""
+    runner, nav, store = make(tmp_path, life_zeros=1)
+    runner.cfg.loop.max_plays = 1
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "result", "leave"]
+    assert len(store.history()) == 1
+
+    runner, nav, store = make(tmp_path / "all", life_zeros=10)
+    runner.cfg.loop.max_plays = 0
+    runner.cfg.loop.max_failures = 1
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 1
+    assert nav.calls.count("retry") == runner.cfg.loop.sync_retries and nav.calls.count("result") == 1
+    assert store.history() == []
+
+
+def test_no_sync_retries(tmp_path):
+    runner, nav, store = make(tmp_path, fails=1)
+    runner.cfg.loop.max_plays = 0
+    runner.cfg.loop.max_failures = 1
+    runner.cfg.loop.sync_retries = 0
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 1
+    assert "retry" not in nav.calls and nav.calls.count("result") == 1
+
+
+def test_failed_retry_waits_out_song(tmp_path):
+    """重试不成（如歌已经放完、暂停没生效）：和原来一样等结算，本局算失败。"""
+    from ournotes_auto.runner import NavigationError
+
+    runner, nav, store = make(tmp_path, fails=1)
+    runner.cfg.loop.max_plays = 0
+    runner.cfg.loop.max_failures = 1
+
+    def broken():
+        nav.calls.append("retry")
+        raise NavigationError("没有在演奏画面上")
+
+    nav.retry_live = broken
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 1
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "result", "leave"]
     assert store.history() == []
 
 

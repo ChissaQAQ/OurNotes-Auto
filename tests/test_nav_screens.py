@@ -12,7 +12,10 @@ from ournotes_auto.nav.screens import (
     classify,
     lb_bar_held,
     lb_bar_timer,
+    lb_drinks,
     lb_held,
+    lb_preview,
+    lb_recover_amount,
     note_speed,
     parse_difficulty,
     parse_level,
@@ -52,8 +55,13 @@ def load(name: str) -> list[OcrItem]:
         ("home", Screen.HOME),
         ("lb_setting", Screen.LB_SETTING),
         ("lb_recover", Screen.LB_RECOVER),
+        ("lb_recover_drinks", Screen.LB_RECOVER),  # 两种 LIVE BOOST饮料都在的「道具」页
+        ("lb_recover_held1", Screen.LB_RECOVER),  # 持有 1、选了 2 瓶小型
+        ("lb_recover_confirm", Screen.LB_RECOVER_CONFIRM),  # 「将恢复1点LIVE BOOST。确定要恢复吗？」
+        ("lb_recovered", Screen.LB_RECOVERED),  # 「已恢复LIVE BOOST。」
         ("pause", Screen.PAUSE),
         ("abort_confirm", Screen.ABORT_CONFIRM),  # 按实机画面手写（标题和右边按钮都是「终止」）
+        ("retry_confirm", Screen.RETRY_CONFIRM),  # 暂停菜单点「重试」后的二次确认
         ("settings", Screen.SETTINGS),
         ("rank_up", Screen.RANK_UP),
         ("high_score", Screen.POPUP),
@@ -62,6 +70,8 @@ def load(name: str) -> list[OcrItem]:
         ("date_change", Screen.DATE_CHANGE),
         ("title", Screen.TITLE),
         ("title_loading", Screen.TITLE),
+        ("title_notify", Screen.NOTIFY),  # 标题画面上 B 站 SDK 的「开启消息通知」
+        ("connect_error", Screen.CONNECT_ERROR),  # 点 TAP TO START 后连不上服务器
         ("login_bonus_event", Screen.LOGIN_BONUS),
         ("login_bonus", Screen.LOGIN_BONUS),
         ("login_bonus_talk", Screen.LOGIN_BONUS),
@@ -114,6 +124,30 @@ def test_note_speed():
 def test_lb_held():
     assert lb_held(load("lb_setting")) == 14
     assert lb_held(load("lb_recover")) is None
+
+
+def test_lb_drinks():
+    small, big = lb_drinks(load("lb_recover_drinks"))
+    assert (small.name, small.lb, small.chosen, small.owned) == ("小型LIVE BOOST饮料", 1, 0, 24)
+    assert (big.name, big.lb, big.chosen, big.owned) == ("LIVE BOOST饮料", 10, 0, 5)
+    assert small.y < big.y
+    (only,) = lb_drinks(load("lb_recover"))  # OCR 把 V 认成小写 v 也要认出来
+    assert (only.lb, only.chosen, only.owned) == (1, 0, 12)
+    assert lb_drinks(load("lb_setting")) == []
+    small, big = lb_drinks(load("lb_recover_held1"))  # 选了 2 瓶小型
+    assert (small.chosen, small.owned, big.chosen, big.owned) == (2, 22, 0, 5)
+    # 数量不在名字那一行（离得太远）的不算
+    assert lb_drinks([OcrItem(392, 144, 232, 26, "小型LIVE BOOST饮料"), OcrItem(768, 400, 70, 45, "0/24")]) == []
+
+
+def test_lb_preview_and_amount():
+    assert lb_preview(load("lb_recover_drinks")) == (3, 3)
+    assert lb_preview(load("lb_recover")) == (24, 24)
+    assert lb_preview(load("lb_setting")) is None
+    assert lb_preview(load("lb_recover_held1")) == (None, 3)  # 持有 1 选了 2 瓶：「1 ▶ 3」左边的 1 漏读
+    assert lb_preview([OcrItem(760, 566, 20, 17, "|")]) is None  # ▶ 读成 | 也不算数字
+    assert lb_recover_amount(load("lb_recover_confirm")) == 1
+    assert lb_recover_amount(load("lb_recovered")) is None
 
 
 @pytest.mark.parametrize("text, held", [("]4/10", 14), ("0/10", 0), ("O/10", 0), ("10/10", 10), ("09:09", None)])

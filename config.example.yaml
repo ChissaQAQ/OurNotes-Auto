@@ -14,11 +14,16 @@ game:
   # LB 不够时游戏会消耗剩余全部；用完时弹出「恢复LIVE BOOST」只点取消，之后 30 分钟内改为 0
   # （loop.until_lb_empty 为 true 时则就此结束）
   lb_cost: null
+  # true：每局前 LB 持有少于 lb_cost（须为 1~3）时，用道具里的 LIVE BOOST饮料补够（从「消耗LB」→「恢复」进去，
+  # 只在「道具」页选，先用小型饮料；绝不用星钻、不看广告）。饮料用完或补够 lb_refill_limit 个后按上面的方式处理
+  lb_refill: false
+  lb_refill_limit: 0         # 本次运行最多补充多少 LB，0 为不限（直到饮料用完）
 
 play:
   # 全局时间偏移（毫秒），正值整体更晚按下。每局结算后会按 FAST/SLOW 自动修正，
   # 学到的偏移另存于 data/state.json（在此基础上叠加）
   offset_ms: -16
+  guard_life_zero_s: 1.0     # 演奏中生命值归零这么久（秒，整体对不上了）就暂停重试；0 为不检查
   sync:
     tau_s: 0.835             # 流速 5.00 实测值；改了流速用 calibrate motion 重新测量
 
@@ -34,6 +39,7 @@ loop:
   until_lb_empty: false      # true：打到 LB 用完为止（清体力，需要 game.lb_cost 为 1~3）
   wait_lb: false             # true：挂机，LB 用完后停在乐队确认页等它恢复到 game.lb_cost 个再接着打，一直运行
   max_failures: 5            # 连续失败这么多次后停止
+  sync_retries: 2            # 首音符同步失败、演奏中生命值归零时暂停、点「重试」从头再来的次数（每局），用完了等歌曲放完；0 为不重试
   ap_difficulties: expert,hard,normal,easy  # AP 补完依次处理的难度
   ap_first_difficulties: ""  # ap_first 依次补的难度（如 expert,hard,normal,easy），都补完了按 game.difficulty 随机；留空只补 game.difficulty
   ap_max_attempts: 3         # AP 补完 / ap_first 时同一首歌最多打几次

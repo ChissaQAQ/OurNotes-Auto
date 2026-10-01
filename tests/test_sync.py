@@ -224,6 +224,82 @@ def test_tracker_rejects_late_start():
     assert any("第一个音符" in n for n in late.notes), late.notes
 
 
+def test_tracker_preset_baseline_after_retry():
+    """暂停重试后歌曲立即开始、首音符一直在动：沿用上一次静止时的基线才跟得上它，不等静止就会错过。"""
+    geo = Geometry(W, H)
+    span = Span(8, 14)
+    rng = np.random.default_rng(9)
+    first = NoteTracker(geo, SyncParams(), 2000.0, [span])
+    for i in range(12):
+        first.feed(render(geo, span, -1, 0, rng), i / 60)
+    assert first.armed and first.clean_baseline is not None
+
+    arrival = 10.0  # 歌曲在 8.0s 开始，0.3s 后才开始同步，首音符已经进入跟踪区
+    begin = arrival - 2.0 + 0.3
+
+    def run(tracker):
+        t = begin
+        while t < arrival + 1.0:
+            y = geo.note_y(arrival - t, 0.835)
+            result = tracker.feed(render(geo, span, y, 0.04 * (y - geo.motion_horizon_y), rng), t)
+            if result is not None:
+                return result
+            t += 1 / 60
+        return None
+
+    preset = NoteTracker(geo, SyncParams(), 2000.0, [span], baseline=first.clean_baseline, max_start_delay_s=1.5)
+    assert preset.armed
+    result = run(preset)
+    assert result is not None and result.ok, result
+    assert abs(result.arrival - arrival) * 1000 < 5
+    assert result.t0 - begin == pytest.approx(-0.3, abs=0.01)
+    assert run(NoteTracker(geo, SyncParams(), 2000.0, [span])) is None
+
+
+def test_tracker_preset_baseline_rearm_and_mismatch():
+    """沿用基线时出现非音符变化：换回沿用的基线（不重新等静止）；基线尺寸和跟踪区不符就照常等静止。"""
+    geo = Geometry(W, H)
+    span = Span(8, 14)
+    rng = np.random.default_rng(10)
+    first = NoteTracker(geo, SyncParams(stable_frames=3), 1000.0, [span])
+    for i in range(5):
+        first.feed(render(geo, span, -1, 0, rng), i / 60)
+    tr = NoteTracker(geo, SyncParams(), 1000.0, [span], baseline=first.clean_baseline)
+    flash = render(geo, span, -1, 0, rng)
+    flash[:] = 230
+    assert tr.feed(flash, 0.0) is None
+    assert tr.armed and tr._first_seen is None
+    assert np.array_equal(tr._baseline, first.clean_baseline)
+    assert tr.clean_baseline is None  # 没有真正静止过，不能当下一次的基线
+    other = NoteTracker(geo, SyncParams(), 1000.0, [Span(0, 6)], baseline=first.clean_baseline)
+    assert not other.armed
+
+
+def test_tracker_retry_start_delay():
+    """重试时歌曲开始时刻几乎就是开始同步的时刻：推算的开始时刻晚了 3s 就是跟错了音符。"""
+    geo = Geometry(W, H)
+    span = Span(8, 14)
+
+    def run(max_start_delay_s):
+        rng = np.random.default_rng(11)
+        tr = NoteTracker(geo, SyncParams(), 1000.0, [span], max_start_delay_s=max_start_delay_s)
+        arrival = 3.0 + 1.0
+        for i in range(12):
+            tr.feed(render(geo, span, -1, 0, rng), i / 120)
+        t = arrival - 4 * 0.835
+        while t < arrival + 1.0:
+            y = geo.note_y(arrival - t, 0.835)
+            result = tr.feed(render(geo, span, y, 0.04 * (y - geo.motion_horizon_y), rng), t)
+            if result is not None:
+                return result
+            t += 1 / 60
+        raise AssertionError("未得到同步结果")
+
+    assert run(None).ok
+    late = run(1.5)
+    assert not late.ok and any("第一个音符" in n for n in late.notes), late.notes
+
+
 def test_dump_and_replay(tmp_path):
     from ournotes_auto.player.sync import replay_dump
 

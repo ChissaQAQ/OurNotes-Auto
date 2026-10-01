@@ -13,7 +13,7 @@ import pytest
 from ournotes_auto.config import Config
 from ournotes_auto.nav import navigator
 from ournotes_auto.nav.navigator import GameNavigator
-from ournotes_auto.nav.screens import LB_RADIO, RESULT_ROW_Y
+from ournotes_auto.nav.screens import LB_RADIO, RESULT_ROW_Y, LbDrink
 from ournotes_auto.result_reader import OcrItem
 from ournotes_auto.runner import LbExhausted, NavigationError, ScreenFrozen
 
@@ -217,6 +217,110 @@ def test_abort_needs_second_confirm():
     assert [s for s, _ in game.taps] == ["pause", "abort_confirm"]
 
 
+class PlayGame(FakeGame):
+    """演奏画面（``playing``）：OCR 什么也认不出，右上角有暂停按钮。"""
+
+    def read(self, frame, roi=None):
+        return [] if frame == "playing" else super().read(frame, roi)
+
+
+def play_nav(monkeypatch, state="playing"):
+    monkeypatch.setitem(TRANSITIONS, "playing", [((1240, 38), "pause")])
+    monkeypatch.setitem(
+        TRANSITIONS, "pause", [*TRANSITIONS["pause"], ((640, 579), "retry_confirm"), ((923, 579), "playing")]
+    )
+    monkeypatch.setitem(TRANSITIONS, "retry_confirm", [((781, 572), "loading"), ((497, 572), "pause")])
+    game = PlayGame(state)
+    nav = make_nav(game, game, game)
+    nav._in_play = lambda frame: frame == "playing"
+    nav.save_debug = lambda *a: None
+    return game, nav
+
+
+def test_retry_live(monkeypatch):
+    """首音符同步失败后：暂停 → 重试 → 确认重试，确认弹窗关掉（开始加载）就返回，好尽早开始同步。"""
+    game, nav = play_nav(monkeypatch)
+    nav.retry_live()
+    assert game.state == "loading"
+    assert [s for s, _ in game.taps] == ["playing", "pause", "retry_confirm"]
+    assert tapped(game, (640, 579), radius=2) == ["pause"]
+    assert tapped(game, (781, 572), radius=5) == ["retry_confirm"]  # 按钮行的「重试」，不是同名的标题
+
+
+def test_retry_live_returns_when_play_screen_back(monkeypatch):
+    """确认重试后歌曲立即开始：不做 OCR，一看到暂停按钮就返回（首音符马上就到）。"""
+    game, nav = play_nav(monkeypatch)
+    monkeypatch.setitem(TRANSITIONS, "retry_confirm", [((781, 572), "playing")])
+    looks = []
+    look = nav.look
+    nav.look = lambda *a, **k: looks.append(game.state) or look(*a, **k)
+    nav.retry_live()
+    assert game.state == "playing"
+    assert [s for s, _ in game.taps] == ["playing", "pause", "retry_confirm"]
+    assert looks[-1] == "retry_confirm"  # 点完确认后没有再 OCR
+
+
+def test_retry_live_without_confirm(monkeypatch):
+    """点「重试」后没有弹出确认就直接重新开始：认不出的画面持续 3s 后返回。"""
+    game, nav = play_nav(monkeypatch)
+    monkeypatch.setitem(TRANSITIONS, "pause", [((640, 579), "loading")])
+    fake_clock(monkeypatch, nav)
+    nav.retry_live()
+    assert game.state == "loading"
+    assert [s for s, _ in game.taps] == ["playing", "pause"]
+
+
+def test_retry_live_options(monkeypatch):
+    """重试后又弹出演出前选项设置：和开始时一样点「演出」。"""
+    game, nav = play_nav(monkeypatch)
+    monkeypatch.setitem(TRANSITIONS, "retry_confirm", [((781, 572), "live_options")])
+    nav.retry_live()
+    assert game.state == "loading"
+    assert [s for s, _ in game.taps] == ["playing", "pause", "retry_confirm", "live_options"]
+
+
+def test_retry_live_not_in_play(monkeypatch):
+    """不在演奏画面（看不到暂停按钮，如歌已经放完）：什么都不点。"""
+    game, nav = play_nav(monkeypatch, "live_clear")
+    with pytest.raises(NavigationError, match="不重试"):
+        nav.retry_live()
+    assert game.taps == []
+
+
+def test_retry_live_resumes_when_retry_does_nothing(monkeypatch):
+    """点「重试」一直没反应：点「继续」接着放完这首歌（「终止」拿不到演出奖励），再报错。"""
+    game, nav = play_nav(monkeypatch)
+    monkeypatch.setitem(TRANSITIONS, "pause", [((923, 579), "playing")])
+    fake_clock(monkeypatch, nav)
+    with pytest.raises(NavigationError, match="重试没有生效"):
+        nav.retry_live()
+    assert game.state == "playing"
+    assert len(tapped(game, (640, 579), radius=2)) >= 2
+    assert tapped(game, (356, 579)) == []  # 没点「终止」
+
+
+def test_retry_live_resumes_when_confirm_does_nothing(monkeypatch):
+    """确认重试一直没反应：取消确认弹窗，回到暂停菜单点「继续」，再报错（不点「终止」）。"""
+    game, nav = play_nav(monkeypatch)
+    monkeypatch.setitem(TRANSITIONS, "retry_confirm", [((497, 572), "pause")])
+    fake_clock(monkeypatch, nav)
+    with pytest.raises(NavigationError, match="重试没有生效"):
+        nav.retry_live()
+    assert game.state == "playing"
+    assert len(tapped(game, (781, 572), radius=5)) >= 2
+    assert tapped(game, (497, 572), radius=5) == ["retry_confirm"]
+    assert tapped(game, (356, 579)) == []
+
+
+def test_stray_retry_confirm_is_cancelled(monkeypatch):
+    """别处看到重试确认（演奏已经不管了）：取消，回到暂停菜单按终止走。"""
+    game, nav = play_nav(monkeypatch, "retry_confirm")
+    nav.leave_result()
+    assert game.state == "band_confirm"
+    assert [s for s, _ in game.taps] == ["retry_confirm", "pause", "abort_confirm"]
+    assert tapped(game, (781, 572), radius=5) == ["abort_confirm"]
+
+
 class LbGame(FakeGame):
     """乐队确认页 + LB 消耗设置弹窗（按当前选中项画出白色单选按钮）；``held`` 为 0 且消耗不为 0 时
     LIVE START 弹出恢复 LIVE BOOST（``popup``，实机大多直接开始、不消耗）。顶栏和弹窗上的持有数按 ``held``
@@ -265,6 +369,258 @@ class LbGame(FakeGame):
 
 def tapped(game, point, radius=20):
     return [s for s, p in game.taps if math.dist(p, point) < radius]
+
+
+class RefillGame(LbGame):
+    """在 LbGame 上加消耗设置弹窗的「恢复」→ 恢复LIVE BOOST（左边按 ``tab`` 画出选中的分页）→ 确认 → 已恢复。
+    ``owned`` 为小型（+1）和普通（+10）LIVE BOOST饮料的持有数（为 0 的那行不显示），每点一次「+」多选一瓶；
+    确认弹窗上的恢复数按 ``amount``（默认就是选中的）改写，``preview`` 改写恢复预览，确认后持有数加上选中的。
+    ``drop`` 里的 before / after 模拟预览左边 / 右边的数字漏读（实机持有 1 时白色的「1」读不出来）。"""
+
+    DRINK_Y = {1: 212, 10: 354}
+    TABS = {"道具": (85, 146), "星钻": (72, 217), "观看广告": (72, 285)}
+
+    def __init__(self, cost: int, held: int, owned=(24, 5), tab="道具", amount=None, preview=None, drop=(), **kw):
+        super().__init__(cost, held, popup=False, **kw)
+        self.owned = dict(zip((1, 10), owned))
+        self.chosen = {1: 0, 10: 0}
+        self.tab = tab
+        self.amount = amount
+        self.preview = preview
+        self.drop = drop
+
+    def gain(self) -> int:
+        return sum(lb * n for lb, n in self.chosen.items())
+
+    def grab(self):
+        if self.state != "lb_recover_drinks":
+            return super().grab()
+        w, h = self.size
+        img = np.full((h, w, 3), (71, 38, 38), np.uint8)
+        for name, (x, y) in self.TABS.items():
+            color = (176, 162, 84) if name == self.tab else (139, 84, 70)
+            cv2.rectangle(img, ((x - 40) * w // 1280, (y - 25) * h // 720), ((x + 40) * w // 1280, (y + 25) * h // 720), color, -1)
+        return img, 0.0
+
+    def read(self, frame, roi=None):
+        if isinstance(frame, np.ndarray):
+            frame = self.state
+        if frame == "lb_recover_drinks":
+            items = []
+            for it in load_items(frame):
+                lb = 1 if it.y < 250 else 10
+                if it.text.endswith("饮料") or "/" in it.text or it.text == "X":
+                    if not self.owned[lb] and not self.chosen[lb]:
+                        continue  # 没有的饮料不显示
+                    if "/" in it.text:
+                        it = OcrItem(it.x, it.y, it.w, it.h, f"{self.chosen[lb]}/{self.owned[lb]}")
+                elif it.text == "3":
+                    side = "before" if it.x < 760 else "after"
+                    if side in self.drop:
+                        continue
+                    after = self.held + self.gain() if self.preview is None else self.preview
+                    it = OcrItem(it.x, it.y, it.w, it.h, str(self.held if side == "before" else after))
+                items.append(it)
+            return items
+        if frame == "lb_recover_confirm":
+            n = self.gain() if self.amount is None else self.amount
+            return [OcrItem(it.x, it.y, it.w, it.h, it.text.replace("恢复1点", f"恢复{n}点")) for it in load_items(frame)]
+        return super().read(frame, roi)
+
+    def tap(self, x, y):
+        p = (x * 1280 / self.size[0], y * 720 / self.size[1])
+        here = self.state
+
+        def near(q, r=20):
+            return math.dist(p, q) < r
+
+        nxt = None
+        if here == "lb_setting" and near((940, 575)):
+            nxt = "lb_recover_drinks"
+        elif here == "lb_recover_drinks":
+            for lb, y0 in self.DRINK_Y.items():
+                if near((910, y0)) and self.chosen[lb] < self.owned[lb]:
+                    self.chosen[lb] += 1
+            self.tab = next((t for t, q in self.TABS.items() if near(q, 40)), self.tab)
+            if near((782, 663), 40) and self.gain():
+                nxt = "lb_recover_confirm"
+            elif near((498, 663), 40):
+                self.chosen = {1: 0, 10: 0}
+                nxt = "lb_setting"
+        elif here == "lb_recover_confirm":
+            if near((782, 572), 40):
+                self.held += self.gain()
+                self.owned = {lb: self.owned[lb] - n for lb, n in self.chosen.items()}
+                self.chosen = {1: 0, 10: 0}
+                nxt = "lb_recovered"
+            elif near((497, 572), 40):
+                nxt = "lb_recover_drinks"
+        elif here == "lb_recovered" and near((640, 570), 40):
+            nxt = "lb_setting"
+        if here in ("lb_recover_drinks", "lb_recover_confirm", "lb_recovered") or nxt:
+            self.taps.append((here, p))
+            self.state = nxt or here
+            return
+        super().tap(x, y)
+
+
+def refill_nav(game, limit=0, cost=3):
+    cfg = Config()
+    cfg.game.difficulty = "expert"
+    cfg.game.lb_cost = cost
+    cfg.game.lb_refill = True
+    cfg.game.lb_refill_limit = limit
+    nav = GameNavigator(cfg, game, game, game, settle_s=0)
+    nav._sleep = lambda s: None
+    return nav
+
+
+def never_paid(game):
+    """星钻、观看广告分页一次都没点过。"""
+    return not tapped(game, RefillGame.TABS["星钻"], 40) and not tapped(game, RefillGame.TABS["观看广告"], 40)
+
+
+def test_plan_refill():
+    def drinks(*owned):
+        return [LbDrink("", lb, 0, n, y) for (lb, n), y in zip(owned, (212, 354))]
+
+    assert navigator.plan_refill(drinks((1, 24), (10, 5)), 3, None) == [3, 0]  # 先用小的
+    assert navigator.plan_refill(drinks((1, 2), (10, 5)), 3, None) == [2, 1]  # 小的不够再用大的
+    assert navigator.plan_refill(drinks((10, 5)), 3, None) == [1]
+    assert navigator.plan_refill(drinks((10, 5)), 3, 9) == [0]  # 额度不够一瓶大的
+    assert navigator.plan_refill(drinks((1, 24), (10, 5)), 3, 2) == [2, 0]  # 只补到额度
+    assert navigator.plan_refill(drinks((1, 0), (10, 0)), 3, None) == [0, 0]
+    assert navigator.plan_refill([LbDrink("", 1, 2, 3, 212)], 3, None) == [1]  # 已经选了 2 瓶
+
+
+def test_refill_when_short():
+    """持有少于每局消耗时从消耗设置进去，在「道具」页用小型饮料补够，再按配置的消耗开始。"""
+    game = RefillGame(cost=3, held=1)
+    nav = refill_nav(game)
+    nav.start_live()
+    assert game.state == "loading" and game.cost == 3
+    assert game.held == 3 and game.owned == {1: 22, 10: 5}
+    assert tapped(game, (910, 212)) == ["lb_recover_drinks"] * 2
+    assert tapped(game, (782, 572)) == ["lb_recover_confirm"]  # 确认恢复
+    assert tapped(game, (640, 570)) == ["lb_recovered"]
+    assert never_paid(game)
+    assert nav._refilled == 2 and not nav._refill_out
+    # 持有够了不再打开弹窗
+    game.state = "band_confirm"
+    game.taps.clear()
+    nav.start_live()
+    assert [s for s, _ in game.taps] == ["band_confirm", "live_options"]
+
+
+def test_refill_keeps_going_until_limit():
+    game = RefillGame(cost=3, held=0)
+    nav = refill_nav(game, limit=5)
+    nav.start_live()
+    assert game.held == 3 and nav._refill_left == 2
+    game.state, game.held = "band_confirm", 0  # 打完一局用掉了
+    nav.start_live()
+    assert game.held == 2 and nav._refilled == 5 and nav._refill_out  # 只补到上限
+    assert game.owned == {1: 19, 10: 5}
+    game.state, game.held = "band_confirm", 0
+    game.taps.clear()
+    nav.start_live()
+    assert game.state == "loading" and not tapped(game, (920, 665))  # 到上限后不再打开消耗设置
+    assert never_paid(game)
+
+
+def test_refill_unlimited_uses_big_drinks_after_small():
+    game = RefillGame(cost=3, held=0, owned=(1, 2))
+    nav = refill_nav(game)
+    nav.start_live()
+    assert game.held == 11 and game.owned == {1: 0, 10: 1}
+    for _ in range(3):  # 11 → 8 → 5 → 2，持有 2 时再补一瓶大的
+        game.state, game.held = "band_confirm", game.held - 3
+        nav.start_live()
+    assert game.held == 12 and game.owned == {1: 0, 10: 0}
+    game.state, game.held = "band_confirm", 0
+    nav.start_live()
+    assert nav._refill_out and game.state == "loading"  # 道具用完，照原来的方式继续
+    assert tapped(game, (498, 663)) == ["lb_recover_drinks"]  # 没有饮料时点取消
+    assert never_paid(game)
+
+
+def test_refill_out_then_stop():
+    """清体力：道具里没有饮料时点取消，持有 0 就停下（LbExhausted），之后不再打开恢复。"""
+    game = RefillGame(cost=3, held=0, owned=(0, 0))
+    nav = refill_nav(game)
+    with pytest.raises(LbExhausted):
+        nav.start_live("stop")
+    assert nav._refill_out and game.state == "band_confirm"
+    assert tapped(game, (498, 663)) == ["lb_recover_drinks"]
+    assert not tapped(game, (782, 663), 100)  # 没点 OK
+
+
+@pytest.mark.parametrize("tab", ["星钻", "观看广告"])
+def test_refill_never_on_other_tabs(tab):
+    game = RefillGame(cost=3, held=0, tab=tab)
+    nav = refill_nav(game)
+    with pytest.raises(LbExhausted):
+        nav.start_live("stop")
+    assert game.held == 0 and nav._refill_out
+    assert not [s for s, p in game.taps if s == "lb_recover_drinks" and not math.dist(p, (498, 663)) < 20]  # 只点了取消
+    assert never_paid(game)
+
+
+def test_refill_cancels_on_preview_mismatch():
+    game = RefillGame(cost=3, held=0, preview=13)
+    nav = refill_nav(game)
+    nav.start_live()
+    assert game.held == 0 and nav._refill_out and game.state == "loading"
+    assert not tapped(game, (782, 663), 40)  # 预览对不上不点 OK
+    assert game.chosen == {1: 0, 10: 0}  # 取消后选的都作废了
+
+
+def test_refill_preview_missing_held_digit():
+    """实机：持有 1 时预览「1 ▶ 3」只读到 3，用消耗设置弹窗上的持有数核对。"""
+    game = RefillGame(cost=3, held=1, drop=("before",))
+    nav = refill_nav(game)
+    nav.start_live()
+    assert game.held == 3 and nav._refilled == 2 and not nav._refill_out
+    assert never_paid(game)
+
+
+@pytest.mark.parametrize("drop, preview", [(("before",), 4), (("after",), None)])
+def test_refill_cancels_on_unreadable_preview(drop, preview):
+    game = RefillGame(cost=3, held=1, drop=drop, preview=preview)
+    nav = refill_nav(game)
+    nav.start_live()
+    assert game.held == 1 and nav._refill_out and game.state == "loading"
+    assert not tapped(game, (782, 663), 40)
+
+
+def test_refill_cancels_on_confirm_mismatch():
+    game = RefillGame(cost=3, held=0, amount=30)
+    nav = refill_nav(game)
+    nav.start_live()
+    assert game.held == 0 and nav._refill_out and game.state == "loading"
+    assert tapped(game, (497, 572)) == ["lb_recover_confirm"]  # 确认弹窗点取消
+    assert not tapped(game, (782, 572))
+    assert never_paid(game)
+
+
+def test_refill_after_live_start_popup():
+    """点 LIVE START 弹出恢复窗口（顶栏读多了）：取消后从消耗设置进去用道具补充，再开始。"""
+    game = RefillGame(cost=3, held=0, bar="5/10")
+    game.popup = True
+    nav = refill_nav(game)
+    nav.start_live()
+    assert game.state == "loading" and game.held == 3 and game.cost == 3
+    assert tapped(game, (498, 663))[0] == "lb_recover"
+    assert never_paid(game)
+
+
+def test_refill_off_never_recovers():
+    game = RefillGame(cost=3, held=0)
+    nav = make_nav(game, game, game)
+    nav.cfg.game.lb_cost = 3
+    with pytest.raises(LbExhausted):
+        nav.start_live("stop")
+    assert not tapped(game, (940, 575), 60) and game.held == 0
 
 
 def test_set_lb_cost_once():
@@ -462,6 +818,54 @@ def test_ensure_in_game_already_in_game():
     nav = make_nav(game, game, game)
     assert nav.ensure_in_game() == navigator.Screen.BAND_CONFIRM
     assert game.taps == []
+
+
+def test_ensure_in_game_closes_notify_prompt(monkeypatch):
+    """标题画面上的「开启消息通知」：点右上角的 ⓧ 关掉，不点「去开启」。"""
+    monkeypatch.setitem(TRANSITIONS, "title_notify", [((822, 171), "title")])
+    game = FakeGame("title_notify")
+    nav = make_nav(game, game, game)
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert tapped(game, (822, 171), radius=2) == ["title_notify"]
+    assert [s for s, _ in game.taps] == ["title_notify", "title", "login_bonus", "reward", "notice"]
+
+
+def test_title_without_tap_to_start_fails(monkeypatch):
+    """标题画面一直没出现 TAP TO START（被认不出的弹窗挡住）：报错，不再一直等。"""
+    game = FakeGame("title_loading")
+    nav = make_nav(game, game, game)
+    nav.save_debug = lambda *a: None
+    now = fake_clock(monkeypatch, nav)
+    start = now[0]
+    with pytest.raises(NavigationError, match="没出现 TAP TO START"):
+        nav.ensure_in_game()
+    assert game.taps == [] and 120 < now[0] - start < 125
+
+
+def test_connect_error_returns_to_title(monkeypatch):
+    """连接失败：等一会儿再点「返回标题画面」重新登录；进到主界面后重新计数。"""
+    monkeypatch.setitem(TRANSITIONS, "connect_error", [((640, 572), "title")])
+    game = FakeGame("connect_error")
+    nav = make_nav(game, game, game)
+    now = fake_clock(monkeypatch, nav)
+    start = now[0]
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert [s for s, _ in game.taps] == ["connect_error", "title", "login_bonus", "reward", "notice"]
+    assert now[0] - start >= navigator.CONNECT_RETRY_WAIT_S
+    assert nav._connect_errors == 0
+
+
+def test_connect_error_gives_up(monkeypatch):
+    """一直连不上：重试几次后报错，不无限重新登录。"""
+    monkeypatch.setitem(TRANSITIONS, "connect_error", [((640, 572), "title")])
+    monkeypatch.setitem(TRANSITIONS, "title", [((950, 585), "connect_error")])
+    game = FakeGame("connect_error")
+    nav = make_nav(game, game, game)
+    nav.save_debug = lambda *a: None
+    fake_clock(monkeypatch, nav)
+    with pytest.raises(NavigationError, match="连接失败"):
+        nav.ensure_in_game()
+    assert len(tapped(game, (640, 572))) == navigator.MAX_CONNECT_RETRIES
 
 
 def test_ensure_in_game_times_out(monkeypatch):

@@ -103,6 +103,8 @@ class SyncParams:
     # 推算出的歌曲开始时刻最多比开始同步晚这么久（MuMu 实测加载约 9s）；更晚多半是错过了首音符、
     # 跟踪到了后面的音符，按它演奏会整体错开，视为同步失败。0 表示不检查
     max_start_delay_s: float = 20.0
+    # 暂停重试后歌曲立即从头开始（实测推算的开始时刻在开始同步前 0.3s 左右），同一个检查改用这个上限
+    retry_start_delay_s: float = 1.5
     record_frames: int = 0  # 调试：保存最近多少帧跟踪区截图到 debug/sync/（演奏结束后写盘）
 
 
@@ -112,6 +114,9 @@ class PlayConfig:
     offset_ms: float = 0.0
     # 演奏中连续这么久（秒）看不到演奏画面（被暂停、闪退）就停止触控；0 为不检查
     guard_lost_s: float = 2.0
+    # 演奏中生命值连续这么久（秒）为 0（整体对不上了）就停止触控、暂停重试（次数算在 loop.sync_retries 里）；
+    # 0 为不检查。需要 guard_lost_s 不为 0
+    guard_life_zero_s: float = 1.0
     touch: TouchParams = field(default_factory=TouchParams)
     sync: SyncParams = field(default_factory=SyncParams)
 
@@ -144,6 +149,10 @@ class GameConfig:
     # null 表示不改游戏里的设置。持有数量不足时游戏会消耗剩余的全部 LB；
     # 用完时弹出「恢复LIVE BOOST」（道具/星钻/广告）只点取消，之后 30 分钟内（或到玩家升级）改为 0 继续
     lb_cost: int | None = None
+    # 每局开始前 LB 持有少于 lb_cost（需要为 1~3）时，用道具里的 LIVE BOOST饮料补充（从「消耗LB」→「恢复」进去，
+    # 只在「道具」页选；绝不用星钻、不看广告）。道具用完或补够 lb_refill_limit 个后按上面的方式处理
+    lb_refill: bool = False
+    lb_refill_limit: int = 0  # 本次运行最多补充多少 LB，0 为不限（直到道具用完）
 
 
 @dataclass
@@ -169,6 +178,8 @@ class LoopConfig:
     # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 1~3）
     wait_lb: bool = False
     max_failures: int = 5  # 连续失败次数上限
+    # 首音符同步失败、演奏中生命值归零时暂停、点「重试」让这首歌从头开始的次数（每局）；用完了就等歌曲放完。0 为不重试
+    sync_retries: int = 2
     ap_difficulties: str = "expert,hard,normal,easy"  # AP 补完依次处理的难度（逗号分隔）
     # ap_first 依次补的难度（逗号分隔，如 "expert,hard,normal,easy"），都补完了按 game.difficulty 随机；
     # 留空只补 game.difficulty

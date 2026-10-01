@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from enum import StrEnum
 
 from ..result_reader import OcrItem, _norm, classify_label, find_labels
@@ -18,10 +19,14 @@ class Screen(StrEnum):
     BAND_CONFIRM = "乐队确认"
     LIVE_OPTIONS = "演出前选项设置"
     LB_SETTING = "LB消耗设置"
-    LB_RECOVER = "恢复LIVE BOOST"  # 用道具/星钻/广告恢复 LB：只能点取消
+    # 用道具/星钻/广告恢复 LB：开了 game.lb_refill 时只在「道具」页用 LIVE BOOST饮料，否则只点取消
+    LB_RECOVER = "恢复LIVE BOOST"
+    LB_RECOVER_CONFIRM = "恢复LB确认"  # 恢复LIVE BOOST 点 OK 后的「将恢复n点LIVE BOOST。确定要恢复吗？」
+    LB_RECOVERED = "LB已恢复"  # 「已恢复LIVE BOOST。」只有「OK」
     SETTINGS = "设置"
     PAUSE = "暂停"
     ABORT_CONFIRM = "终止确认"  # 暂停弹窗点「终止」后的二次确认
+    RETRY_CONFIRM = "重试确认"  # 暂停弹窗点「重试」后的二次确认（「要重试并从头开始本次演出吗？」）
     LIVE_END = "LIVE CLEAR"
     ACHIEVEMENT = "达成奖励列表"
     RESULT = "结算"  # 判定数页
@@ -41,10 +46,13 @@ class Screen(StrEnum):
     TITLE = "标题画面"
     LOGIN_BONUS = "登录奖励"  # 右上角有 SKIP 的登录奖励演出，点空白处继续
     REWARD = "获得奖励"  # 领到东西后的确认弹窗（登录奖励、评级提升奖励等），只有「OK」
+    # B 站 SDK 在标题画面上弹出的「开启消息通知」：只点右上角的 ⓧ（「去开启」会跳到系统的通知设置）
+    NOTIFY = "开启消息通知"
+    CONNECT_ERROR = "连接失败"  # 「发生网络连接错误。」只有「返回标题画面」，回到标题重新登录
 
 
 # 重新登录途中的画面：导航的超时从最后一次看到这些画面算起
-RELOGIN_SCREENS = frozenset((Screen.DATE_CHANGE, Screen.TITLE, Screen.LOGIN_BONUS))
+RELOGIN_SCREENS = frozenset((Screen.DATE_CHANGE, Screen.TITLE, Screen.LOGIN_BONUS, Screen.CONNECT_ERROR))
 
 # 画面左上角标题
 TITLE_ROI: Rect = (120, 10, 300, 55)
@@ -54,16 +62,22 @@ _TITLES = {
     "演出首页": Screen.LIVE_TOP,
     "设置": Screen.SETTINGS,
 }
-# 弹窗优先于底下的页面（按顺序匹配：恢复弹窗可能叠在消耗设置上，终止确认可能叠在暂停上）
+# 弹窗优先于底下的页面（按顺序匹配：恢复弹窗可能叠在消耗设置上，终止、重试确认可能叠在暂停上）
 _DIALOGS = {
+    "开启消息通知": Screen.NOTIFY,
+    "发生网络连接错误": Screen.CONNECT_ERROR,
     "日期已变更": Screen.DATE_CHANGE,
     "前往标题画面": Screen.DATE_CHANGE,
     "演出前选项设置": Screen.LIVE_OPTIONS,
     "达成奖励列表": Screen.ACHIEVEMENT,
+    # 这两个也包含「恢复L」，要排在前面
+    "确定要恢复吗": Screen.LB_RECOVER_CONFIRM,
+    "已恢复L": Screen.LB_RECOVERED,
     # 标题「恢复LIVE BOOST」（LIVE 的大小写常读错）；消耗设置弹窗里的「恢复」按钮后面没有字母
     "恢复L": Screen.LB_RECOVER,
     "消耗设置": Screen.LB_SETTING,
     "要终止演出": Screen.ABORT_CONFIRM,
+    "要重试并从头开始": Screen.RETRY_CONFIRM,
     "演出已暂停": Screen.PAUSE,
 }
 # LIVE CLEAR / LIVE FINISH 大字，OCR 常读成 LVEOLEAR、LVEFINSH
@@ -256,6 +270,71 @@ def lb_bar_timer(items: list[OcrItem]) -> int | None:
         m = re.search(r"(\d{1,2})[:：;](\d{2})$", _digits(it.text))
         if m and int(m.group(2)) < 60:
             return int(m.group(1)) * 60 + int(m.group(2))
+    return None
+
+
+# 恢复LIVE BOOST 弹窗：左边一列分页「道具」「星钻」「观看广告」，选中的是青绿色、没选中的是深蓝。
+# 「道具」页每行一种饮料：名字下面一排 重置 − 「已选/持有」 + 最大；底部是持有数预览「3 ▶ 14」
+LB_TAB_ITEMS = (85, 146)
+LB_TAB_OTHERS = ((72, 217), (72, 285))  # 星钻、观看广告
+LB_PLUS_X = 910
+# 小型LIVE BOOST饮料每瓶恢复 1 个，LIVE BOOST饮料 10 个（LIVE 常读成 LIvE、LVE）
+LB_DRINK_NAME = re.compile(r"(小型)?L[A-Z]{1,3}BOOST饮料")
+LB_DRINK_NAME_X = 600  # 名字在左半边
+LB_DRINK_COUNT_X = (720, 860)  # 「已选/持有」的中心 x
+LB_PREVIEW_ROI: Rect = (600, 545, 300, 50)
+LB_PREVIEW_ARROW_X = 770  # 预览中间 ▶ 的中心 x，左边是恢复前、右边是恢复后
+
+
+@dataclass(frozen=True)
+class LbDrink:
+    name: str
+    lb: int  # 每瓶恢复的 LB
+    chosen: int  # 已选几瓶
+    owned: int  # 持有几瓶
+    y: float  # 这一行按钮（+）的中心 y
+
+
+def lb_drinks(items: list[OcrItem]) -> list[LbDrink]:
+    """恢复LIVE BOOST「道具」页上认得的饮料，从上到下（名字认不出、数量没读到的行不要）。"""
+    drinks = []
+    for it in items:
+        m = LB_DRINK_NAME.fullmatch(_compact(it.text).upper())
+        if not m or it.x + it.w / 2 > LB_DRINK_NAME_X:
+            continue
+        for c in items:
+            n = re.fullmatch(r"(\d+)/(\d+)", _digits(c.text))
+            lo, hi = LB_DRINK_COUNT_X
+            if n and lo <= c.x + c.w / 2 <= hi and 25 < c.cy - it.cy < 90:
+                drinks.append(LbDrink(it.text.strip(), 1 if m.group(1) else 10, int(n[1]), int(n[2]), c.cy))
+                break
+    return sorted(drinks, key=lambda d: d.y)
+
+
+def lb_preview(items: list[OcrItem]) -> tuple[int | None, int | None] | None:
+    """恢复LIVE BOOST 弹窗底部的（恢复前，恢复后）持有数，没读到的一边为 None，两边都没读到返回 None。
+    数字很小，单独一个白色的「1」常常整个漏掉（实机：持有 1 时预览「1 ▶ 3」只读到 3）。"""
+    before = after = None
+    for it in items:
+        if not (in_roi(it, LB_PREVIEW_ROI) and re.fullmatch(r"\d{1,3}", _digits(it.text))):
+            continue
+        n = int(_digits(it.text))
+        cx = it.x + it.w / 2
+        if cx < LB_PREVIEW_ARROW_X - 30:
+            before = n
+        elif cx > LB_PREVIEW_ARROW_X + 30:
+            after = n
+    if before is None and after is None:
+        return None
+    return before, after
+
+
+def lb_recover_amount(items: list[OcrItem]) -> int | None:
+    """恢复确认弹窗「将恢复n点LIVE BOOST。」里的 n。"""
+    for it in items:
+        m = re.search(r"恢复(\d+)点", _compact(it.text))
+        if m:
+            return int(m.group(1))
     return None
 
 

@@ -14,6 +14,11 @@ y_h 为运动消失线（见 ``motion_horizon_y``，实测与轨道消失线一�
 
 前沿比音符中心略早到达、截图有固定延迟、几何参数的系统误差，这些常量偏差都由 ``offset_ms`` 吸收。
 （前沿与中心的距离随透视缩放，在该模型下正好是固定的时间差。）
+
+暂停菜单「重试」后歌曲立即从头开始（实测点确认后约 0.2s，演奏画面约 0.36s 后出现，再过 0.16s
+100056 的首音符就进入跟踪区），首音符一直在动，等不到画面静止，会错过它、跟上后面的音符。
+所以重试时直接沿用上一次静止时取的基线（``baseline``），不再等静止；歌曲开始时刻也几乎就是开始同步的时刻，
+用更严格的 ``max_start_delay_s`` 检查有没有跟错音符。
 """
 
 from __future__ import annotations
@@ -151,7 +156,11 @@ class NoteTracker:
         first_ms: float,
         spans: list[Span],
         record_frames: int = 0,
+        baseline: np.ndarray | None = None,
+        max_start_delay_s: float | None = None,
     ):
+        """``baseline``：上一次（同一谱面）静止时取的基线 ``clean_baseline``，给出时不等静止直接开始跟踪；
+        ``max_start_delay_s``：代替 ``params`` 里的同名参数。"""
         self.geo = geometry
         self.spans = list(spans)
         self.p = params
@@ -174,7 +183,13 @@ class NoteTracker:
         counts = mask.sum(axis=1, keepdims=True)
         # 每行按覆盖像素数归一化，得到「行平均差异」
         self._weights = mask / np.maximum(counts, 1.0)
-        self._baseline: np.ndarray | None = None
+        self.max_start_delay_s = params.max_start_delay_s if max_start_delay_s is None else max_start_delay_s
+        if baseline is not None and baseline.shape != mask.shape + (3,):
+            logger.debug("沿用的基线尺寸 %s 与跟踪区 %s 不符，改为等待静止", baseline.shape, mask.shape)
+            baseline = None
+        self._preset = None if baseline is None else baseline.astype(np.float32)
+        self._baseline: np.ndarray | None = None if self._preset is None else self._preset.copy()
+        self.clean_baseline: np.ndarray | None = None  # 画面静止时取的基线（重试时沿用）
         self._prev: np.ndarray | None = None
         self._stable = 0
         self._frames = 0
@@ -224,6 +239,7 @@ class NoteTracker:
             self._prev = crop
             if self._stable >= self.p.stable_frames:
                 self._baseline = crop.astype(np.float32)
+                self.clean_baseline = self._baseline.copy()
                 logger.debug("跟踪区已就绪（静止 %d 帧）", self._stable)
             elif t - self._start_t > self.p.arm_timeout_s:
                 self._baseline = crop.astype(np.float32)
@@ -267,9 +283,9 @@ class NoteTracker:
         return None
 
     def _rearm(self, crop: np.ndarray, t: float, why: str) -> None:
-        """放弃当前轨迹（转场、弹窗、介绍卡片等非音符变化），重新等待画面静止。"""
-        logger.debug("跟踪区出现非音符变化（%s），重新等待静止", why)
-        self._baseline = None
+        """放弃当前轨迹（转场、弹窗、介绍卡片等非音符变化），重新等待画面静止（沿用基线时换回那个基线）。"""
+        logger.debug("跟踪区出现非音符变化（%s），%s", why, "重新等待静止" if self._preset is None else "换回沿用的基线")
+        self._baseline = None if self._preset is None else self._preset.copy()
         self._prev = crop
         self._stable = 0
         self._start_t = t
@@ -332,7 +348,7 @@ class NoteTracker:
             notes.append(f"拟合不可信：{len(ts)} 个样本，残差 {rms_ms:.2f}ms，外推误差 ±{sigma_ms:.2f}ms")
         t0 = fit.arrival - self.first_ms / 1000
         delay = t0 - self._begin_t
-        if self.p.max_start_delay_s > 0 and delay > self.p.max_start_delay_s:
+        if self.max_start_delay_s > 0 and delay > self.max_start_delay_s:
             ok = False
             notes.append(f"推算的歌曲开始时刻在开始同步 {delay:.1f}s 后，跟踪到的多半不是第一个音符")
         if self.p.tau_s > 0 and abs(fit.tau / self.p.tau_s - 1) > 0.05:
@@ -351,7 +367,7 @@ class NoteTracker:
             notes=notes,
         )
         logger.debug(
-            "同步%s：%d 个样本，τ=%.3fs，残差 %.2fms，外推误差 ±%.2fms，距到达 %.0fms，歌曲开始于 +%.1fs（%s）",
+            "同步%s：%d 个样本，τ=%.3fs，残差 %.2fms，外推误差 ±%.2fms，距到达 %.0fms，歌曲开始于 %+.1fs（%s）",
             "成功" if ok else "存疑",
             len(ts),
             fit.tau,

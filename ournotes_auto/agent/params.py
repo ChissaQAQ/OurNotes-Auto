@@ -155,17 +155,28 @@ def _lb_cost(attach: Mapping[str, Any]) -> str:
     return str(_int(attach, "lb_cost", 0, 3))
 
 
+def _lb_refill(attach: Mapping[str, Any], lb_cost: str) -> dict[str, str]:
+    """``lb_refill``（开关）、``lb_refill_count``（最多补充多少 LB，0 为直到道具用完）；资源是旧版没有这两项时不补充。"""
+    if not flag(attach, "lb_refill"):
+        return {"game.lb_refill": "false"}
+    if lb_cost in ("null", "0"):
+        raise ParamError("LB 不足时用道具补充，需要把「每局消耗 LB」选为 1~3")
+    return {"game.lb_refill": "true", "game.lb_refill_limit": str(_int(attach, "lb_refill_count", 0))}
+
+
 def _ap_settings(attach: Mapping[str, Any]) -> dict[str, str]:
     chosen = [d for d in DIFFICULTIES if _bool(attach, f"ap_{d}")]  # DIFFICULTIES 从低到高
     if not chosen:
         raise ParamError("AP补完至少要选一个难度")
     if _choice(attach, "ap_order", AP_ORDERS) == "hard_first":
         chosen.reverse()
+    lb_cost = _lb_cost(attach)
     return {
         "loop.song_mode": "ap",
         "loop.ap_difficulties": ",".join(chosen),
         "loop.ap_max_attempts": str(_int(attach, "ap_max_attempts", 1, 99)),
-        "game.lb_cost": _lb_cost(attach),
+        "game.lb_cost": lb_cost,
+        **_lb_refill(attach, lb_cost),
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
     }
@@ -187,7 +198,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
     ``song_list``）；重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
     清体力 / 挂机另有 ``clear_lb_cost``（1~3）；AP补完另有 ``ap_expert`` 等四个难度开关、``ap_order``、
-    ``ap_max_attempts`` 和 ``lb_cost``。
+    ``ap_max_attempts`` 和 ``lb_cost``。四个任务都有 ``lb_refill`` ``lb_refill_count``（LB 不足时用道具补充）。
     """
     if task not in ("repeat", "clear_lb", "idle", "ap"):
         raise ParamError(f"未知任务：{task}")
@@ -215,6 +226,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     else:
         sets["game.lb_cost"] = str(_int(attach, "clear_lb_cost", 1, 3))
         sets["loop.until_lb_empty"] = "true"
+    sets.update(_lb_refill(attach, sets["game.lb_cost"]))
     sets["loop.wait_lb"] = "true" if task == "idle" else "false"
     return sets
 

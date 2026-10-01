@@ -7,6 +7,8 @@
             "max_plays": 0,
             "lb_cost": "keep",
             "clear_lb_cost": 3,
+            "lb_refill": false,
+            "lb_refill_count": 0,
             "touch": "minitouch",
             "watch_combo": false,
             "debug_log": false,

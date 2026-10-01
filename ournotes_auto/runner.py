@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from .charts.bdon import BdonClient, ChartNotFound
 from .charts.catalog import Catalog, Song
+from .charts.model import Chart
 from .config import Config
-from .player.guard import PlayInterrupted
+from .player.guard import LifeDepleted, PlayInterrupted
 from .player.session import PlayOutcome, PlaySession, SyncFailed
 from .player.sync import SyncTimeout
 from .records import PlayResult, RecordStore
@@ -69,6 +70,10 @@ class Navigator(Protocol):
 
         LB 用完（弹出恢复 LIVE BOOST）时：``zero`` 改为消耗 0 继续；``stop`` 抛出 :class:`LbExhausted`。
         """
+        ...
+
+    def retry_live(self) -> None:
+        """演奏中暂停 → 重试，这首歌从头开始，点完立即返回；不在演奏画面或重试没生效时抛 NavigationError。"""
         ...
 
     def lb_status(self, check: bool = False) -> tuple[int | None, int | None]:
@@ -184,15 +189,7 @@ class Runner:
         self.session.learned_offset_ms = self.store.learned_offset_ms
         lc = self.cfg.loop
         self.nav.start_live("stop" if lc.until_lb_empty or lc.wait_lb else "zero")
-        outcome: PlayOutcome | None = None
-        try:
-            outcome = self.session.play(chart, self.stop)
-        except (SyncFailed, SyncTimeout) as e:
-            # 自由演出 LIFE 归零也不会中断，等歌曲结束后照常离开结算页
-            logger.error("本局放弃：%s", e)
-        except PlayInterrupted as e:
-            # 暂停菜单、闪退后的桌面等交给下一局开头的导航处理
-            raise NavigationError(str(e)) from e
+        outcome = self._play(chart)
         counts = self.nav.read_result(chart.judged_count or None)
         # 先记下这一局再离开结算页：离开时出错（如遇到没见过的结算页）也不丢记录
         result = None if outcome is None else self._record(outcome, counts)
@@ -203,6 +200,32 @@ class Runner:
             self.stats.all_perfect += bool(result.all_perfect)
         self.nav.leave_result()
         return result
+
+    def _play(self, chart: Chart) -> PlayOutcome | None:
+        """演奏一局，返回 None 表示放弃（歌还在放，之后照常等结算）。
+
+        首音符同步失败、演奏中生命值归零（整体对不上了）时暂停、从头重试，最多 ``loop.sync_retries`` 次：
+        干等这首歌放完几乎拿不到分，这一局消耗的 LB 就浪费了（「终止」也拿不到演出奖励）。
+        """
+        retries = 0
+        while True:
+            try:
+                return self.session.play(chart, self.stop, retry=retries > 0)
+            except (SyncFailed, SyncTimeout, LifeDepleted) as e:
+                if retries >= self.cfg.loop.sync_retries or self.stop.is_set():
+                    # 自由演出 LIFE 归零也不会中断，等歌曲结束后照常离开结算页
+                    logger.error("本局放弃：%s", e)
+                    return None
+                retries += 1
+                logger.warning("%s，从头重试（第 %d 次）", e, retries)
+            except PlayInterrupted as e:
+                # 暂停菜单、闪退后的桌面等交给下一局开头的导航处理
+                raise NavigationError(str(e)) from e
+            try:
+                self.nav.retry_live()
+            except NavigationError as e:
+                logger.error("重试失败，本局放弃：%s", e)
+                return None
 
     def _record(self, outcome: PlayOutcome, rc: ResultCounts) -> PlayResult:
         judgements = ("perfect", "great", "good", "bad")

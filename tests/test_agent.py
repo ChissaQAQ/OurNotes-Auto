@@ -18,6 +18,8 @@ ATTACH = {
     "max_plays": 0,
     "lb_cost": "keep",
     "clear_lb_cost": 3,
+    "lb_refill": False,
+    "lb_refill_count": 0,
     "touch": "minitouch",
     "watch_combo": False,
     "debug_log": False,
@@ -107,6 +109,7 @@ def test_run_settings_repeat():
         "loop.song_mode": "current",
         "loop.max_plays": "0",
         "game.lb_cost": "null",
+        "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
         **HUMAN_OFF,
@@ -157,6 +160,7 @@ def test_run_settings_ap():
         "loop.ap_difficulties": "expert,hard,normal,easy",
         "loop.ap_max_attempts": "3",
         "game.lb_cost": "null",
+        "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
         **HUMAN_OFF,
@@ -166,6 +170,25 @@ def test_run_settings_ap():
     )
     assert sets["loop.ap_difficulties"] == "easy,expert"
     assert sets["game.lb_cost"] == "0"
+
+
+def test_run_settings_lb_refill():
+    """四个演奏任务都能开「LB 不足时用道具补充」；需要每局消耗 1~3，旧资源没有这两项时不补充。"""
+    on = {**ATTACH, "lb_refill": "Yes", "lb_refill_count": "5", "lb_cost": 2}
+    for task in ("repeat", "clear_lb", "idle", "ap"):
+        sets = run_settings(task, on)
+        assert sets["game.lb_refill"] == "true" and sets["game.lb_refill_limit"] == "5", task
+    assert run_settings("clear_lb", {**on, "lb_refill_count": 0})["game.lb_refill_limit"] == "0"
+    old = {k: v for k, v in ATTACH.items() if not k.startswith("lb_refill")}
+    assert run_settings("repeat", old)["game.lb_refill"] == "false"
+    for task in ("repeat", "ap"):
+        for cost in ("keep", 0):
+            with pytest.raises(ParamError, match="1~3"):
+                run_settings(task, {**on, "lb_cost": cost})
+    with pytest.raises(ParamError, match="lb_refill_count"):
+        run_settings("clear_lb", {**on, "lb_refill_count": -1})
+    with pytest.raises(ParamError, match="lb_refill"):
+        run_settings("clear_lb", {**on, "lb_refill": "maybe"})
 
 
 def test_run_settings_humanize():
@@ -270,6 +293,7 @@ def test_worker_args_parse_back():
     from ournotes_auto.cli import build_parser
     from ournotes_auto.commands import check_run_config
     from ournotes_auto.config import Config, apply_override
+    from ournotes_auto.context import SetupError
 
     device = {"device.backend": "mumu", "device.mumu_path": r"D:\MuMu Player", "device.instance": "1"}
     args = build_parser().parse_args(worker_args("clear_lb", ATTACH, device))
@@ -319,6 +343,21 @@ def test_worker_args_parse_back():
     check_run_config(cfg)
     touch = cfg.play.touch
     assert (touch.great_ratio, touch.jitter_ms, touch.position_jitter) == (0.2, 20.0, 1.0)
+
+    args = build_parser().parse_args(worker_args("idle", {**ATTACH, "lb_refill": True, "lb_refill_count": 7}, device))
+    cfg = Config()
+    for item in args.set:
+        key, _, value = item.partition("=")
+        apply_override(cfg, key, value)
+    check_run_config(cfg)
+    assert cfg.game.lb_refill is True and cfg.game.lb_refill_limit == 7
+    cfg.game.lb_refill_limit = -1
+    with pytest.raises(SetupError, match="上限"):
+        check_run_config(cfg)
+    cfg.game.lb_refill_limit, cfg.game.lb_cost = 0, 0
+    cfg.loop.until_lb_empty = cfg.loop.wait_lb = False
+    with pytest.raises(SetupError, match="道具补充"):
+        check_run_config(cfg)
 
 
 def _load(rel):

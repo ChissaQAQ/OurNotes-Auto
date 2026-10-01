@@ -18,7 +18,7 @@ from ..geometry import Geometry
 from ..planner import Plan, Planner
 from .clock import now
 from .executor import ExecStats, Executor
-from .guard import TEMPLATE_PATH, PlayGuard, PlayInterrupted, load_template
+from .guard import TEMPLATE_PATH, LifeDepleted, PlayGuard, PlayInterrupted, load_template
 from .monitor import ComboWatcher, find_breaks, report_breaks, save_samples
 from .sync import NoteTracker, SyncResult, SyncTimeout
 
@@ -103,18 +103,31 @@ class PlaySession:
         self.guard_template = load_template() if config.play.guard_lost_s > 0 else None
         if config.play.guard_lost_s > 0 and self.guard_template is None:
             logger.warning("找不到 %s，演奏中不检查是否离开了演奏画面", TEMPLATE_PATH)
+        # 上一次同步时画面静止取的跟踪区基线（谱面, 基线）：暂停重试后歌曲立即开始，等不到静止，沿用它
+        self._baseline: tuple[str, np.ndarray] | None = None
 
     @property
     def offset_ms(self) -> float:
         return self.cfg.play.offset_ms + self.learned_offset_ms
 
-    def prepare(self, chart: Chart) -> tuple[Plan, NoteTracker]:
+    def prepare(self, chart: Chart, retry: bool = False) -> tuple[Plan, NoteTracker]:
         plan = self.planner.plan(chart)
         if plan.dropped:
             logger.warning("%d 个手势因触点不足被丢弃", len(plan.dropped))
         first_ms, spans = chart.first_hits()
         sp = self.cfg.play.sync
-        tracker = NoteTracker(self.geometry, sp, first_ms, spans, record_frames=sp.record_frames)
+        baseline = None
+        if retry and self._baseline is not None and self._baseline[0] == chart.key:
+            baseline = self._baseline[1]
+        tracker = NoteTracker(
+            self.geometry,
+            sp,
+            first_ms,
+            spans,
+            record_frames=sp.record_frames,
+            baseline=baseline,
+            max_start_delay_s=sp.retry_start_delay_s if retry else None,
+        )
         logger.debug(
             "谱面 %s：%d 个手势 / %d 个触控事件，首音符 %.0fms（%d 个）",
             chart.key,
@@ -130,15 +143,21 @@ class PlaySession:
         chart: Chart,
         stop: threading.Event | None = None,
         require_sync_ok: bool = True,
+        retry: bool = False,
     ) -> PlayOutcome:
-        """需在进入演奏画面、首音符出现之前调用（通常在点击开始后立即调用）。"""
-        plan, tracker = self.prepare(chart)
+        """需在进入演奏画面、首音符出现之前调用（通常在点击开始后立即调用）。
+
+        ``retry``：刚在暂停菜单点了重试（歌曲立即从头开始，沿用上一次的跟踪区基线，见 player/sync.py）。"""
+        plan, tracker = self.prepare(chart, retry)
         try:
             sync = tracker.wait(self.source, stop)
         except SyncTimeout:
             if self.cfg.play.sync.record_frames:
                 self._dump(tracker, chart, None)
             raise
+        finally:
+            if tracker.clean_baseline is not None:
+                self._baseline = (chart.key, tracker.clean_baseline)
         if not sync.ok and require_sync_ok:
             if self.cfg.play.sync.record_frames:
                 self._dump(tracker, chart, sync)
@@ -153,7 +172,8 @@ class PlaySession:
             watcher.start()
         guard = None
         if self.guard_template is not None:
-            guard = PlayGuard(timed, self.guard_template, self.cfg.play.guard_lost_s)
+            pc = self.cfg.play
+            guard = PlayGuard(timed, self.guard_template, pc.guard_lost_s, life_zero_s=pc.guard_life_zero_s)
         try:
             stats = self.executor.run(plan.events, sync.t0, offset, guard.start(stop) if guard else stop)
         finally:
@@ -169,6 +189,8 @@ class PlaySession:
             )
         if guard is not None and guard.lost:
             raise PlayInterrupted("演奏中途离开了演奏画面")
+        if guard is not None and guard.life_zero:
+            raise LifeDepleted("演奏中生命值降到 0（整体对不上了）")
         if self.cfg.play.sync.record_frames and self.dump_success:
             self._dump(tracker, chart, sync)
         if watcher is not None:

@@ -173,6 +173,10 @@ def check_run_config(cfg: Config) -> None:
         raise SetupError("打到 LB 用完需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
     if cfg.loop.wait_lb and not cfg.game.lb_cost:
         raise SetupError("挂机需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
+    if cfg.game.lb_refill and not cfg.game.lb_cost:
+        raise SetupError("LB 不足时用道具补充需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
+    if cfg.game.lb_refill_limit < 0:
+        raise SetupError(f"用道具补充 LB 的上限应为 0（不限）或正整数：{cfg.game.lb_refill_limit}")
     touch = cfg.play.touch
     if not 0 <= touch.great_ratio <= MAX_GREAT_RATIO:
         raise SetupError(f"故意打 GREAT 的比例应在 0~{MAX_GREAT_RATIO}：{touch.great_ratio}")
@@ -204,6 +208,9 @@ def cmd_run(cfg: Config, args) -> int:
         cfg.loop.max_plays = args.max_plays
     if args.lb_cost is not None:
         cfg.game.lb_cost = args.lb_cost
+    if args.lb_refill is not None:
+        cfg.game.lb_refill = True
+        cfg.game.lb_refill_limit = args.lb_refill
     if args.until_lb_empty:
         cfg.loop.until_lb_empty = True
     if args.wait_lb:
@@ -394,6 +401,12 @@ def register(sub) -> None:
     sp.add_argument("--songs", metavar="LIST", help="覆盖 loop.song_list（歌单：曲目 ID 或曲名，逗号分隔，可加 @难度）")
     sp.add_argument("-n", "--max-plays", type=int, help="覆盖 loop.max_plays（0 为不限）")
     sp.add_argument("--lb-cost", type=int, choices=(0, 1, 2, 3), help="覆盖 game.lb_cost（每局消耗的 LB）")
+    sp.add_argument(
+        "--lb-refill",
+        type=int,
+        metavar="N",
+        help="LB 不足时用道具里的 LIVE BOOST饮料补充，本次最多补充 N 个 LB（0 为直到饮料用完）；不用星钻、不看广告",
+    )
     sp.add_argument("--until-lb-empty", action="store_true", help="打到 LB 用完为止（清体力）")
     sp.add_argument(
         "--wait-lb", action="store_true", help="挂机：LB 用完后在乐队确认页等它恢复到每局消耗数再继续，一直运行"
