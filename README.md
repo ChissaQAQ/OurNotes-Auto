@@ -2,12 +2,12 @@
 
 <img src="docs/ui/icon.png" alt="图标" width="128">
 
-# ournotes-auto
+# OurNotes-Auto
 
-[![最新版本](https://img.shields.io/github/v/release/ChissaQAQ/ournotes-auto)](https://github.com/ChissaQAQ/ournotes-auto/releases/latest)
-[![下载量](https://img.shields.io/github/downloads/ChissaQAQ/ournotes-auto/total)](https://github.com/ChissaQAQ/ournotes-auto/releases)
-[![Star](https://img.shields.io/github/stars/ChissaQAQ/ournotes-auto)](https://github.com/ChissaQAQ/ournotes-auto/stargazers)
-[![许可证](https://img.shields.io/github/license/ChissaQAQ/ournotes-auto)](LICENSE)
+[![最新版本](https://img.shields.io/github/v/release/ChissaQAQ/OurNotes-Auto)](https://github.com/ChissaQAQ/OurNotes-Auto/releases/latest)
+[![下载量](https://img.shields.io/github/downloads/ChissaQAQ/OurNotes-Auto/total)](https://github.com/ChissaQAQ/OurNotes-Auto/releases)
+[![Star](https://img.shields.io/github/stars/ChissaQAQ/OurNotes-Auto)](https://github.com/ChissaQAQ/OurNotes-Auto/stargazers)
+[![许可证](https://img.shields.io/github/license/ChissaQAQ/OurNotes-Auto)](LICENSE)
 
 </div>
 
@@ -31,7 +31,7 @@
 
 ## 快速开始
 
-1. 在 [Releases](https://github.com/ChissaQAQ/ournotes-auto/releases/latest) 下载一个压缩包解压，不用装 Python。两种界面功能相同，任选一个：
+1. 在 [Releases](https://github.com/ChissaQAQ/OurNotes-Auto/releases/latest) 下载一个压缩包解压，不用装 Python。两种界面功能相同，任选一个：
 
    | 压缩包 | 界面 | 另外需要 |
    |---|---|---|
@@ -76,10 +76,10 @@
 
 ## 反馈问题
 
-在 [Issues](https://github.com/ChissaQAQ/ournotes-auto/issues) 提交，建议附上：
+在 [Issues](https://github.com/ChissaQAQ/OurNotes-Auto/issues) 提交，建议附上：
 
 - 发生了什么、你期望怎样，以及大概的时间（日志按时间找）
-- 日志 `data/ournotes.log`。每次运行的开头记了本工具版本、系统、CPU，连接时记了模拟器版本、实例的 CPU / 内存 / 帧率、分辨率、触控方式和游戏版本，**不用另外写设备信息**。图形界面再附上 `data/agent.log`。文件太大时，从出问题那次运行开头的「ournotes-auto 版本号（…）」一行截到出问题之后即可
+- 日志 `data/ournotes.log`。每次运行的开头记了本工具版本、系统、CPU，连接时记了模拟器版本、实例的 CPU / 内存 / 帧率、分辨率、触控方式和游戏版本，**不用另外写设备信息**。图形界面再附上 `data/agent.log`。文件太大时，从出问题那次运行开头的「OurNotes-Auto 版本号（…）」一行截到出问题之后即可
 - 日志里提到的截图（报错时会写「截图 debug/nav/….png」）
 - 打歌的问题：曲名、难度，最好有结算页截图
 - 日志和截图里可能有玩家昵称、好友邀请码，发之前可以打码

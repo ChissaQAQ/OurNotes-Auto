@@ -1,4 +1,4 @@
-# ournotes-auto 用户协议
+# OurNotes-Auto 用户协议
 
 最后更新：2026 年 9 月 30 日  
 协议版本：1.0
@@ -9,7 +9,7 @@
 
 ## 第 1 条 定义与适用范围
 
-- **本软件**：ournotes-auto（界面里显示为「Our Notes 自动打歌」），《BanG Dream! Our Notes》国际服的第三方自动演奏工具。源码公开在 <https://github.com/ChissaQAQ/ournotes-auto>
+- **本软件**：OurNotes-Auto（界面里显示为「Our Notes 自动打歌」，命令行是 `ournotes-auto`），《BanG Dream! Our Notes》国际服的第三方自动演奏工具。源码公开在 <https://github.com/ChissaQAQ/OurNotes-Auto>
 - **作者**：上述 GitHub 仓库的所有者 ChissaQAQ
 - **游戏**：《BanG Dream! Our Notes》及其国际服（包名 `com.bilibili.sirius.official`）
 - **用户**：下载、安装或使用本软件的任何个人或组织
@@ -30,7 +30,7 @@
 
 1. 传播本软件或其修改版时，必须保留作者署名和下面这条声明，并让用户能在界面里看到。原版的声明在首次打开时显示的使用说明（`docs/ui/welcome.md`）里：
 
-   > 本软件由 ChissaQAQ 开发，按 AGPL-3.0 免费开源，源码：https://github.com/ChissaQAQ/ournotes-auto
+   > 本软件由 ChissaQAQ 开发，按 AGPL-3.0 免费开源，源码：https://github.com/ChissaQAQ/OurNotes-Auto
 
 2. 修改版必须以合理的方式标明已被修改（例如改名，或在界面里注明），不得冒充原版，也不得声称是作者发布的。
 
