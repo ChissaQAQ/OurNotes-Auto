@@ -2,7 +2,7 @@
     "interface_version": 2,
     "name": "OurNotesAuto",
     "label": "Our Notes 自动打歌",
-    "version": "v0.1.2",
+    "version": "v0.1.3",
     "description": "《BanG Dream! Our Notes》国际服自动演奏：按谱面发送触控，自动导航自由演出、连续演奏。",
     "welcome": "docs/ui/welcome.md",
     "icon": "docs/ui/icon.png",
