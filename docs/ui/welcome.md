@@ -1,6 +1,6 @@
 # ⚠️ 使用前请阅读
 
-本软件由 ChissaQAQ 开发，按 AGPL-3.0 免费开源，源码：https://github.com/ChissaQAQ/ournotes-auto
+本软件由 ChissaQAQ 开发，按 AGPL-3.0 免费开源，源码：https://github.com/ChissaQAQ/OurNotes-Auto
 
 如果你是花钱买到的，说明被倒卖了，可以要求退款并举报卖家。使用本软件即表示同意《用户协议》（发布包里的 `TERMS_OF_SERVICE.md`）。
 

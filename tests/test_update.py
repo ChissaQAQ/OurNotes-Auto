@@ -40,10 +40,10 @@ def _head(monkeypatch, status, location=None):
 
 
 def test_fetch_latest(monkeypatch):
-    _head(monkeypatch, 302, "https://github.com/ChissaQAQ/ournotes-auto/releases/tag/v0.2.0")
+    _head(monkeypatch, 302, "https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.0")
     assert fetch_latest() == "v0.2.0"
     # 还没有正式发布时跳转到发布列表
-    _head(monkeypatch, 302, "https://github.com/ChissaQAQ/ournotes-auto/releases")
+    _head(monkeypatch, 302, "https://github.com/ChissaQAQ/OurNotes-Auto/releases")
     with pytest.raises(ValueError, match="没有找到"):
         fetch_latest()
     _head(monkeypatch, 404)

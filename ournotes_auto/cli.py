@@ -56,7 +56,7 @@ def _cpu_name() -> str:
 def _log_environment(argv: list[str]) -> None:
     """版本和运行环境记一行日志（模拟器设备的信息在连接时另记一行，见 context.open_device）。"""
     logger.debug(
-        "ournotes-auto %s（Python %s，%s，%s）：%s",
+        "OurNotes-Auto %s（Python %s，%s，%s）：%s",
         __version__,
         platform.python_version(),
         platform.platform(),

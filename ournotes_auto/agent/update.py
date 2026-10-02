@@ -15,7 +15,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-REPO = "ChissaQAQ/ournotes-auto"
+REPO = "ChissaQAQ/OurNotes-Auto"
 DOWNLOAD_URL = f"https://github.com/{REPO}/releases/latest"  # 跳转到最新正式发布的，不含草稿和预发布
 CACHE_TTL_S = 6 * 3600  # MXU 每次运行任务都重启 Agent，查过的结果缓存一阵，免得每次都访问 GitHub
 _VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
