@@ -56,12 +56,32 @@ def open_device(cfg: Config):
     if touch is None:
         touch = MuMuTouch(ipc)
     try:
+        _log_device(cfg, source, "MuMu IPC" if isinstance(touch, MuMuTouch) else "minitouch")
         yield source, touch
     finally:
         try:
             getattr(touch, "close", touch.release_all)()
         finally:
             ipc.disconnect()
+
+
+def _log_device(cfg: Config, source, touch_name: str) -> None:
+    """设备信息记一行日志：反馈问题时附上日志就够了，不用另外说明设备。"""
+    from .device import adb
+    from .device.mumu import describe_mumu
+
+    try:
+        android, game = adb.versions(cfg.device)
+    except (OSError, subprocess.SubprocessError):
+        android = game = ""
+    w, h = source.size
+    parts = [f"实例 {cfg.device.instance}（{adb.adb_serial(cfg.device)}）", *describe_mumu(cfg.device), f"画面 {w}x{h}"]
+    parts.append(f"触控 {touch_name}")
+    if android:
+        parts.append(f"Android {android}")
+    if game:
+        parts.append(f"游戏 {game}")
+    logger.debug("设备：%s", "，".join(parts))
 
 
 def open_ocr(cfg: Config):

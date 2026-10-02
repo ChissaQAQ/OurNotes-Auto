@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
@@ -29,6 +30,8 @@ logger = logging.getLogger(__name__)
 # （倒计时读不到时；等待期间游戏也可能日期变更，要重新登录）
 LB_POLL_S = 600.0
 LB_POLL_MARGIN_S = 5.0
+# 挂机遇到服务器维护：隔这么久回到标题画面重新登录一次，看开服没有
+MAINTENANCE_POLL_S = 600.0
 
 
 class NavigationError(RuntimeError):
@@ -39,8 +42,20 @@ class ScreenFrozen(NavigationError):
     """停在认不出的画面上、画面一直不动（多半是没见过的页面或弹窗在等人操作），重试也没用。"""
 
 
+class GameUpdateRequired(ScreenFrozen):
+    """游戏弹出「检测到新版本」，只能去应用商店更新安装包（只有「前往商店」，不点）：和画面卡住一样，干等没用，任务立刻停下。"""
+
+
+class ServerMaintenance(NavigationError):
+    """游戏显示服务器维护页：开服之前什么都做不了。"""
+
+
 class LbExhausted(Exception):
     """LB 已用完（且不允许改为消耗 0 继续打）。"""
+
+
+class CpExhausted(LbExhausted):
+    """挑战演出的挑战pt（CP）不够一局的消耗了：和 LB 用完一样结束。"""
 
 
 class SongLabel(NamedTuple):
@@ -54,7 +69,8 @@ class SongLabel(NamedTuple):
 
 class Navigator(Protocol):
     def ensure_band_confirm(self, difficulty: str | None = None) -> None:
-        """从任意画面进入自由演出的乐队确认页（LIVE START 所在页）；经过乐曲选择页时选 ``difficulty``。"""
+        """从任意画面进入自由演出（``loop.challenge`` 时为挑战演出）的乐队确认页（LIVE START 所在页）；
+        经过乐曲选择页时选 ``difficulty``。"""
         ...
 
     def selected_song(self) -> SongLabel:
@@ -69,6 +85,7 @@ class Navigator(Protocol):
         """点击 LIVE START 后立即返回（首音符同步需要尽早开始看画面）。
 
         LB 用完（弹出恢复 LIVE BOOST）时：``zero`` 改为消耗 0 继续；``stop`` 抛出 :class:`LbExhausted`。
+        挑战演出的 CP 不够一局时抛出 :class:`CpExhausted`。
         """
         ...
 
@@ -110,6 +127,22 @@ class Navigator(Protocol):
         """在列表里找到并选中 ``music_id``，返回 ``SongPick``；列表里没有时返回 None。"""
         ...
 
+    def next_challenge_song(self) -> None:
+        """挑战演出乐曲选择页：选中下一首（最后一首之后回到第一首）。"""
+        ...
+
+    def challenge_song_ap(self, difficulty: str) -> tuple[str, bool]:
+        """挑战演出乐曲选择页：选上 ``difficulty``，返回选中的歌的曲名和它在这个难度是否已经 AP。"""
+        ...
+
+    def run_daily(self, jobs) -> list[str]:
+        """领取日常（``jobs`` 为 ``nav.daily.DAILY_JOBS`` 里的项目），返回出错的项目名，最后停在主界面。"""
+        ...
+
+    def relogin(self) -> None:
+        """停在服务器维护页时回到标题画面重新登录，等到进入游戏；还在维护时抛 :class:`ServerMaintenance`。"""
+        ...
+
 
 def identify_song(catalog: Catalog, label: SongLabel, difficulty: str) -> tuple[Song, str]:
     """封面优先，曲名兜底；返回 (曲目, 依据说明)，认不出或证据矛盾时抛 NavigationError。
@@ -138,6 +171,7 @@ class RunStats:
     full_combo: int = 0
     all_perfect: int = 0
     failures: int = 0
+    maintenance: bool = False  # 因服务器维护停止
 
 
 class Runner:
@@ -163,6 +197,8 @@ class Runner:
         self.stop = stop or threading.Event()
         self.source = source or make_source(config, catalog)
         self.stats = RunStats()
+        self.clock = time.monotonic  # 定时领取录音室练习用（测试里换成假时钟）
+        self._next_claim = 0.0  # 下次领取录音室练习的时刻：开始时先领一次
         lc = config.loop
         if (lc.until_lb_empty or lc.wait_lb) and not config.game.lb_cost:
             raise ValueError(f"{'挂机' if lc.wait_lb else '打到 LB 用完'}需要设置 game.lb_cost 为 1~3")
@@ -223,6 +259,8 @@ class Runner:
                 raise NavigationError(str(e)) from e
             try:
                 self.nav.retry_live()
+            except ServerMaintenance:
+                raise
             except NavigationError as e:
                 logger.error("重试失败，本局放弃：%s", e)
                 return None
@@ -296,7 +334,7 @@ class Runner:
         """换到下一局的曲目；换歌失败只记录（下一局的 ensure_band_confirm 会从任意画面恢复，只是这次没换成歌）。"""
         try:
             more = self.source.advance(self.nav, first)
-        except ScreenFrozen:
+        except (ScreenFrozen, ServerMaintenance):
             raise
         except (NavigationError, TimeoutError) as e:
             if self.stop.is_set():
@@ -312,12 +350,42 @@ class Runner:
             logger.info("没有要打的曲目了")
         return more
 
+    def _claim_studio(self) -> None:
+        """到时间就去领录音室练习（收获，``loop.studio_claim_hours``，开始时先领一次），领完停在主界面，
+        下一局开头的导航会回到乐队确认页。领不成只记录，过一个间隔再领；画面卡住不动、服务器维护时照常停止。"""
+        hours = self.cfg.loop.studio_claim_hours
+        if hours <= 0 or self.clock() < self._next_claim:
+            return
+        logger.info("领取录音室练习（收获）")
+        try:
+            ok = not self.nav.run_daily(["studio"])  # 领取时出的错 run_daily 自己记了
+        except (ScreenFrozen, ServerMaintenance):
+            raise
+        except (NavigationError, TimeoutError) as e:
+            if self.stop.is_set():
+                return
+            logger.error("领取录音室练习：%s", e)
+            ok = False
+        self._next_claim = self.clock() + hours * 3600
+        if not ok:
+            logger.warning("录音室练习没领成，%g 小时后再领", hours)
+
+    def _claim_wait(self) -> float:
+        """距下次领取录音室练习还有多少秒（不领时为无穷大）。"""
+        if self.cfg.loop.studio_claim_hours <= 0:
+            return float("inf")
+        return max(0.0, self._next_claim - self.clock())
+
     def _wait_lb(self) -> None:
         """挂机：停在乐队确认页等 LB 恢复到每局消耗数（LB 少于它时每局奖励也少）。
-        每次醒来都重新进入乐队确认页：等待期间游戏可能日期变更、回到标题画面重新登录。"""
+        每次醒来都重新进入乐队确认页：等待期间游戏可能日期变更、回到标题画面重新登录；
+        到了领取录音室练习的时间也会醒来去领。"""
         need = self.cfg.game.lb_cost
         last: int | None = -1
         while True:
+            self._claim_studio()
+            if self.stop.is_set():
+                raise NavigationError("已停止")
             self.nav.ensure_band_confirm(self.source.difficulty)
             held, left = self.nav.lb_status()
             if held is not None and held >= need:
@@ -327,6 +395,7 @@ class Runner:
                 logger.info("LB 恢复到 %d 个，继续", held)
                 return
             wait = LB_POLL_S if left is None else min(LB_POLL_S, left + LB_POLL_MARGIN_S)
+            wait = min(wait, self._claim_wait())
             if held != last:  # 每恢复一个报一次
                 eta = "" if left is None else f"，下一个约 {left // 60}:{left % 60:02d} 后恢复"
                 logger.info("LB 持有 %s 个，每局消耗 %d 个：等待恢复%s", "?" if held is None else held, need, eta)
@@ -336,13 +405,33 @@ class Runner:
             if self.stop.wait(wait):
                 raise NavigationError("已停止")
 
+    def _wait_maintenance(self, e: ServerMaintenance) -> None:
+        """挂机遇到服务器维护：每隔 MAINTENANCE_POLL_S 回到标题画面重新登录一次，开服、进到游戏后返回。
+        重新登录遇到别的问题时也返回，交给下一局开头的导航（还在维护会再回到这里）。"""
+        logger.warning("%s，每 %.3g 分钟回到标题画面看一次开服没有", e, MAINTENANCE_POLL_S / 60)
+        while not self.stop.wait(MAINTENANCE_POLL_S):
+            try:
+                self.nav.relogin()
+            except ServerMaintenance:
+                logger.info("还在维护")
+                continue
+            except ScreenFrozen:
+                raise
+            except (NavigationError, TimeoutError) as e:
+                if not self.stop.is_set():
+                    logger.warning("维护后重新登录：%s", e)
+                return
+            logger.info("已开服，继续挂机")
+            return
+
     def run(self) -> RunStats:
         try:
             self._loop()
-        except ScreenFrozen as e:
-            # 干等画面不会变，重试也没用（恢复选曲页的设置同样做不了）
+        except (ScreenFrozen, ServerMaintenance) as e:
+            # 干等画面不会变、维护期间什么都做不了，重试也没用（恢复选曲页的设置同样做不了）
             logger.error("%s，停止", e)
             self.stats.failures += 1
+            self.stats.maintenance = isinstance(e, ServerMaintenance)
         else:
             if not self.stop.is_set():
                 try:
@@ -365,14 +454,22 @@ class Runner:
         first = True
         wait_lb = False  # 上一局因 LB 用完没开始（挂机）：等恢复后接着打这首，不换歌
         while not self.stop.is_set() and (lc.max_plays <= 0 or self.stats.plays < lc.max_plays):
-            if not wait_lb and (not self._advance(first) or self.stop.is_set()):
-                break
-            first = False
             try:
+                if not wait_lb:
+                    self._claim_studio()  # 在换歌之前领：领完从主界面回来再选歌
+                    if self.stop.is_set() or not self._advance(first) or self.stop.is_set():
+                        break
+                first = False
                 if wait_lb:
                     self._wait_lb()
                     wait_lb = False
                 result = self.play_once()
+            except ServerMaintenance as e:
+                # 挂机等到开服接着挂（这局没开始或中途被打断，不算失败；之后照常换歌）；其他任务直接失败
+                if not lc.wait_lb:
+                    raise
+                self._wait_maintenance(e)
+                continue
             except LbExhausted as e:
                 if not lc.wait_lb:
                     logger.info("%s，结束", e)

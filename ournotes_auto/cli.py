@@ -6,12 +6,14 @@ import argparse
 import json
 import logging
 import os
+import platform
 import sys
 import threading
 from pathlib import Path
 
 from . import __version__
 from .config import Config, apply_override, load_config, save_config
+from .logfile import file_handler
 
 logger = logging.getLogger("ournotes_auto")
 
@@ -36,13 +38,31 @@ def _setup_logging(verbose: int, log_file: str | None = "data/ournotes.log", jso
     console.setFormatter(JsonLineFormatter() if json_log else fmt)
     root.addHandler(console)
     if log_file:
-        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_file, encoding="utf-8")
-        fh.setLevel(logging.DEBUG)
-        fh.setFormatter(fmt)
-        root.addHandler(fh)
+        root.addHandler(file_handler(log_file))
     for noisy in ("urllib3", "PIL"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+def _cpu_name() -> str:
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as k:
+            return str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip()
+    except (ImportError, OSError):
+        return platform.processor()
+
+
+def _log_environment(argv: list[str]) -> None:
+    """版本和运行环境记一行日志（模拟器设备的信息在连接时另记一行，见 context.open_device）。"""
+    logger.debug(
+        "ournotes-auto %s（Python %s，%s，%s）：%s",
+        __version__,
+        platform.python_version(),
+        platform.platform(),
+        _cpu_name(),
+        " ".join(argv),
+    )
 
 
 # ---------------------------------------------------------------- 谱面
@@ -226,6 +246,7 @@ def start_stdin_watch(stop: threading.Event) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose, json_log=args.json_log)
+    _log_environment(sys.argv[1:] if argv is None else argv)
     cfg = load_config(args.config)
     for item in args.set:
         key, sep, value = item.partition("=")

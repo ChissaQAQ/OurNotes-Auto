@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..device.mumu_ipc import find_dll
-from ..sources import DIFFICULTIES
+from ..sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
 
 PARAM_NODE = "OurNotesParam"  # 界面选项都覆盖到这个节点的 attach 上
 TASKS = {
@@ -18,9 +18,11 @@ TASKS = {
     "clear_lb": "清体力",
     "idle": "挂机",
     "ap": "AP补完",
+    "challenge": "挑战演出",
     "records": "记录汇总",
 }
 LOCAL_TASKS = {"records"}  # 不需要连接模拟器
+RUN_TASKS = ("repeat", "clear_lb", "idle", "ap", "challenge")  # 连续演奏（``run``）的任务
 # 领取日常的各项（与 ``daily --jobs`` 一致），界面上的开关是 attach 里的 ``daily_<项目>``
 DAILY_JOBS = ("studio", "story", "missions", "pass", "limited", "beginner", "tgw", "gifts")
 LOOP_SONG_MODES = ("current", "random", "ap_first", "list")  # 重复刷歌 / 清体力 / 挂机可选的选曲方式
@@ -164,6 +166,13 @@ def _lb_refill(attach: Mapping[str, Any], lb_cost: str) -> dict[str, str]:
     return {"game.lb_refill": "true", "game.lb_refill_limit": str(_int(attach, "lb_refill_count", 0))}
 
 
+def _studio_claim(attach: Mapping[str, Any]) -> str:
+    """挂机的 ``studio_claim``（开关）、``studio_claim_hours``（间隔 1~12 小时）；资源是旧版没有这两项时不领。"""
+    if not flag(attach, "studio_claim"):
+        return "0"
+    return str(_int(attach, "studio_claim_hours", 1, 12))
+
+
 def _ap_settings(attach: Mapping[str, Any]) -> dict[str, str]:
     chosen = [d for d in DIFFICULTIES if _bool(attach, f"ap_{d}")]  # DIFFICULTIES 从低到高
     if not chosen:
@@ -180,6 +189,39 @@ def _ap_settings(attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
     }
+
+
+def _difficulty(attach: Mapping[str, Any]) -> tuple[str, bool]:
+    """``difficulty`` → （游戏里选的难度, 是否「优先高难度」）；优先高难度时选 EXPERT。"""
+    difficulty = _choice(attach, "difficulty", LOOP_DIFFICULTIES)
+    high_first = difficulty == "high_first"
+    return (DIFFICULTIES[-1] if high_first else difficulty), high_first
+
+
+def _challenge_cost(attach: Mapping[str, Any]) -> str:
+    """``challenge_cost``：``keep``（不改游戏里的设置）或 200/400/800/1600。"""
+    if str(_get(attach, "challenge_cost")).strip().lower() == "keep":
+        return "null"
+    cost = _int(attach, "challenge_cost", 0)
+    if cost not in CHALLENGE_COSTS:
+        raise ParamError(f"参数 challenge_cost 应为 keep/{'/'.join(map(str, CHALLENGE_COSTS))}：{cost}")
+    return str(cost)
+
+
+def _challenge_settings(attach: Mapping[str, Any]) -> dict[str, str]:
+    """挑战演出不消耗 LB，打到挑战pt不够一局为止；不补充 LB、不等 LB 恢复。"""
+    difficulty, high_first = _difficulty(attach)
+    sets = {
+        "loop.song_mode": (mode := _choice(attach, "challenge_song_mode", CHALLENGE_SONG_MODES)),
+        "game.difficulty": difficulty,
+        "game.challenge_cost": _challenge_cost(attach),
+        "game.lb_refill": "false",
+        "loop.until_lb_empty": "false",
+        "loop.wait_lb": "false",
+    }
+    if mode == "ap_first":
+        sets["loop.ap_first_difficulties"] = ",".join(reversed(DIFFICULTIES)) if high_first else difficulty
+    return sets
 
 
 def _humanize(attach: Mapping[str, Any]) -> dict[str, str]:
@@ -199,22 +241,27 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     ``song_list``）；重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
     清体力 / 挂机另有 ``clear_lb_cost``（1~3）；AP补完另有 ``ap_expert`` 等四个难度开关、``ap_order``、
     ``ap_max_attempts`` 和 ``lb_cost``。四个任务都有 ``lb_refill`` ``lb_refill_count``（LB 不足时用道具补充）。
+    挂机另有 ``studio_claim`` ``studio_claim_hours``（定时领取录音室练习），其他任务不领。
+    挑战演出只有 ``challenge_song_mode``（current / rotate / ap_first）、``difficulty`` 和 ``challenge_cost``
+    （``keep`` 或 200/400/800/1600），不用 LB 相关的选项。
     """
-    if task not in ("repeat", "clear_lb", "idle", "ap"):
+    if task not in RUN_TASKS:
         raise ParamError(f"未知任务：{task}")
     sets = {
         "device.touch": _choice(attach, "touch", TOUCH_MODES),
         "loop.max_plays": str(_int(attach, "max_plays", 0)),
+        "loop.challenge": "true" if task == "challenge" else "false",
+        "loop.studio_claim_hours": _studio_claim(attach) if task == "idle" else "0",
         **_humanize(attach),
     }
     if task == "ap":
         return {**sets, **_ap_settings(attach)}
-    difficulty = _choice(attach, "difficulty", LOOP_DIFFICULTIES)
+    if task == "challenge":
+        return {**sets, **_challenge_settings(attach)}
+    sets["game.difficulty"], high_first = _difficulty(attach)
     sets["loop.song_mode"] = mode = _choice(attach, "song_mode", LOOP_SONG_MODES)
-    high_first = difficulty == "high_first"
-    sets["game.difficulty"] = DIFFICULTIES[-1] if high_first else difficulty
     if mode == "ap_first":
-        sets["loop.ap_first_difficulties"] = ",".join(reversed(DIFFICULTIES)) if high_first else difficulty
+        sets["loop.ap_first_difficulties"] = ",".join(reversed(DIFFICULTIES)) if high_first else sets["game.difficulty"]
     if mode == "list":
         songs = str(_get(attach, "song_list")).strip()
         if not songs:

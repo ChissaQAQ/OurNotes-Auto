@@ -29,7 +29,7 @@ from ournotes_auto.nav.daily import (
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import center
 from ournotes_auto.result_reader import OcrItem
-from ournotes_auto.runner import NavigationError
+from ournotes_auto.runner import NavigationError, ServerMaintenance
 
 SCREENS = Path(__file__).parent / "fixtures" / "screens"
 
@@ -367,6 +367,16 @@ def test_unknown_confirm_is_not_tapped(clock):
         nav.run_daily(["gifts"])
     assert game.state == "unknown_confirm"
     assert all(s != "unknown_confirm" for s, _ in game.taps)
+
+
+def test_maintenance_stops_daily(clock):
+    """领取途中服务器维护：整体报错，不再做后面的项目，维护页上什么都不点。"""
+    game = DailyGame("home", {"daily_gifts_empty"}, popup="maintenance")
+    nav = daily_nav(game, clock)
+    with pytest.raises(ServerMaintenance):
+        nav.run_daily(["gifts", "missions"])
+    assert game.state == "maintenance"
+    assert all(s != "maintenance" for s, _ in game.taps)
 
 
 def test_gift_confirm_ok_is_tapped(clock):

@@ -6,23 +6,33 @@ from pathlib import Path
 import pytest
 
 from ournotes_auto.nav.screens import (
+    CP_RADIO,
     RESULT_ROW_Y,
     Screen,
+    all_perfect_mark,
     band_confirm_song,
+    challenge_rows,
+    challenge_selected,
     classify,
+    cp_bar_held,
+    cp_held,
     lb_bar_held,
     lb_bar_timer,
     lb_drinks,
     lb_held,
     lb_preview,
     lb_recover_amount,
+    maintenance_period,
     note_speed,
     parse_difficulty,
     parse_level,
     result_cells,
+    same_title,
+    select_panel_title,
     title_startable,
 )
 from ournotes_auto.result_reader import OcrItem, classify_label
+from ournotes_auto.sources import CHALLENGE_COSTS
 
 FIXTURES = Path(__file__).parent / "fixtures" / "screens"
 
@@ -52,8 +62,15 @@ def load(name: str) -> list[OcrItem]:
         ("band_confirm_lb_timer", Screen.BAND_CONFIRM),  # LB 没满，顶栏有恢复倒计时
         ("live_options", Screen.LIVE_OPTIONS),
         ("live_top", Screen.LIVE_TOP),
+        ("live_top_challenge", Screen.LIVE_TOP),  # 活动期间多了「挑战演出」
+        ("challenge_song_select", Screen.CHALLENGE_SONG_SELECT),  # 没有分类、筛选、随机，只有活动的几首歌
+        ("challenge_song_select_last", Screen.CHALLENGE_SONG_SELECT),
+        ("challenge_song_select_ap", Screen.CHALLENGE_SONG_SELECT),  # 选中的歌已 AP（右侧有 ALL PERFECT）
+        ("challenge_band_confirm", Screen.CHALLENGE_BAND_CONFIRM),  # 右下是「CP 设置」，顶栏是 CP
+        ("challenge_cp_setting", Screen.CP_SETTING),
         ("home", Screen.HOME),
         ("lb_setting", Screen.LB_SETTING),
+        ("lb_setting_event", Screen.LB_SETTING),  # 活动期间每行也写着「活动pt」「挑战pt」
         ("lb_recover", Screen.LB_RECOVER),
         ("lb_recover_drinks", Screen.LB_RECOVER),  # 两种 LIVE BOOST饮料都在的「道具」页
         ("lb_recover_held1", Screen.LB_RECOVER),  # 持有 1、选了 2 瓶小型
@@ -72,6 +89,9 @@ def load(name: str) -> list[OcrItem]:
         ("title_loading", Screen.TITLE),
         ("title_notify", Screen.NOTIFY),  # 标题画面上 B 站 SDK 的「开启消息通知」
         ("connect_error", Screen.CONNECT_ERROR),  # 点 TAP TO START 后连不上服务器
+        ("maintenance", Screen.MAINTENANCE),  # 服务器维护中（登录时、对局中途都会弹出）
+        ("data_download", Screen.DATA_DOWNLOAD),  # 游戏更新后登录时下载追加数据
+        ("update_required", Screen.UPDATE_REQUIRED),  # 检测到新版本：只有「前往商店」
         ("login_bonus_event", Screen.LOGIN_BONUS),
         ("login_bonus", Screen.LOGIN_BONUS),
         ("login_bonus_talk", Screen.LOGIN_BONUS),
@@ -95,10 +115,83 @@ def test_title_startable():
     assert not title_startable(load("title_loading"))  # 刚启动，TAP TO START 还没出现
 
 
+def test_maintenance_period():
+    assert maintenance_period(load("maintenance")) == "2026/10/02 11:00 ~ 2026/10/02 16:00"
+    assert maintenance_period(load("title")) is None
+
+
 def test_band_confirm_song():
     assert band_confirm_song(load("band_confirm")) == ("迷星叫", "expert")
     assert band_confirm_song(load("band_confirm_avemujica")) == ("AveMujica", "expert")
     assert band_confirm_song(load("band_confirm_lb_timer")) == ("無路矢", "expert")
+
+
+def test_challenge_band_confirm_song():
+    assert band_confirm_song(load("challenge_band_confirm")) == ("夢我夢中", "expert")
+
+
+def test_setting_dialog_title():
+    """标题读错、没有「全部消耗」时：有「CP」的是挑战pt消耗设置。"""
+    cp = [it for it in load("challenge_cp_setting") if "挑战" not in it.text]
+    assert classify([*cp, OcrItem(536, 104, 205, 32, "消耗设置")]) is Screen.CP_SETTING
+    lb = [it for it in load("lb_setting_event") if it.text != "全部消耗"]
+    assert classify(lb) is Screen.LB_SETTING  # 标题里有 LIVEBOOST
+    lb = [it for it in lb if "消耗设置" not in it.text]
+    assert classify([*lb, OcrItem(482, 19, 310, 27, "EBCOS消耗设置")]) is Screen.LB_SETTING
+
+
+def test_cp_held():
+    assert cp_held(load("challenge_cp_setting")) == 3708
+    assert cp_bar_held(load("challenge_band_confirm")) == 3708
+    assert cp_bar_held(load("band_confirm")) is None  # 自由演出的顶栏是 LB（「14/10」）
+    assert cp_held(load("lb_setting")) is None
+    assert cp_held(load("lb_setting_event")) is None
+    assert cp_bar_held([OcrItem(1100, 19, 70, 29, "12,800")]) == 12800
+    assert cp_bar_held([OcrItem(1100, 19, 70, 29, "37O8")]) == 3708  # O 读成 0
+    assert cp_bar_held([OcrItem(1100, 19, 70, 29, "CP")]) is None
+
+
+def test_cp_radio_matches_costs():
+    assert tuple(CP_RADIO) == CHALLENGE_COSTS
+
+
+def test_challenge_rows():
+    rows = challenge_rows(load("challenge_song_select"))
+    assert [t for t, _ in rows] == ["夢我夢中", "これはぼくたちの生存のあらすじ", "オリオンをなぞる"]  # 不含等级、MV
+    assert challenge_selected(rows) == 0
+    rows = challenge_rows(load("challenge_song_select_last"))  # 选中最后一首，列表滚到底
+    assert [t for t, _ in rows][-1] == "オリオンをなぞる"
+    assert challenge_selected(rows) == 2
+    assert challenge_selected([("夢我夢中", 110.0), ("オリオンをなぞる", 212.0)]) is None
+    rows = challenge_rows(load("challenge_song_select_ap"))  # 选中中间那首，选中行的曲名截断了
+    assert [t for t, _ in rows] == ["夢我夢中", "これはぼくたちの生存の", "オリオンをなぞる"]
+    assert challenge_selected(rows) == 1
+
+
+@pytest.mark.parametrize(
+    "name, title, ap",
+    [
+        ("challenge_song_select", "夢我夢中", False),  # 没打过：HIGH SCORE 0
+        ("challenge_song_select_last", "オリオンをなぞる", False),
+        ("challenge_song_select_ap", "これはぼくたちの生存のあらて", True),  # 面板上是完整曲名（末尾读错）
+    ],
+)
+def test_select_panel(name, title, ap):
+    items = load(name)
+    assert select_panel_title(items) == title
+    assert all_perfect_mark(items) is ap
+    rows = challenge_rows(items)
+    assert same_title(rows[challenge_selected(rows)][0], title)
+
+
+def test_same_title():
+    assert same_title("これはぼくたちの生存の", "これはぼくたちの生存のあらすじ")  # 选中行截断
+    assert same_title("夢我夢中", "夢我夢中 ")
+    assert same_title(";ぼくたちの生存のあらす", "これはぼくたちの生存のあらて")  # 选中行的曲名在滚动
+    assert same_title("の生存のあらすじこれは", "これはぼくたちの生存のあらすじ")
+    assert not same_title("夢我夢中", "オリオンをなぞる")
+    assert not same_title("夢我夢中", None) and not same_title("", "")
+    assert same_title("R", "R") and not same_title("R", "Rubato")
 
 
 def test_parse_difficulty_tolerates_ocr_noise():
@@ -123,6 +216,7 @@ def test_note_speed():
 
 def test_lb_held():
     assert lb_held(load("lb_setting")) == 14
+    assert lb_held(load("lb_setting_event")) == 8
     assert lb_held(load("lb_recover")) is None
 
 

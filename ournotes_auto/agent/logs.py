@@ -12,7 +12,8 @@ import html
 import logging
 import os
 import sys
-from pathlib import Path
+
+from ..logfile import file_handler
 
 MFAA_PREFIX = {
     "DEBUG": "debug",
@@ -67,11 +68,7 @@ def setup_logging(log_file: str | None = "data/agent.log", client: str | None = 
     ui.setFormatter(UiFormatter(client))
     root.addHandler(ui)
     if log_file:
-        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_file, encoding="utf-8")
-        fh.setLevel(logging.DEBUG)
-        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname).1s %(name)s: %(message)s"))
-        root.addHandler(fh)
+        root.addHandler(file_handler(log_file))
     logging.getLogger("urllib3").setLevel(logging.WARNING)  # 检查更新时的连接细节
     return ui
 

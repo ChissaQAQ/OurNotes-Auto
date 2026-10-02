@@ -20,6 +20,8 @@ ATTACH = {
     "clear_lb_cost": 3,
     "lb_refill": False,
     "lb_refill_count": 0,
+    "studio_claim": True,
+    "studio_claim_hours": 4,
     "touch": "minitouch",
     "watch_combo": False,
     "debug_log": False,
@@ -30,6 +32,8 @@ ATTACH = {
     "ap_easy": True,
     "ap_order": "hard_first",
     "ap_max_attempts": 3,
+    "challenge_song_mode": "rotate",
+    "challenge_cost": 200,
     "human_great": 0,
     "human_timing": 0,
     "human_position": False,
@@ -108,10 +112,12 @@ def test_run_settings_repeat():
         "game.difficulty": "expert",
         "loop.song_mode": "current",
         "loop.max_plays": "0",
+        "loop.challenge": "false",
         "game.lb_cost": "null",
         "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
+        "loop.studio_claim_hours": "0",
         **HUMAN_OFF,
     }
     sets = run_settings("repeat", {**ATTACH, "lb_cost": 3, "max_plays": "20", "difficulty": "HARD"})
@@ -135,13 +141,26 @@ def test_run_settings_clear_lb():
 
 
 def test_run_settings_idle():
-    """挂机和清体力一样打到 LB 用完，只是之后等它恢复。"""
+    """挂机和清体力一样打到 LB 用完，只是之后等它恢复，并定时领取录音室练习。"""
     attach = {**ATTACH, "clear_lb_cost": 2, "song_mode": "ap_first", "difficulty": "high_first"}
     sets = run_settings("idle", attach)
-    assert sets == {**run_settings("clear_lb", attach), "loop.wait_lb": "true"}
+    assert sets == {**run_settings("clear_lb", attach), "loop.wait_lb": "true", "loop.studio_claim_hours": "4"}
     assert sets["game.lb_cost"] == "2" and sets["loop.until_lb_empty"] == "true"
     with pytest.raises(ParamError, match="clear_lb_cost"):
         run_settings("idle", {**ATTACH, "clear_lb_cost": 0})
+
+
+def test_run_settings_studio_claim():
+    """「定时收获」只有挂机有；关掉或旧资源没有这两项时不领，间隔 1~12 小时。"""
+    assert run_settings("idle", {**ATTACH, "studio_claim_hours": "11"})["loop.studio_claim_hours"] == "11"
+    assert run_settings("idle", {**ATTACH, "studio_claim": "No"})["loop.studio_claim_hours"] == "0"
+    old = {k: v for k, v in ATTACH.items() if not k.startswith("studio_claim")}
+    assert run_settings("idle", old)["loop.studio_claim_hours"] == "0"
+    for task in ("repeat", "clear_lb", "ap"):
+        assert run_settings(task, ATTACH)["loop.studio_claim_hours"] == "0", task
+    for hours in (0, 13, "{hours}"):
+        with pytest.raises(ParamError, match="studio_claim_hours"):
+            run_settings("idle", {**ATTACH, "studio_claim_hours": hours})
 
 
 def test_run_settings_high_first():
@@ -156,6 +175,7 @@ def test_run_settings_ap():
     assert run_settings("ap", ATTACH) == {
         "device.touch": "minitouch",
         "loop.max_plays": "0",
+        "loop.challenge": "false",
         "loop.song_mode": "ap",
         "loop.ap_difficulties": "expert,hard,normal,easy",
         "loop.ap_max_attempts": "3",
@@ -163,6 +183,7 @@ def test_run_settings_ap():
         "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
+        "loop.studio_claim_hours": "0",
         **HUMAN_OFF,
     }
     sets = run_settings(
@@ -170,6 +191,36 @@ def test_run_settings_ap():
     )
     assert sets["loop.ap_difficulties"] == "easy,expert"
     assert sets["game.lb_cost"] == "0"
+
+
+def test_run_settings_challenge():
+    """挑战演出：轮流打 / 打当前的歌，默认每局消耗 200 CP；不用 LB 相关的选项。"""
+    assert run_settings("challenge", ATTACH) == {
+        "device.touch": "minitouch",
+        "loop.max_plays": "0",
+        "loop.challenge": "true",
+        "loop.song_mode": "rotate",
+        "game.difficulty": "expert",
+        "game.challenge_cost": "200",
+        "game.lb_refill": "false",
+        "loop.until_lb_empty": "false",
+        "loop.wait_lb": "false",
+        "loop.studio_claim_hours": "0",
+        **HUMAN_OFF,
+    }
+    attach = {**ATTACH, "challenge_song_mode": "current", "challenge_cost": "1600", "difficulty": "high_first"}
+    sets = run_settings("challenge", {**attach, "lb_refill": True, "lb_cost": 0})
+    assert sets["loop.song_mode"] == "current" and sets["game.challenge_cost"] == "1600"
+    assert sets["game.difficulty"] == "expert" and sets["game.lb_refill"] == "false"
+    assert run_settings("challenge", {**ATTACH, "challenge_cost": "keep"})["game.challenge_cost"] == "null"
+    assert "loop.ap_first_difficulties" not in sets
+    # 优先打没 AP 的歌：难度选「优先高难度」时从 EXPERT 往下补
+    sets = run_settings("challenge", {**attach, "challenge_song_mode": "ap_first"})
+    assert sets["loop.song_mode"] == "ap_first" and sets["loop.ap_first_difficulties"] == "expert,hard,normal,easy"
+    sets = run_settings("challenge", {**ATTACH, "challenge_song_mode": "ap_first", "difficulty": "hard"})
+    assert sets["loop.ap_first_difficulties"] == "hard" and sets["game.difficulty"] == "hard"
+    for task in ("repeat", "clear_lb", "idle", "ap"):
+        assert run_settings(task, ATTACH)["loop.challenge"] == "false", task
 
 
 def test_run_settings_lb_refill():
@@ -220,6 +271,10 @@ def test_run_settings_humanize():
         ("repeat", {"human_great": 30}, "human_great"),
         ("repeat", {"human_timing": 25}, "human_timing"),
         ("ap", {"human_position": "maybe"}, "human_position"),
+        ("challenge", {"challenge_cost": 300}, "challenge_cost"),
+        ("challenge", {"challenge_cost": "{cost}"}, "challenge_cost"),
+        ("challenge", {"challenge_song_mode": "random"}, "challenge_song_mode"),
+        ("challenge", {"difficulty": "master"}, "difficulty"),
     ],
 )
 def test_run_settings_errors(task, change, msg):
@@ -314,6 +369,8 @@ def test_worker_args_parse_back():
         apply_override(cfg, key, value)
     check_run_config(cfg)
     assert cfg.game.lb_cost == 3 and cfg.loop.until_lb_empty and cfg.loop.wait_lb
+    assert cfg.loop.studio_claim_hours == 4.0
+    assert build_parser().parse_args(["run", "--claim-studio", "2.5"]).claim_studio == 2.5
 
     args = build_parser().parse_args(worker_args("ap", {**ATTACH, "ap_normal": False}, device))
     cfg = Config()

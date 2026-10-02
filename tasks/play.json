@@ -37,12 +37,13 @@
             "group": [
                 "play"
             ],
-            "description": "和清体力一样打到 LIVE BOOST 用完，然后停在乐队确认页，看右上角的恢复倒计时等 LB 恢复到每局消耗数（每 30 分钟恢复 1 个），再接着打；一直运行到手动停止（或打够局数）。等待期间遇到日期变更会重新登录。不会使用星钻；开了「LB 不足时用道具补充」时先用道具里的 LIVE BOOST饮料补充，饮料用完（或补够设置的数量）才开始等。它不会自己结束，请放在任务列表的最后。",
+            "description": "和清体力一样打到 LIVE BOOST 用完，然后停在乐队确认页，看右上角的恢复倒计时等 LB 恢复到每局消耗数（每 30 分钟恢复 1 个），再接着打；一直运行到手动停止（或打够局数）。等待期间遇到日期变更会重新登录。开了「定时收获」时，开始时和之后每隔几小时回主界面领一次录音室练习。不会使用星钻；开了「LB 不足时用道具补充」时先用道具里的 LIVE BOOST饮料补充，饮料用完（或补够设置的数量）才开始等。它不会自己结束，请放在任务列表的最后。",
             "option": [
                 "SongMode",
                 "Difficulty",
                 "ClearLbCost",
                 "LbRefill",
+                "StudioClaim",
                 "MaxPlays"
             ]
         },
@@ -64,9 +65,80 @@
                 "LbRefill",
                 "MaxPlays"
             ]
+        },
+        {
+            "name": "挑战演出",
+            "entry": "OurNotes_Challenge",
+            "group": [
+                "play"
+            ],
+            "description": "从演出首页进「挑战演出」（只在部分活动期间开放，没开放时报错结束）连续演奏，每局消耗挑战pt（CP），打到 CP 不够一局为止。第一局前在「CP 设置」里选好每局消耗（默认 200，最省、能多打几轮）。不消耗 LB，不点乐队确认页的「跳过」。",
+            "option": [
+                "ChallengeSongMode",
+                "Difficulty",
+                "ChallengeCost",
+                "MaxPlays"
+            ]
         }
     ],
     "option": {
+        "ChallengeSongMode": {
+            "type": "select",
+            "label": "选曲方式",
+            "cases": [
+                {
+                    "name": "rotate",
+                    "label": "轮流打每首歌",
+                    "description": "每局结束后选列表里的下一首，到底了回到第一首",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_song_mode": "rotate" } } }
+                },
+                {
+                    "name": "ap_first",
+                    "label": "优先打没 AP 的歌",
+                    "description": "每局开始前在挑战演出的乐曲选择页逐首看所选难度有没有 ALL PERFECT，先打没 AP 的（同一首最多打 3 次）；都 AP 了就改为轮流打每首歌。难度选「优先高难度」时按 EXPERT → HARD → NORMAL → EASY 依次补，都补完了按 EXPERT 轮流打",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_song_mode": "ap_first" } } }
+                },
+                {
+                    "name": "current",
+                    "label": "一直打当前选中的歌",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_song_mode": "current" } } }
+                }
+            ],
+            "default_case": "rotate"
+        },
+        "ChallengeCost": {
+            "type": "select",
+            "label": "每局消耗挑战pt",
+            "description": "消耗越多单局奖励、EXP、活动pt 越多（200 为 ×1，1600 为 ×8）；CP 不够一局时结束",
+            "cases": [
+                {
+                    "name": "200",
+                    "label": "200（×1）",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_cost": 200 } } }
+                },
+                {
+                    "name": "400",
+                    "label": "400（×2）",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_cost": 400 } } }
+                },
+                {
+                    "name": "800",
+                    "label": "800（×4）",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_cost": 800 } } }
+                },
+                {
+                    "name": "1600",
+                    "label": "1600（×8）",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_cost": 1600 } } }
+                },
+                {
+                    "name": "keep",
+                    "label": "不修改游戏里的设置",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_cost": "keep" } } }
+                }
+            ],
+            "default_case": "200"
+        },
         "LbRefill": {
             "type": "switch",
             "label": "LB 不足时用道具补充",
@@ -98,6 +170,38 @@
                 }
             ],
             "pipeline_override": { "OurNotesParam": { "attach": { "lb_refill_count": "{count}" } } }
+        },
+        "StudioClaim": {
+            "type": "switch",
+            "label": "定时收获（录音室练习）",
+            "description": "开始挂机时先领一次录音室练习，之后每隔设置的小时数回主界面再领一次（在两局之间或等 LB 时去领，领完回来接着挂机）。录音室练习最多累计 12 小时，超过后效率降到 30%",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "option": ["StudioClaimHours"],
+                    "pipeline_override": { "OurNotesParam": { "attach": { "studio_claim": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "studio_claim": false } } }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "StudioClaimHours": {
+            "type": "input",
+            "label": "收获间隔",
+            "inputs": [
+                {
+                    "name": "hours",
+                    "label": "每隔几小时领一次（1~12）",
+                    "default": "4",
+                    "pipeline_type": "int",
+                    "verify": "^([1-9]|1[0-2])$",
+                    "pattern_msg": "请输入 1~12"
+                }
+            ],
+            "pipeline_override": { "OurNotesParam": { "attach": { "studio_claim_hours": "{hours}" } } }
         },
         "LbCost": {
             "type": "select",

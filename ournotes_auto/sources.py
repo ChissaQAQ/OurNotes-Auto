@@ -7,6 +7,8 @@ import re
 from collections import Counter
 from typing import TYPE_CHECKING, Protocol
 
+from .nav.screens import same_title
+
 if TYPE_CHECKING:
     from .charts.catalog import Catalog, Song
     from .config import Config
@@ -15,7 +17,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SONG_MODES = ("current", "random", "ap", "ap_first", "list")
+SONG_MODES = ("current", "random", "ap", "ap_first", "list", "rotate")
+CHALLENGE_SONG_MODES = ("current", "rotate", "ap_first")  # 挑战演出的选曲页没有随机选曲、筛选和分类
+CHALLENGE_COSTS = (200, 400, 800, 1600)  # 挑战演出每局可选的挑战pt消耗
+CHALLENGE_MAX_SONGS = 30  # 挑战演出转一圈最多看这么多首（防止曲名读得不稳定时一直转）
 DIFFICULTIES = ("easy", "normal", "hard", "expert")
 AP_CATEGORY = "全部"  # AP 补完包括翻唱
 LIST_CATEGORY = "全部"  # 歌单里可能有翻唱
@@ -75,6 +80,94 @@ class RandomSong(_Source):
                 self._checked = True
             nav.choose_next_song("random")
         return True
+
+
+class ChallengeRotate(_Source):
+    """挑战演出：第一局打当前选中的曲目，之后每局在挑战演出乐曲选择页换到列表里的下一首（最后一首之后回到第一首）。"""
+
+    def __init__(self, difficulty: str):
+        self.difficulty = difficulty
+
+    def advance(self, nav: Navigator, first: bool) -> bool:
+        if not first:
+            nav.next_challenge_song()
+        return True
+
+
+class ChallengeApFirst(_Source):
+    """挑战演出：优先打还没 AP 的歌。按 ``difficulties`` 依次，从选中的歌往下一首首看乐曲选择页右侧的
+    ALL PERFECT 标记，打第一首没 AP 的；同一首打了 ``max_attempts`` 次还没 AP、或谱面站没有谱面的不再打。
+    这个难度转一圈都没有要打的就换下一个难度；都没有了改为按 ``fallback`` 难度轮流打每首歌（同 rotate）。"""
+
+    def __init__(self, difficulties: list[str], max_attempts: int = 3, fallback: str | None = None):
+        if not difficulties:
+            raise ValueError("至少要选一个难度")
+        for d in [*difficulties, fallback or difficulties[0]]:
+            if d not in DIFFICULTIES:
+                raise ValueError(f"未知的难度：{d}")
+        if max_attempts < 1:
+            raise ValueError(f"每首最多尝试次数应至少为 1：{max_attempts}")
+        self.difficulties = list(difficulties)
+        self.max_attempts = max_attempts
+        self.fallback = fallback or self.difficulties[0]
+        self._index = 0
+        self._rotate = False
+        self._key: tuple[str, str] | None = None  # 这一局打的 (曲名, 难度)
+        self.attempts: Counter[tuple[str, str]] = Counter()
+        self.skip: set[tuple[str, str]] = set()  # 已 AP、已放弃或打不了的 (曲名, 难度)
+
+    @property
+    def difficulty(self) -> str:
+        return self.fallback if self._rotate else self.difficulties[min(self._index, len(self.difficulties) - 1)]
+
+    def _known(self, title: str, diff: str) -> tuple[str, str]:
+        """之前读到过的同一首歌就沿用那次的键（每次 OCR 读出的曲名可能差几个字）。"""
+        for t, d in [*self.attempts, *self.skip]:
+            if d == diff and same_title(t, title):
+                return t, d
+        return title, diff
+
+    def advance(self, nav: Navigator, first: bool) -> bool:
+        while not self._rotate and self._index < len(self.difficulties):
+            diff = self.difficulty
+            seen: list[str] = []
+            for _ in range(CHALLENGE_MAX_SONGS):
+                title, ap = nav.challenge_song_ap(diff)
+                if any(same_title(t, title) for t in seen):
+                    break  # 转了一圈
+                seen.append(title)
+                key = self._known(title, diff)
+                if ap:
+                    self.skip.add(key)
+                if key not in self.skip:
+                    self._key = key
+                    logger.info("挑战演出：%s %s 还没 AP", title, diff.upper())
+                    return True
+                nav.next_challenge_song()
+            logger.info("挑战演出的歌 %s 都 AP 了（或已放弃）", diff.upper())
+            self._index += 1
+        self._key = None
+        if not self._rotate:
+            self._rotate = True
+            logger.info("没有要补的歌了，改为 %s 轮流打每首歌", self.fallback.upper())
+            return True  # 这一局打当前选中的，之后每局换下一首
+        nav.next_challenge_song()
+        return True
+
+    def done(self, song: Song, difficulty: str, result: PlayResult | None, playable: bool = True) -> None:
+        key = self._key
+        if key is None:
+            return
+        if not playable:
+            logger.warning("%s %s 打不了，跳过", song.display_title(), difficulty.upper())
+            self.skip.add(key)
+        elif result is not None and result.all_perfect:
+            self.skip.add(key)
+        else:
+            self.attempts[key] += 1
+            if self.attempts[key] >= self.max_attempts:
+                logger.warning("%s %s 打了 %d 次没有 AP，不再打", song.display_title(), difficulty.upper(), self.attempts[key])
+                self.skip.add(key)
 
 
 class ApComplete(_Source):
@@ -312,6 +405,10 @@ def parse_difficulties(text: str) -> list[str]:
 def make_source(cfg: Config, catalog: Catalog | None = None) -> SongSource:
     """``catalog`` 只有歌单模式（解析曲名）需要。"""
     mode, difficulty = cfg.loop.song_mode, cfg.game.difficulty
+    if cfg.loop.challenge and mode not in CHALLENGE_SONG_MODES:
+        raise ValueError(f"挑战演出只能用 {'/'.join(CHALLENGE_SONG_MODES)} 选曲模式，而不是 {mode}")
+    if mode == "rotate" and not cfg.loop.challenge:
+        raise ValueError("rotate 选曲模式只用于挑战演出（loop.challenge）")
     if mode == "ap":
         return ApComplete(parse_difficulties(cfg.loop.ap_difficulties), cfg.loop.ap_max_attempts)
     if difficulty not in DIFFICULTIES:
@@ -320,6 +417,11 @@ def make_source(cfg: Config, catalog: Catalog | None = None) -> SongSource:
         return CurrentSong(difficulty)
     if mode == "random":
         return RandomSong(difficulty)
+    if mode == "rotate":
+        return ChallengeRotate(difficulty)
+    if mode == "ap_first" and cfg.loop.challenge:
+        diffs = parse_difficulties(cfg.loop.ap_first_difficulties) or [difficulty]
+        return ChallengeApFirst(diffs, cfg.loop.ap_max_attempts, fallback=difficulty)
     if mode == "ap_first":
         diffs = parse_difficulties(cfg.loop.ap_first_difficulties) or [difficulty]
         return ApFirst(diffs, cfg.loop.ap_max_attempts, fallback=difficulty)

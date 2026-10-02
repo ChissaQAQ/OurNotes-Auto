@@ -22,7 +22,7 @@ import re
 import time
 
 from ..result_reader import OcrItem
-from ..runner import NavigationError
+from ..runner import NavigationError, ServerMaintenance
 from .screens import RELOGIN_SCREENS, TITLE_ROI, Rect, Screen, center, find, in_roi
 from .song_select import filter_open
 
@@ -114,7 +114,16 @@ REWARD_OK_ROI: Rect = (0, 450, 1280, 270)
 TITLE_BAR_ROI: Rect = (400, 80, 480, 80)  # 居中弹窗的标题栏
 BTN_GIFT_CANCEL = (496, 570)  # 「是否一键领取礼物？」的取消
 # 左上角有主页按钮、可以直接点它回主界面的画面
-HOME_BUTTON_SCREENS = frozenset((Screen.LIVE_TOP, Screen.SONG_SELECT, Screen.BAND_CONFIRM, Screen.SETTINGS))
+HOME_BUTTON_SCREENS = frozenset(
+    (
+        Screen.LIVE_TOP,
+        Screen.SONG_SELECT,
+        Screen.BAND_CONFIRM,
+        Screen.CHALLENGE_SONG_SELECT,
+        Screen.CHALLENGE_BAND_CONFIRM,
+        Screen.SETTINGS,
+    )
+)
 # 领取后可能弹出、只需要关掉的弹窗（底部中央是「关闭」或「OK」）
 KNOWN_POPUPS = frozenset((Screen.REWARD, Screen.GRADE_UP, Screen.POPUP, Screen.ACHIEVEMENT, Screen.UNLOCK))
 
@@ -220,7 +229,7 @@ class DailyMixin:
     def run_daily(self, jobs) -> list[str]:
         """按 :data:`DAILY_JOBS` 的顺序做 ``jobs`` 里的项目，返回出错的项目名，最后停在主界面。
 
-        每项开始前都回到主界面；某一项出错时记下来，接着做下一项。回不到主界面则整体报错。
+        每项开始前都回到主界面；某一项出错时记下来，接着做下一项。回不到主界面、服务器维护则整体报错。
         """
         unknown = set(jobs) - set(DAILY_JOBS)
         if unknown:
@@ -232,6 +241,8 @@ class DailyMixin:
             self.go_home()
             try:
                 getattr(self, f"_daily_{job}")()
+            except ServerMaintenance:
+                raise
             except NavigationError as e:
                 if self.stop.is_set():
                     raise

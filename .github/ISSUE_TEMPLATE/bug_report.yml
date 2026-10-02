@@ -1,0 +1,37 @@
+name: 问题反馈
+description: 报告 bug 或运行异常
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        日志 `data/ournotes.log` 里已经记了本工具版本、系统、CPU、模拟器版本与设置、分辨率、触控方式和游戏版本，附上日志就不用另外写设备信息。
+        日志和截图里可能有玩家昵称、好友邀请码，发之前可以打码。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你做了什么、看到了什么、期望怎样，以及大概的时间（日志按时间找）
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本与界面
+      placeholder: v0.1.2，MXU / MFAA / 命令行
+    validations:
+      required: true
+  - type: input
+    id: song
+    attributes:
+      label: 曲名与难度（打歌的问题）
+      placeholder: 例：起死開戦 EXPERT
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志与截图
+      description: |
+        把 `data/ournotes.log` 拖进来（图形界面再附上 `data/agent.log`）。文件太大时，从出问题那次运行开头的「ournotes-auto 版本号（…）」一行截到出问题之后即可。
+        日志里提到的截图（「截图 debug/nav/….png」）和结算页截图也请一起附上。
+    validations:
+      required: true

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -56,6 +57,16 @@ def start_app(cfg: DeviceConfig, timeout_s: float = 30.0) -> bool:
     logger.info("经 adb（%s）启动 %s", serial, cfg.package)
     _launch(run, serial, cfg.package)
     return True
+
+
+def versions(cfg: DeviceConfig, timeout_s: float = 10.0) -> tuple[str, str]:
+    """(Android 版本, 游戏版本)，读不到的为空串。"""
+    serial, run = _runner(cfg, timeout_s)
+    cmd = f"getprop ro.build.version.release; dumpsys package {cfg.package} 2>/dev/null | grep -m1 versionName"
+    out = run("-s", serial, "shell", cmd, check=False).stdout.decode("utf-8", "replace")
+    lines = out.split()
+    m = re.search(r"versionName=(\S+)", out)
+    return (lines[0] if lines and "=" not in lines[0] else ""), (m.group(1) if m else "")
 
 
 def restart_app(cfg: DeviceConfig, timeout_s: float = 30.0) -> None:

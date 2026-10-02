@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from enum import StrEnum
 
 from ..result_reader import OcrItem, _norm, classify_label, find_labels
@@ -17,6 +18,10 @@ class Screen(StrEnum):
     LIVE_TOP = "演出首页"
     SONG_SELECT = "乐曲选择"
     BAND_CONFIRM = "乐队确认"
+    # 挑战演出（部分活动期间开放，从演出首页的「挑战演出」进）：选曲页只有活动指定的几首歌，乐队确认页消耗挑战pt（CP）
+    CHALLENGE_SONG_SELECT = "挑战演出-乐曲选择"
+    CHALLENGE_BAND_CONFIRM = "挑战演出-乐队确认"
+    CP_SETTING = "挑战pt消耗设置"  # 挑战演出乐队确认页「CP 设置」打开的弹窗：每局消耗 200/400/800/1600
     LIVE_OPTIONS = "演出前选项设置"
     LB_SETTING = "LB消耗设置"
     # 用道具/星钻/广告恢复 LB：开了 game.lb_refill 时只在「道具」页用 LIVE BOOST饮料，否则只点取消
@@ -49,10 +54,19 @@ class Screen(StrEnum):
     # B 站 SDK 在标题画面上弹出的「开启消息通知」：只点右上角的 ⓧ（「去开启」会跳到系统的通知设置）
     NOTIFY = "开启消息通知"
     CONNECT_ERROR = "连接失败"  # 「发生网络连接错误。」只有「返回标题画面」，回到标题重新登录
+    # 「服务器正在维护中」：只有「返回标题画面」和「官方Discord」，登录时、对局中途都可能弹出。
+    # 任务直接失败；挂机隔一阵回到标题画面重新登录看看开服没有
+    MAINTENANCE = "维护中"
+    # 登录时（游戏更新后）的「数据下载」：「即将下载追加的游戏数据。」左取消右 OK，点 OK 下载（不花钱）
+    DATA_DOWNLOAD = "数据下载"
+    # 「检测到新版本」：游戏需要进行版本更新，只有「前往商店」（会跳到应用商店），不点，任务直接失败
+    UPDATE_REQUIRED = "需要更新游戏"
 
 
 # 重新登录途中的画面：导航的超时从最后一次看到这些画面算起
-RELOGIN_SCREENS = frozenset((Screen.DATE_CHANGE, Screen.TITLE, Screen.LOGIN_BONUS, Screen.CONNECT_ERROR))
+RELOGIN_SCREENS = frozenset(
+    (Screen.DATE_CHANGE, Screen.TITLE, Screen.LOGIN_BONUS, Screen.CONNECT_ERROR, Screen.DATA_DOWNLOAD)
+)
 
 # 画面左上角标题
 TITLE_ROI: Rect = (120, 10, 300, 55)
@@ -62,8 +76,23 @@ _TITLES = {
     "演出首页": Screen.LIVE_TOP,
     "设置": Screen.SETTINGS,
 }
+# 自由演出的乐曲选择页才有的：顶栏的 HIGH SCORE RATING（常读成 HGHSCORERATNG）和排序「默认」、「随机选曲」
+# （筛选面板里也有）、左侧分类按钮。挑战演出的选曲页这些都没有；页面还在淡入时也可能都没读到，
+# 所以还要右下角的「确定」和右侧的 HIGH SCORE 已经出来
+TOP_BAR_ROI: Rect = (400, 0, 880, 65)
+NORMAL_SONG_SELECT_MARKS: tuple[tuple[str, Rect | None], ...] = (("RAT", TOP_BAR_ROI), ("默认", TOP_BAR_ROI), ("随机", None))
+SONG_CATEGORY_ROI: Rect = (0, 110, 190, 70)
+SONG_CATEGORIES = ("原创", "翻唱", "全部")
+SONG_OK_ROI: Rect = (1060, 630, 210, 60)
+# 挑战演出乐队确认页：底部「消耗LB」的位置是「CP 设置」（图标读不出，只认「设置」），右上角是 CP 而不是 LB
+CP_BUTTON_ROI: Rect = (880, 635, 110, 60)
+CP_ICON_ROI: Rect = (990, 10, 50, 40)
 # 弹窗优先于底下的页面（按顺序匹配：恢复弹窗可能叠在消耗设置上，终止、重试确认可能叠在暂停上）
 _DIALOGS = {
+    "服务器正在维护": Screen.MAINTENANCE,
+    "需要进行版本更新": Screen.UPDATE_REQUIRED,
+    "检测到新版本": Screen.UPDATE_REQUIRED,
+    "下载追加的游戏数据": Screen.DATA_DOWNLOAD,
     "开启消息通知": Screen.NOTIFY,
     "发生网络连接错误": Screen.CONNECT_ERROR,
     "日期已变更": Screen.DATE_CHANGE,
@@ -135,10 +164,22 @@ def center(item: OcrItem) -> tuple[int, int]:
     return round(item.x + item.w / 2), round(item.cy)
 
 
+def _setting_dialog(items: list[OcrItem], title: OcrItem) -> Screen:
+    """「消耗设置」弹窗是 LIVE BOOST 的还是挑战演出的挑战pt。活动期间 LB 弹窗每行也写着「活动pt」「挑战pt」，
+    所以看标题（「挑战pt消耗设置」/「LIVE BOOST消耗设置」，后者常读成「EBCOS消耗设置」之类）
+    和只有 LB 弹窗才有的「全部消耗」，都看不出时看单选项前的「CP」。"""
+    t = _compact(title.text).upper()
+    if "挑战" in t:
+        return Screen.CP_SETTING
+    if "BOOST" in t or "LIVE" in t or find(items, "全部消耗"):
+        return Screen.LB_SETTING
+    return Screen.CP_SETTING if find(items, "CP", exact=True) else Screen.LB_SETTING
+
+
 def classify(items: list[OcrItem]) -> Screen:
     for text, screen in _DIALOGS.items():
-        if find(items, text):
-            return screen
+        if it := find(items, text):
+            return _setting_dialog(items, it) if screen is Screen.LB_SETTING else screen
     for it in items:
         if it.h >= 50 and in_roi(it, LIVE_END_ROI) and _LIVE_END.match(_norm(it.text)):
             return Screen.LIVE_END
@@ -174,11 +215,38 @@ def classify(items: list[OcrItem]) -> Screen:
         return Screen.RESULT_OTHER
     for text, screen in _TITLES.items():
         if find(items, text, TITLE_ROI):
+            if screen is Screen.SONG_SELECT and _challenge_song_select(items):
+                return Screen.CHALLENGE_SONG_SELECT
+            if screen is Screen.BAND_CONFIRM and (
+                find(items, "设置", CP_BUTTON_ROI, exact=True) or find(items, "CP", CP_ICON_ROI, exact=True)
+            ):
+                return Screen.CHALLENGE_BAND_CONFIRM
             return screen
     # 主界面没有标题，底部一排入口
     if find(items, "招募", (500, 620, 450, 60)) and find(items, "故事", (500, 620, 450, 60)):
         return Screen.HOME
     return Screen.UNKNOWN
+
+
+def _challenge_song_select(items: list[OcrItem]) -> bool:
+    if any(find(items, mark, roi) for mark, roi in NORMAL_SONG_SELECT_MARKS):
+        return False
+    if any(find(items, cat, SONG_CATEGORY_ROI) for cat in SONG_CATEGORIES):
+        return False
+    return bool(find(items, "确定", SONG_OK_ROI, exact=True) and find(items, "HIGH"))
+
+
+# 维护页上的「2026/10/02（周五）11:00~2026/10/02（周五）16:00」
+_MAINT_TIME = re.compile(r"(\d{4}/\d{1,2}/\d{1,2})\D*?(\d{1,2}:\d{2})")
+
+
+def maintenance_period(items: list[OcrItem]) -> str | None:
+    """维护页上写的维护时间（如「2026/10/02 11:00 ~ 2026/10/02 16:00」），读不到为 None。"""
+    for it in items:
+        times = _MAINT_TIME.findall(_compact(it.text))
+        if times:
+            return " ~ ".join(f"{d} {t}" for d, t in times)
+    return None
 
 
 def title_startable(items: list[OcrItem]) -> bool:
@@ -271,6 +339,92 @@ def lb_bar_timer(items: list[OcrItem]) -> int | None:
         if m and int(m.group(2)) < 60:
             return int(m.group(1)) * 60 + int(m.group(2))
     return None
+
+
+# 挑战pt消耗设置弹窗：左侧一列单选按钮（每局消耗 200/400/800/1600 CP，奖励等对应 ×1/×2/×4/×8），
+# 选中的圆心是白色；底部是持有的 CP「3708」，左「取消」右「OK」
+CP_RADIO = {200: (317, 213), 400: (317, 273), 800: (317, 333), 1600: (317, 393)}
+CP_HELD_ROI: Rect = (860, 455, 180, 40)
+# 挑战演出乐队确认页右上角的 CP 持有数（没有上限，不带「/」）
+CP_BAR_ROI: Rect = (1060, 10, 130, 45)
+
+
+def _cp_value(items: list[OcrItem], roi: Rect) -> int | None:
+    for it in items:
+        if in_roi(it, roi):
+            t = _digits(it.text).replace(",", "")
+            if re.fullmatch(r"\d{1,6}", t):
+                return int(t)
+    return None
+
+
+def cp_held(items: list[OcrItem]) -> int | None:
+    """挑战pt消耗设置弹窗上持有的 CP。"""
+    return _cp_value(items, CP_HELD_ROI)
+
+
+def cp_bar_held(items: list[OcrItem]) -> int | None:
+    """挑战演出乐队确认页顶栏持有的 CP（字小可能读错或漏掉，不够一局时应再用弹窗里的 :func:`cp_held` 核对）。"""
+    return _cp_value(items, CP_BAR_ROI)
+
+
+# 挑战演出乐曲选择页：左边是活动指定的几首歌，选中的一行在中间（曲名字大一些），上下各露出两行；
+# 点别的行就选中它并滚到中间。列表不循环，选中第一首时上面是空的
+CHALLENGE_ROW_X = (250, 540)  # 曲名中心 x 的范围（左边是「Lv.26」、右边是「MV」标志）
+CHALLENGE_SELECTED_Y = 324
+CHALLENGE_ROW_TAP_X = 420
+_CHALLENGE_NOT_TITLE = re.compile(r"\W?L\s*[vV]|[\d\s.|Il!]+$|\W?\w?MV$")
+
+
+def challenge_rows(items: list[OcrItem]) -> list[tuple[str, float]]:
+    """挑战演出乐曲选择页上能看到的各行 (曲名, 中心 y)，从上到下。"""
+    rows = []
+    for it in items:
+        t = _compact(it.text)
+        cx = it.x + it.w / 2
+        if len(t) < 2 or not CHALLENGE_ROW_X[0] <= cx <= CHALLENGE_ROW_X[1] or not 60 <= it.cy <= 640:
+            continue
+        if _CHALLENGE_NOT_TITLE.match(t):
+            continue
+        rows.append((it.text.strip(), it.cy))
+    return sorted(rows, key=lambda r: r[1])
+
+
+def challenge_selected(rows: list[tuple[str, float]]) -> int | None:
+    """``rows`` 里选中的那一行（在中间）的下标。"""
+    for i, (_, cy) in enumerate(rows):
+        if abs(cy - CHALLENGE_SELECTED_Y) < 40:
+            return i
+    return None
+
+
+# 乐曲选择页右侧面板：封面下面是大号曲名；HIGH SCORE、RANK 下面是所选难度的通关标记
+# （ALL PERFECT / FULL COMBO，所选难度没打出来时没有；切换难度时跟着变）
+SELECT_TITLE_ROI: Rect = (735, 405, 540, 65)
+CLEAR_MARK_ROI: Rect = (1040, 195, 225, 50)
+
+
+def select_panel_title(items: list[OcrItem]) -> str | None:
+    """乐曲选择页右侧面板上的曲名（选中行上的曲名太长时会截断，面板上是完整的）。"""
+    it = max((it for it in items if in_roi(it, SELECT_TITLE_ROI)), key=lambda it: it.w, default=None)
+    return None if it is None else it.text.strip()
+
+
+def all_perfect_mark(items: list[OcrItem]) -> bool:
+    """乐曲选择页右侧面板上有 ALL PERFECT 标记：选中的歌在所选难度已经 AP（OCR 会去掉中间的空格）。"""
+    return any(in_roi(it, CLEAR_MARK_ROI) and re.search(r"PERFE|ERFECT", _compact(it.text).upper()) for it in items)
+
+
+def same_title(a: str | None, b: str | None) -> bool:
+    """两处读到的曲名是同一首：按较短的长度比较开头（一边可能截断、末尾几个字可能读错），
+    或者有一段连续 4 个字相同（选中行上太长的曲名会滚动显示，开头不一定是曲名的开头）。"""
+    a, b = _compact(a or ""), _compact(b or "")
+    n = min(len(a), len(b))
+    if n < 2:
+        return bool(a) and a == b
+    if SequenceMatcher(None, a[:n], b[:n]).ratio() >= 0.6:
+        return True
+    return SequenceMatcher(None, a, b, autojunk=False).find_longest_match().size >= min(n, 4)
 
 
 # 恢复LIVE BOOST 弹窗：左边一列分页「道具」「星钻」「观看广告」，选中的是青绿色、没选中的是深蓝。

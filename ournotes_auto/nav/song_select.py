@@ -57,6 +57,7 @@ SELECT_MIN_MARGIN = 0.25
 SELECT_SURE_SCORE = 0.97
 SELECT_SURE_MARGIN = 0.1
 BTN_RANDOM = (967, 660)
+BTN_DIFFICULTY = {"easy": (807, 555), "normal": (937, 555), "hard": (1068, 555), "expert": (1198, 555)}
 # 随机选曲没得选（比如筛选后能打的只剩当前选中的这首）时的提示条，横跨屏幕中间，挡住封面下半部分
 NO_RANDOM_TEXT = "没有可以随机选择"
 BTN_BAND_BACK = (56, 38)  # 乐队确认页左上角「<」：直接回到乐曲选择页

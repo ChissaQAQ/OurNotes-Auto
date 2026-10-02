@@ -153,6 +153,9 @@ class GameConfig:
     # 只在「道具」页选；绝不用星钻、不看广告）。道具用完或补够 lb_refill_limit 个后按上面的方式处理
     lb_refill: bool = False
     lb_refill_limit: int = 0  # 本次运行最多补充多少 LB，0 为不限（直到道具用完）
+    # 挑战演出（loop.challenge）每局消耗的挑战pt：200 / 400 / 800 / 1600（越多奖励越多，200 能打的局数最多）；
+    # null 表示不改游戏里的设置。CP 不够一局时结束
+    challenge_cost: int | None = 200
 
 
 @dataclass
@@ -169,14 +172,20 @@ class LoopConfig:
     """全自动循环（界面导航）参数。"""
 
     # current：打当前选中曲目；random：每次随机选曲；ap：全曲 AP 补完；
-    # ap_first：在 game.difficulty（或 ap_first_difficulties）里优先打没 AP 的歌，没有了再随机；list：按 song_list 依次打
+    # ap_first：在 game.difficulty（或 ap_first_difficulties）里优先打没 AP 的歌，没有了再随机（挑战演出时轮流打）；
+    # list：按 song_list 依次打；rotate：挑战演出的几首歌轮流打（只用于挑战演出，挑战演出只能用 current / rotate / ap_first）
     song_mode: str = "current"
     # 歌单：曲目 ID 或曲名，逗号或换行分隔，后面可加 @难度（默认 game.difficulty），如 "100010, 碧天伴走@hard"
     song_list: str = ""
     max_plays: int = 0  # 0 表示不限次数
+    # 打挑战演出（部分活动期间开放，消耗挑战pt，见 game.challenge_cost）而不是自由演出，打到 CP 不够一局为止
+    challenge: bool = False
     until_lb_empty: bool = False  # 打到 LB 用完为止（需要 game.lb_cost 为 1~3；用完后不再改为消耗 0 继续）
     # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 1~3）
     wait_lb: bool = False
+    # 每隔这么多小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领。
+    # 录音室练习最多累计 12 小时，超过后效率降到 30%，挂机等长时间运行时用
+    studio_claim_hours: float = 0.0
     max_failures: int = 5  # 连续失败次数上限
     # 首音符同步失败、演奏中生命值归零时暂停、点「重试」让这首歌从头开始的次数（每局）；用完了就等歌曲放完。0 为不重试
     sync_retries: int = 2

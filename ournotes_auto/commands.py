@@ -122,10 +122,10 @@ def cmd_look(cfg: Config, args) -> int:
     client, catalog = _catalog(cfg)
     with _device(cfg) as (source, touch):
         nav = GameNavigator(cfg, source, touch, ocr, jackets=JacketMatcher.load(client, catalog))
-        screen, items = nav.look()
+        screen, items = nav.look(blocking_ok=True)
         if args.save:
             print(nav.save_debug("look"))
-        label = nav.selected_song() if screen is Screen.BAND_CONFIRM else None
+        label = nav.selected_song() if screen in (Screen.BAND_CONFIRM, Screen.CHALLENGE_BAND_CONFIRM) else None
     print(f"画面：{screen}（{screen.name}）")
     if label is not None:
         print(f"曲名：{label.title!r}，难度：{label.difficulty}，等级：{label.level}，封面：{label.jacket}")
@@ -144,7 +144,7 @@ def cmd_look(cfg: Config, args) -> int:
 
 def check_run_config(cfg: Config) -> None:
     """连续演奏前检查配置（--set 或界面传来的值可能不合法）。"""
-    from .sources import DIFFICULTIES, SONG_MODES, parse_difficulties
+    from .sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES, SONG_MODES, parse_difficulties
 
     if cfg.game.difficulty not in DIFFICULTIES:
         raise SetupError(f"难度应为 {'/'.join(DIFFICULTIES)}：{cfg.game.difficulty}")
@@ -167,6 +167,19 @@ def check_run_config(cfg: Config) -> None:
             raise SetupError(f"AP 补完每首最多尝试次数应至少为 1：{cfg.loop.ap_max_attempts}")
     if cfg.loop.song_mode == "list" and not cfg.loop.song_list.strip():
         raise SetupError("选曲方式为歌单时要填写歌单（--songs 或 loop.song_list）")
+    if cfg.loop.challenge:
+        if cfg.loop.song_mode not in CHALLENGE_SONG_MODES:
+            raise SetupError(f"挑战演出的选曲方式只能是 {'/'.join(CHALLENGE_SONG_MODES)}：{cfg.loop.song_mode}")
+        if cfg.loop.until_lb_empty or cfg.loop.wait_lb:
+            raise SetupError("挑战演出不消耗 LB，不能和打到 LB 用完、挂机一起用（挑战演出会打到 CP 不够一局为止）")
+        if cfg.game.lb_refill:
+            raise SetupError("挑战演出不消耗 LB，不能用道具补充 LB")
+    elif cfg.loop.song_mode == "rotate":
+        raise SetupError("rotate（轮流打挑战演出的歌）只用于挑战演出（--challenge 或 loop.challenge）")
+    if cfg.game.challenge_cost is not None and cfg.game.challenge_cost not in CHALLENGE_COSTS:
+        raise SetupError(
+            f"挑战演出每局消耗的挑战pt应为 {'/'.join(map(str, CHALLENGE_COSTS))}：{cfg.game.challenge_cost}"
+        )
     if cfg.game.lb_cost is not None and cfg.game.lb_cost not in (0, 1, 2, 3):
         raise SetupError(f"每局 LB 消耗应为 0~3：{cfg.game.lb_cost}")
     if cfg.loop.until_lb_empty and not cfg.game.lb_cost:
@@ -177,6 +190,8 @@ def check_run_config(cfg: Config) -> None:
         raise SetupError("LB 不足时用道具补充需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
     if cfg.game.lb_refill_limit < 0:
         raise SetupError(f"用道具补充 LB 的上限应为 0（不限）或正整数：{cfg.game.lb_refill_limit}")
+    if cfg.loop.studio_claim_hours < 0:
+        raise SetupError(f"领取录音室练习的间隔应为 0（不领）或正数（小时）：{cfg.loop.studio_claim_hours:g}")
     touch = cfg.play.touch
     if not 0 <= touch.great_ratio <= MAX_GREAT_RATIO:
         raise SetupError(f"故意打 GREAT 的比例应在 0~{MAX_GREAT_RATIO}：{touch.great_ratio}")
@@ -194,7 +209,7 @@ def drop_great_for_ap(cfg: Config) -> None:
 
 
 def cmd_run(cfg: Config, args) -> int:
-    """全自动循环：从当前画面导航到自由演出，识别曲目并连续演奏。"""
+    """全自动循环：从当前画面导航到自由演出（或挑战演出），识别曲目并连续演奏。"""
     from .runner import Runner
     from .sources import make_source
 
@@ -215,10 +230,16 @@ def cmd_run(cfg: Config, args) -> int:
         cfg.loop.until_lb_empty = True
     if args.wait_lb:
         cfg.loop.wait_lb = True
+    if args.claim_studio is not None:
+        cfg.loop.studio_claim_hours = args.claim_studio
     if args.ap_difficulties:
         cfg.loop.ap_difficulties = args.ap_difficulties
     if args.ap_attempts is not None:
         cfg.loop.ap_max_attempts = args.ap_attempts
+    if args.challenge:
+        cfg.loop.challenge = True
+    if args.challenge_cost is not None:
+        cfg.game.challenge_cost = args.challenge_cost
     check_run_config(cfg)
     drop_great_for_ap(cfg)
     stop = args.stop
@@ -234,7 +255,8 @@ def cmd_run(cfg: Config, args) -> int:
             stop.set()
             logger.info("已中断（共演奏 %d 局）", runner.stats.plays)
             return 130
-    return 0 if stats.plays or not stats.failures else 1
+    # 服务器维护时任务算失败（打过几局也一样，没打完）
+    return 0 if (stats.plays or not stats.failures) and not stats.maintenance else 1
 
 
 def _launch_game(cfg: Config) -> None:
@@ -390,13 +412,13 @@ def register(sub) -> None:
     sp.add_argument("--category", choices=("原创", "翻唱", "全部"), help="先切换到这个分类")
     sp.set_defaults(func=cmd_select)
 
-    sp = sub.add_parser("run", help="全自动连续演奏（自由演出）")
+    sp = sub.add_parser("run", help="全自动连续演奏（自由演出，--challenge 时为挑战演出）")
     sp.add_argument("-d", "--difficulty", choices=("easy", "normal", "hard", "expert"), help="覆盖 game.difficulty")
     sp.add_argument(
         "--mode",
         choices=SONG_MODES,
         help="覆盖 loop.song_mode（ap：全曲 AP 补完；ap_first：当前难度（或 loop.ap_first_difficulties）"
-        "优先打没 AP 的歌，没有了再随机；list：按歌单打）",
+        "优先打没 AP 的歌，没有了再随机（挑战演出时轮流打）；list：按歌单打；rotate：挑战演出的几首歌轮流打）",
     )
     sp.add_argument("--songs", metavar="LIST", help="覆盖 loop.song_list（歌单：曲目 ID 或曲名，逗号分隔，可加 @难度）")
     sp.add_argument("-n", "--max-plays", type=int, help="覆盖 loop.max_plays（0 为不限）")
@@ -411,8 +433,25 @@ def register(sub) -> None:
     sp.add_argument(
         "--wait-lb", action="store_true", help="挂机：LB 用完后在乐队确认页等它恢复到每局消耗数再继续，一直运行"
     )
+    sp.add_argument(
+        "--claim-studio",
+        type=float,
+        metavar="H",
+        help="覆盖 loop.studio_claim_hours：每隔 H 小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领",
+    )
     sp.add_argument("--ap-difficulties", metavar="D,D", help="覆盖 loop.ap_difficulties（如 expert,hard）")
     sp.add_argument("--ap-attempts", type=int, help="覆盖 loop.ap_max_attempts（AP 补完每首最多打几次）")
+    sp.add_argument(
+        "--challenge",
+        action="store_true",
+        help="打挑战演出（部分活动期间开放，消耗挑战pt），打到 CP 不够一局为止；选曲方式只能是 current / rotate / ap_first",
+    )
+    sp.add_argument(
+        "--challenge-cost",
+        type=int,
+        choices=(200, 400, 800, 1600),
+        help="覆盖 game.challenge_cost（挑战演出每局消耗的挑战pt，默认 200）",
+    )
     sp.add_argument("--watch-combo", action="store_true", help=WATCH_COMBO_HELP)
     sp.add_argument("--record", action="store_true", help="同步失败时保存跟踪区截图到 debug/sync")
     sp.set_defaults(func=cmd_run)

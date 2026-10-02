@@ -56,6 +56,13 @@ class FakeNav:
     def leave_result(self):
         self.calls.append("leave")
 
+    def run_daily(self, jobs):
+        self.calls.append(f"daily:{','.join(jobs)}")
+        return []
+
+    def relogin(self):
+        self.calls.append("relogin")
+
 
 class FakeClient:
     def chart(self, mid, diff, title=""):
@@ -301,14 +308,16 @@ def test_until_lb_empty_needs_lb_cost(tmp_path, flag):
 
 
 class FakeStop(threading.Event):
-    """记下挂机每次睡多久，不真的睡。"""
+    """记下挂机每次睡多久，不真的睡；``now`` 是睡过的总时长（给假时钟用）。"""
 
     def __init__(self):
         super().__init__()
         self.waits = []
+        self.now = 0.0
 
     def wait(self, timeout=None):
         self.waits.append(timeout)
+        self.now += timeout or 0
         return self.is_set()
 
 
@@ -395,6 +404,70 @@ def test_stop_during_navigation_is_not_a_failure(tmp_path):
     nav.start_live = stopped
     stats = runner.run()
     assert stats.plays == 0 and stats.failures == 0
+
+
+def test_idle_claims_studio_on_schedule(tmp_path):
+    """定时收获：开始时先领一次（在换歌前）；等 LB 时到了领取时间也醒来去领，领完回乐队确认页接着等。"""
+    seq = [(0, 1000), (0, 400), (3, None), (3, None)]
+    runner, nav, starts, statuses = idle(tmp_path, seq)
+    runner.cfg.loop.studio_claim_hours = 0.25
+    runner.clock = lambda: runner.stop.now
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 0 and not statuses
+    assert runner.stop.waits == [600, 300]  # 第二次本该睡到 LB 恢复（405s），先醒来领
+    waiting = ["ensure:expert", "lb", "ensure:expert", "lb", "daily:studio", "ensure:expert", "lb", "lb_check"]
+    expected = ["daily:studio", "ensure:expert", "start", "next:random", "ensure:expert", "start", *waiting]
+    expected += ["ensure:expert", "start", "next:random", "ensure:expert", "start"]
+    calls = [c for c in nav.calls if c not in ("result", "leave", "clear_status")]
+    assert calls[: len(expected)] == expected
+
+
+def test_studio_claim_failure_keeps_playing(tmp_path):
+    """领不成（回不到主界面、领取出错）只记录，过一个间隔再领，不算演奏失败。"""
+    from ournotes_auto.runner import NavigationError
+
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.max_plays = 3
+    runner.cfg.loop.studio_claim_hours = 1
+    now = [0.0]
+    runner.clock = lambda: now[0]
+    outcomes = [NavigationError("回不到主界面"), ["录音室练习"], []]
+
+    def run_daily(jobs):
+        nav.calls.append("daily")
+        out = outcomes.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+    def leave_result():
+        nav.calls.append("leave")
+        now[0] += 3600  # 每局之间过了一个间隔
+
+    nav.run_daily, nav.leave_result = run_daily, leave_result
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 0 and not outcomes
+    assert [c for c in nav.calls if c in ("daily", "leave")] == ["daily", "leave"] * 3
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_studio_claim_stopped_or_frozen(tmp_path, frozen):
+    """领取时被停止：不算失败；画面卡住不动：照常停止。都不再打歌。"""
+    from ournotes_auto.runner import NavigationError, ScreenFrozen
+
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.studio_claim_hours = 4
+
+    def run_daily(jobs):
+        if frozen:
+            raise ScreenFrozen("画面 60s 没有变化")
+        runner.stop.set()
+        raise NavigationError("已停止")
+
+    nav.run_daily = run_daily
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == int(frozen)
+    assert not any(c.startswith("start") for c in nav.calls)
 
 
 class ApSource:
@@ -509,3 +582,106 @@ def test_frozen_screen_stops_at_once(tmp_path, where):
     assert len(store.history()) == 1
     assert ("close",) not in src.log
     assert [e for e in src.log if e[0] == "advance"] == [("advance", True)]
+
+
+@pytest.mark.parametrize("where", ["start", "retry", "advance", "studio"])
+def test_maintenance_fails_task_at_once(tmp_path, where):
+    """服务器维护：不是挂机时任务直接失败（打过几局也算失败），不重试也不去恢复选曲页的设置。"""
+    from ournotes_auto.runner import ServerMaintenance
+
+    runner, nav, store = make(tmp_path, fails=1 if where == "retry" else 0)
+    runner.cfg.loop.max_plays = 0
+    runner.cfg.loop.studio_claim_hours = 4 if where == "studio" else 0
+    runner.source = src = ApSource(songs=5)
+
+    def maintenance(*a):
+        raise ServerMaintenance("服务器维护中")
+
+    if where == "start":
+        nav.start_live = maintenance
+    elif where == "retry":
+        nav.retry_live = maintenance
+    elif where == "advance":
+        advance = src.advance
+        src.advance = lambda nav, first: advance(nav, first) if first else maintenance()
+    else:
+        nav.run_daily = maintenance
+    stats = runner.run()
+    assert stats.maintenance and stats.failures == 1
+    assert stats.plays == (1 if where == "advance" else 0)
+    assert ("close",) not in src.log
+    assert "relogin" not in nav.calls
+
+
+def test_idle_waits_out_maintenance(tmp_path):
+    """挂机遇到服务器维护：每 10 分钟回到标题画面重新登录看一次，开服后接着挂（这局不算失败）。"""
+    from ournotes_auto.runner import MAINTENANCE_POLL_S, ServerMaintenance
+
+    runner, nav, starts, statuses = idle(tmp_path, [], exhausted_at=())
+    starts_live = nav.start_live
+    logins = [ServerMaintenance("服务器维护中"), ServerMaintenance("服务器维护中"), None]
+
+    def start_live(lb_short="zero"):
+        starts_live(lb_short)
+        if len(starts) == 2:
+            raise ServerMaintenance("服务器维护中")
+
+    def relogin():
+        nav.calls.append("relogin")
+        out = logins.pop(0)
+        if out is not None:
+            raise out
+
+    nav.start_live, nav.relogin = start_live, relogin
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 0 and not stats.maintenance and not logins
+    assert runner.stop.waits == [MAINTENANCE_POLL_S] * 3
+    calls = [c for c in nav.calls if c not in ("result", "leave", "clear_status")]
+    expected = ["ensure:expert", "start", "next:random", "ensure:expert", "start", "relogin", "relogin", "relogin"]
+    assert calls[: len(expected) + 2] == [*expected, "next:random", "ensure:expert"]
+
+
+def test_idle_maintenance_while_waiting_lb(tmp_path):
+    """等 LB 恢复时遇到维护：开服后接着等 LB、打原来那首（不换歌）。"""
+    from ournotes_auto.runner import MAINTENANCE_POLL_S, ServerMaintenance
+
+    runner, nav, starts, statuses = idle(tmp_path, [ServerMaintenance("服务器维护中"), (3, None), (3, None)])
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 0 and not statuses
+    assert runner.stop.waits == [MAINTENANCE_POLL_S]
+    assert nav.calls.count("relogin") == 1 and nav.calls.count("next:random") == 2
+
+
+@pytest.mark.parametrize("error", ["stop", "frozen", "update", "other"])
+def test_idle_maintenance_wait_ends(tmp_path, error):
+    """等开服时被停止：不算失败；重新登录时画面卡住、要求更新游戏：照常停止；遇到别的问题：交给下一局的导航。"""
+    from ournotes_auto.runner import GameUpdateRequired, NavigationError, ScreenFrozen, ServerMaintenance
+
+    runner, nav, starts, statuses = idle(tmp_path, [], exhausted_at=())
+    runner.cfg.loop.max_plays = 2
+    starts_live = nav.start_live
+
+    def start_live(lb_short="zero"):
+        starts_live(lb_short)
+        if len(starts) == 1:
+            if error == "stop":
+                runner.stop.set()
+            raise ServerMaintenance("服务器维护中")
+
+    def relogin():
+        nav.calls.append("relogin")
+        if error == "frozen":
+            raise ScreenFrozen("画面 60s 没有变化")
+        if error == "update":
+            raise GameUpdateRequired("游戏有新版本，请先手动更新游戏")
+        raise NavigationError("180s 内未能进入游戏")
+
+    nav.start_live, nav.relogin = start_live, relogin
+    stats = runner.run()
+    assert not stats.maintenance
+    if error == "stop":
+        assert stats.plays == 0 and stats.failures == 0 and "relogin" not in nav.calls
+    elif error in ("frozen", "update"):
+        assert stats.plays == 0 and stats.failures == 1
+    else:
+        assert stats.plays == 2 and stats.failures == 0 and nav.calls.count("relogin") == 1

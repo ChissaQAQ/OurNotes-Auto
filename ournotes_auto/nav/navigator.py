@@ -22,7 +22,12 @@
     日期变更 -[前往标题画面]-> 标题 -[TAP TO START]-> 加载 → 登录奖励（×n，每页领取后弹「获得奖励」-[OK]->）
     → 公告 -[关闭]-> 主界面 -[演出]-> 演出首页 -[自由演出]-> 乐曲选择
 
+游戏更新后登录时先弹「数据下载」，点 OK 下载追加数据；要求更新安装包（「检测到新版本」）时任务停下，等玩家自己更新。
+
 游戏闪退（一直认不出画面、进程也不在了）或标题画面点击无反应时，经 adb 重启游戏，同样从标题画面重新登录。
+
+挑战演出（``loop.challenge``，部分活动期间开放）从演出首页的「挑战演出」进，乐曲选择、乐队确认页换成挑战演出的，
+消耗 CP 而不是 LB（见 :mod:`.challenge`）；之后的演奏、结算和自由演出一样。
 """
 
 from __future__ import annotations
@@ -43,11 +48,12 @@ from ..config import Config
 from ..device.base import FrameSource
 from ..player.guard import load_template, pause_visible
 from ..result_reader import OcrItem, ResultCounts, merge, parse_int, parse_totals
-from ..runner import LbExhausted, NavigationError, ScreenFrozen, SongLabel
+from ..runner import GameUpdateRequired, LbExhausted, NavigationError, ScreenFrozen, ServerMaintenance, SongLabel
 from .jacket import JacketMatcher, crop_jacket
 from .ocr import MaaOcr
 from .screens import (
     CLOSE_ROI,
+    CP_RADIO,
     LB_ALL_CHECK,
     LB_PLUS_X,
     LB_RADIO,
@@ -73,13 +79,23 @@ from .screens import (
     lb_held,
     lb_preview,
     lb_recover_amount,
+    maintenance_period,
     note_speed,
     parse_level,
     result_cells,
     title_startable,
 )
+from .challenge import BTN_CP_CANCEL, CHALLENGE_SCREENS, CP_CANCEL_ROI, ChallengeMixin
 from .daily import DailyMixin
-from .song_select import BTN_RANDOM, ListPositions, SongSelectMixin, filter_open, song_locked
+from .song_select import (
+    BTN_BAND_BACK,
+    BTN_DIFFICULTY,
+    BTN_RANDOM,
+    ListPositions,
+    SongSelectMixin,
+    filter_open,
+    song_locked,
+)
 from .story import StoryMixin
 
 logger = logging.getLogger(__name__)
@@ -87,7 +103,6 @@ logger = logging.getLogger(__name__)
 DESIGN_W, DESIGN_H = 1280, 720
 
 # 找不到按钮文字时使用的固定坐标（1280x720）
-BTN_DIFFICULTY = {"easy": (807, 555), "normal": (937, 555), "hard": (1068, 555), "expert": (1198, 555)}
 BTN_SONG_OK = (1163, 660)  # 乐曲选择：确定
 BTN_BACK = (164, 40)  # 左上角主页按钮（设置页点它回到主界面）
 BTN_LIVE_START = (1140, 648)
@@ -132,6 +147,10 @@ BTN_HOME_LIVE = (1081, 650)  # 主界面：演出
 BTN_FREE_LIVE = (872, 350)  # 演出首页：自由演出
 TAP_LIVE_END = (640, 650)
 BTN_TO_TITLE = (640, 572)  # 日期变更：前往标题画面；连接失败：返回标题画面
+BTN_MAINTENANCE_TO_TITLE = (640, 652)  # 服务器维护中：返回标题画面
+# 数据下载：左取消右 OK，OK 只在右半边找
+BTN_DOWNLOAD_OK = (782, 655)
+DOWNLOAD_OK_ROI: Rect = (660, 620, 250, 70)
 # 标题画面：TAP TO START（不要点右上角的菜单按钮）
 BTN_TAP_TO_START = (950, 585)
 BTN_NOTIFY_CLOSE = (822, 171)  # 「开启消息通知」弹窗右上角的 ⓧ
@@ -159,7 +178,9 @@ LB_EMPTY_RETRY_S = 30 * 60
 # 结算页出现约 1s 后可能叠上来的弹窗（首次达成奖励、评级提升及其奖励等），读数前先关掉
 RESULT_POPUPS = (Screen.ACHIEVEMENT, Screen.POPUP, Screen.GRADE_UP, Screen.REWARD)
 # 已经进入游戏、可以开始任务的画面（启动游戏时等到这些之一）
-IN_GAME_SCREENS = frozenset((Screen.HOME, Screen.LIVE_TOP, Screen.SONG_SELECT, Screen.BAND_CONFIRM))
+IN_GAME_SCREENS = frozenset((Screen.HOME, Screen.LIVE_TOP, Screen.SONG_SELECT, Screen.BAND_CONFIRM, *CHALLENGE_SCREENS))
+# 乐曲选择、乐队确认页（自由演出和挑战演出的）
+SONG_SCREENS = (Screen.SONG_SELECT, Screen.BAND_CONFIRM, *CHALLENGE_SCREENS)
 # 单选按钮/复选框选中时中心是白色（约 255），未选中是暗红（约 50）
 LIT_THRESHOLD = 150
 
@@ -177,7 +198,7 @@ def plan_refill(drinks: list[LbDrink], need: int, budget: int | None) -> list[in
     return plan
 
 
-class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
+class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
     def __init__(
         self,
         config: Config,
@@ -203,12 +224,26 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         self.restart_app = restart_app
         self.app_running = app_running
         self.last_screen = Screen.UNKNOWN
+        self.prev_screen = Screen.UNKNOWN  # 上一次 look 认出的画面
         self._frame = None
         self._items: list[OcrItem] = []
         lb = config.game.lb_cost
         if lb is not None and lb not in LB_RADIO:
             raise ValueError(f"game.lb_cost 应为 0~3 或 null，而不是 {lb!r}")
         self._lb_cost: int | None = None  # 本次运行已在游戏里设置并核对过的 LB 消耗
+        # 挑战演出：要去的乐曲选择、乐队确认页换成挑战演出的，另一种（自由演出的）就退回演出首页
+        self.challenge = config.loop.challenge
+        self.song_screen = Screen.CHALLENGE_SONG_SELECT if self.challenge else Screen.SONG_SELECT
+        self.band_screen = Screen.CHALLENGE_BAND_CONFIRM if self.challenge else Screen.BAND_CONFIRM
+        self._foreign_screens = (
+            frozenset((Screen.SONG_SELECT, Screen.BAND_CONFIRM)) if self.challenge else CHALLENGE_SCREENS
+        )
+        cp = config.game.challenge_cost
+        if cp is not None and cp not in CP_RADIO:
+            raise ValueError(f"game.challenge_cost 应为 {'/'.join(map(str, CP_RADIO))} 或 null，而不是 {cp!r}")
+        self._cp_cost: int | None = None  # 本次运行在游戏里核对过的挑战pt消耗
+        self._challenge_missing = 0  # 连续几次在演出首页没认出「挑战演出」
+        self._challenge_taps = 0  # 点了几次「挑战演出」还没进去
         self._lb_empty_at: float | None = None  # 上次因 LB 用完改为消耗 0 的时刻
         # 用道具补充 LB（game.lb_refill）：还能补多少（None 为不限）、已经补了多少、是否不再补充（道具用完、额度用完）
         self._refill_left: int | None = config.game.lb_refill_limit or None
@@ -240,15 +275,26 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
             self._jackets = self._jackets.result()
         return self._jackets
 
-    def look(self, still_ok: bool = False) -> tuple[Screen, list[OcrItem]]:
-        """截图并判断画面。``still_ok``：画面长时间不动也正常（等结算时歌可能还在放），不按 FROZEN_S 判断卡住。"""
+    def look(self, still_ok: bool = False, blocking_ok: bool = False) -> tuple[Screen, list[OcrItem]]:
+        """截图并判断画面。``still_ok``：画面长时间不动也正常（等结算时歌可能还在放），不按 FROZEN_S 判断卡住。
+
+        看到服务器维护页时抛 :class:`ServerMaintenance`（开服之前什么都做不了），要求更新游戏时抛
+        :class:`GameUpdateRequired`（要玩家自己去更新），``blocking_ok`` 时照常返回。
+        """
         frame, _ = self.source.grab()
         self._frame = frame
         items = self._items = self.ocr.read(frame)
         screen = classify(items)
         if screen != self.last_screen:
             logger.debug("画面：%s", screen)
-        self.last_screen = screen
+        self.prev_screen, self.last_screen = self.last_screen, screen
+        if screen in CHALLENGE_SCREENS:
+            self._challenge_taps = 0
+        if screen is Screen.MAINTENANCE and not blocking_ok:
+            period = maintenance_period(items)
+            raise ServerMaintenance(f"服务器维护中{f'（维护时间 {period}）' if period else ''}")
+        if screen is Screen.UPDATE_REQUIRED and not blocking_ok:
+            raise self._fail("游戏有新版本，请先手动更新游戏（到应用商店下载最新版本）", GameUpdateRequired)
         if screen not in (Screen.TITLE, Screen.UNKNOWN):
             self._title_since = self._title_wait_since = None
         if screen in (Screen.TITLE, Screen.DATE_CHANGE):
@@ -371,6 +417,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
             self.tap(self._button(items, "OK", BTN_RANK_UP_OK), "OK")
         elif screen is Screen.LB_SETTING:
             self.tap(BTN_LB_OK, "OK")  # 保持当前 LB 设置
+        elif screen is Screen.CP_SETTING:
+            self.tap(self._button(items, "取消", BTN_CP_CANCEL, CP_CANCEL_ROI), "取消")
         elif screen is Screen.LB_RECOVER:
             self._cancel_lb_recover(items)
         elif screen is Screen.LB_RECOVER_CONFIRM:  # 没在补充 LB 时不确认
@@ -392,7 +440,14 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         elif screen is Screen.HOME:
             self.tap(BTN_HOME_LIVE, "演出")
         elif screen is Screen.LIVE_TOP:
+            if self.challenge:
+                return self._enter_challenge(items)
             self.tap(self._button(items, "自由演出", BTN_FREE_LIVE), "自由演出")
+        elif screen in self._foreign_screens:
+            # 挑战演出和自由演出的页面互相走错了：退回演出首页再进。连续两次认出才退（页面淡入时可能认错）
+            if self.prev_screen is not screen:
+                return False
+            self.tap(BTN_BAND_BACK, "返回")
         elif screen is Screen.DATE_CHANGE:
             logger.warning("游戏日期变更，回到标题画面重新登录")
             self.tap(self._button(items, "前往标题画面", BTN_TO_TITLE), "前往标题画面")
@@ -407,6 +462,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
             logger.warning("连接失败（发生网络连接错误），%.0f 秒后回到标题画面重新登录", CONNECT_RETRY_WAIT_S)
             self._sleep(CONNECT_RETRY_WAIT_S)
             self.tap(self._button(items, "返回标题画面", BTN_TO_TITLE), "返回标题画面")
+        elif screen is Screen.DATA_DOWNLOAD:
+            logger.info("下载追加的游戏数据")
+            self.tap(self._button(items, "OK", BTN_DOWNLOAD_OK, DOWNLOAD_OK_ROI), "OK（数据下载）")
         elif screen is Screen.LOGIN_BONUS:
             self.tap(TAP_LOGIN_BONUS, "登录奖励")
         elif screen in (Screen.REWARD, Screen.GRADE_UP, Screen.BOND_UP):
@@ -458,23 +516,32 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
             acted = self._common_step(screen, items)
             self._sleep(self.settle_s if acted else 1.0)
 
+    def relogin(self, timeout_s: float = 180.0) -> Screen:
+        """停在服务器维护页时回到标题画面重新登录，等到进入游戏；还在维护时抛 :class:`ServerMaintenance`。"""
+        screen, items = self.look(blocking_ok=True)
+        if screen is Screen.MAINTENANCE:
+            self.tap(self._button(items, "返回标题画面", BTN_MAINTENANCE_TO_TITLE, CLOSE_ROI), "返回标题画面")
+            self._sleep(self.settle_s)
+        return self.ensure_in_game(timeout_s)
+
     def ensure_band_confirm(self, difficulty: str | None = None, timeout_s: float = 90.0) -> None:
         deadline = time.monotonic() + timeout_s
         diff = difficulty or self.cfg.game.difficulty
         while True:
             screen, items = self.look()
-            if screen is Screen.BAND_CONFIRM:
+            if screen is self.band_screen:
                 return
             if screen in RELOGIN_SCREENS:
                 deadline = time.monotonic() + timeout_s
             if time.monotonic() > deadline:
-                raise self._fail(f"{timeout_s:.0f}s 内未能进入乐队确认页")
-            if screen is Screen.SONG_SELECT:
-                if filter_open(items):  # 面板盖住了难度按钮和「确定」
-                    self._close_filter()
-                    continue
-                if song_locked(items):
-                    raise self._fail("选中的歌还没解锁")
+                raise self._fail(f"{timeout_s:.0f}s 内未能进入{self.band_screen}页")
+            if screen is self.song_screen:
+                if screen is Screen.SONG_SELECT:
+                    if filter_open(items):  # 面板盖住了难度按钮和「确定」
+                        self._close_filter()
+                        continue
+                    if song_locked(items):
+                        raise self._fail("选中的歌还没解锁")
                 self.tap(BTN_DIFFICULTY[diff], diff.upper())
                 self._sleep(0.6)
                 self.tap(self._button(items, "确定", BTN_SONG_OK), "确定")
@@ -488,7 +555,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         prev = None
         for _ in range(6):
             screen, items = self.look()
-            if screen is not Screen.BAND_CONFIRM:
+            if screen not in (Screen.BAND_CONFIRM, Screen.CHALLENGE_BAND_CONFIRM):
                 raise self._fail("不在乐队确认页，无法读取曲名")
             title, diff = band_confirm_song(items)
             label = SongLabel(title, diff, parse_level(self.ocr.read_text(self._frame, LEVEL_ROI)))
@@ -530,16 +597,20 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         """
         if lb_short not in ("zero", "stop"):
             raise ValueError(f"未知的 LB 不足处理方式：{lb_short}")
-        want = self._lb_want()
-        held = self._refill_if_short(want) if want and self._can_refill() else None
-        if lb_short == "stop" and want:
-            if held is None and self._lb_bar_empty():
-                # 顶栏偶尔漏读，打开消耗设置弹窗再核对一次（顺便确认消耗设置）
-                held = self.set_lb_cost(want)
-            if held == 0:
-                raise LbExhausted("LB 已用完")
-        if want is not None and self._lb_cost != want:
-            self.set_lb_cost(want)
+        if self.challenge:
+            self._check_cp()
+            want = None
+        else:
+            want = self._lb_want()
+            held = self._refill_if_short(want) if want and self._can_refill() else None
+            if lb_short == "stop" and want:
+                if held is None and self._lb_bar_empty():
+                    # 顶栏偶尔漏读，打开消耗设置弹窗再核对一次（顺便确认消耗设置）
+                    held = self.set_lb_cost(want)
+                if held == 0:
+                    raise LbExhausted("LB 已用完")
+            if want is not None and self._lb_cost != want:
+                self.set_lb_cost(want)
         self.tap(BTN_LIVE_START, "LIVE START")
         started = time.monotonic()
         retapped = False
@@ -551,7 +622,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
                 self._check_speed(items)
                 self.tap(self._button(items, "演出", BTN_OPTIONS_START), "演出")
                 return
-            if screen is Screen.LB_RECOVER:
+            if screen is Screen.LB_RECOVER and not self.challenge:
                 # LB 用完时要求先恢复：取消，能用道具补充就补，否则本局改为消耗 0（一段时间后或玩家升级后再按配置设置）
                 if self._lb_cost == 0:
                     raise self._fail("LB 消耗为 0 仍弹出恢复 LIVE BOOST")
@@ -566,7 +637,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
                 started = time.monotonic()
                 retapped = False
                 unknown_since = None
-            elif screen is Screen.BAND_CONFIRM:
+            elif screen is self.band_screen:
                 unknown_since = None
                 if not retapped and time.monotonic() - started > 3:
                     self.tap(BTN_LIVE_START, "LIVE START")
@@ -901,8 +972,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
                 Screen.RANK_UP,
                 Screen.RESULT_EXP_NEXT,
                 Screen.RESULT_EXP,
-                Screen.SONG_SELECT,
-                Screen.BAND_CONFIRM,
+                *SONG_SCREENS,
             ):
                 raise self._fail("错过了结算页")
             else:
@@ -996,7 +1066,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin):
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             screen, items = self.look()
-            if screen in (Screen.SONG_SELECT, Screen.BAND_CONFIRM):
+            if screen in SONG_SCREENS:
                 return
             if screen in RELOGIN_SCREENS:
                 deadline = time.monotonic() + timeout_s

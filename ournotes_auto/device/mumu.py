@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -83,3 +85,31 @@ def open_mumu(cfg: DeviceConfig) -> MuMuIpc:
     ipc = MuMuIpc(cfg.mumu_path, cfg.instance, package=cfg.package)
     ipc.connect()
     return ipc
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _get(d: dict, *keys: str):
+    for k in keys:
+        d = d.get(k) if isinstance(d, dict) else None
+    return d
+
+
+def describe_mumu(cfg: DeviceConfig) -> list[str]:
+    """模拟器版本和这个实例的性能设置（读 MuMu 安装目录下的配置文件），反馈问题时看卡顿用；读不到的项略去。"""
+    root = Path(cfg.mumu_path)
+    parts = []
+    version = _get(_read_json(root / "configs" / "install_config.json"), "product", "version")
+    if version:
+        parts.append(f"MuMu {version}")
+    vm = next(iter(sorted(root.glob(f"vms/*-{cfg.instance}/configs"))), None)
+    if vm is not None:
+        cpu, mem = (_get(_read_json(vm / "vm_config.json"), "vm", k) for k in ("cpu", "memory"))
+        fps = _get(_read_json(vm / "customer_config.json"), "setting", "frame_setting", "desired_framerate")
+        parts += [f"{label} {v}{unit}" for label, v, unit in (("CPU", cpu, " 核"), ("内存", mem, " GB"), ("帧率", fps, "")) if v]
+    return parts

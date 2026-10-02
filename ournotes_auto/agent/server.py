@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from maa.agent.agent_server import AgentServer
 from maa.context import Context
 from maa.custom_action import CustomAction
 
+from .. import __version__
 from .logs import set_ui_debug, setup_logging
 from .params import (
     LOCAL_TASKS,
@@ -74,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv:
         logger.error("缺少 Agent 连接标识（应由界面启动）")
         return 2
-    logger.debug("Agent 启动，连接标识 %s", argv[-1])
+    logger.debug("Agent %s 启动（%s），连接标识 %s", __version__, os.environ.get("PI_CLIENT_NAME", "未知界面"), argv[-1])
     if not AgentServer.start_up(argv[-1]):
         logger.error("Agent 服务启动失败")
         return 1

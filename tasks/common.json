@@ -74,7 +74,7 @@
                 {
                     "name": "high_first",
                     "label": "优先高难度",
-                    "description": "选曲方式为「优先没 AP 的歌」时按 EXPERT → HARD → NORMAL → EASY 依次补没 AP 的歌，都补完了按 EXPERT 随机选曲；其他选曲方式按 EXPERT 打",
+                    "description": "选曲方式为「优先没 AP 的歌」时按 EXPERT → HARD → NORMAL → EASY 依次补没 AP 的歌，都补完了按 EXPERT 随机选曲（挑战演出为轮流打）；其他选曲方式按 EXPERT 打",
                     "pipeline_override": { "OurNotesParam": { "attach": { "difficulty": "high_first" } } }
                 }
             ],

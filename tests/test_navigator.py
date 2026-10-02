@@ -10,12 +10,29 @@ import cv2
 import numpy as np
 import pytest
 
+from ournotes_auto import sources
 from ournotes_auto.config import Config
 from ournotes_auto.nav import navigator
 from ournotes_auto.nav.navigator import GameNavigator
-from ournotes_auto.nav.screens import LB_RADIO, RESULT_ROW_Y, LbDrink
+from ournotes_auto.nav.screens import (
+    CLEAR_MARK_ROI,
+    CP_RADIO,
+    LB_RADIO,
+    RESULT_ROW_Y,
+    SELECT_TITLE_ROI,
+    LbDrink,
+    in_roi,
+)
+from ournotes_auto.nav.song_select import BTN_DIFFICULTY
 from ournotes_auto.result_reader import OcrItem
-from ournotes_auto.runner import LbExhausted, NavigationError, ScreenFrozen
+from ournotes_auto.runner import (
+    CpExhausted,
+    GameUpdateRequired,
+    LbExhausted,
+    NavigationError,
+    ScreenFrozen,
+    ServerMaintenance,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MODEL_DIR = Path("resource") / "model" / "ocr"
@@ -324,15 +341,25 @@ def test_stray_retry_confirm_is_cancelled(monkeypatch):
 class LbGame(FakeGame):
     """乐队确认页 + LB 消耗设置弹窗（按当前选中项画出白色单选按钮）；``held`` 为 0 且消耗不为 0 时
     LIVE START 弹出恢复 LIVE BOOST（``popup``，实机大多直接开始、不消耗）。顶栏和弹窗上的持有数按 ``held``
-    改写，``bar`` 指定顶栏的识别结果（模拟读错），``timer`` 为顶栏下一行的恢复倒计时（LB 没满时才有）。"""
+    改写，``bar`` 指定顶栏的识别结果（模拟读错），``timer`` 为顶栏下一行的恢复倒计时（LB 没满时才有），
+    ``setting`` 为弹窗用的截图（活动期间每行还写着「活动pt」「挑战pt」）。"""
 
-    def __init__(self, cost: int, held: int = 24, popup: bool = True, bar: str | None = None, timer: str | None = None):
+    def __init__(
+        self,
+        cost: int,
+        held: int = 24,
+        popup: bool = True,
+        bar: str | None = None,
+        timer: str | None = None,
+        setting: str = "lb_setting",
+    ):
         super().__init__("band_confirm")
         self.cost = cost
         self.held = held
         self.popup = popup
         self.bar = bar
         self.timer = timer
+        self.setting = setting
 
     def grab(self):
         if self.state != "lb_setting":
@@ -345,7 +372,7 @@ class LbGame(FakeGame):
 
     def read(self, frame, roi=None):
         name = "lb_setting" if isinstance(frame, np.ndarray) else frame
-        items = load_items(name)
+        items = load_items(self.setting if name == "lb_setting" else name)
         if name not in ("band_confirm", "lb_setting"):
             return items
         bar = f"{self.held}/10" if self.bar is None else self.bar
@@ -637,6 +664,16 @@ def test_set_lb_cost_once():
     assert [s for s, _ in game.taps] == ["band_confirm", "live_options"]
 
 
+def test_set_lb_cost_during_event():
+    """活动期间 LB 消耗设置弹窗上也有「挑战pt」，不能当成挑战pt消耗设置。"""
+    game = LbGame(cost=0, held=8, setting="lb_setting_event")
+    nav = make_nav(game, game, game)
+    nav.cfg.game.lb_cost = 3
+    nav.start_live()
+    assert game.cost == 3 and game.state == "loading"
+    assert [s for s, _ in game.taps] == ["band_confirm", "lb_setting", "lb_setting", "band_confirm", "live_options"]
+
+
 def test_lb_recover_is_cancelled_and_falls_back_to_zero():
     game = LbGame(cost=3, held=0)
     nav = make_nav(game, game, game)
@@ -868,6 +905,59 @@ def test_connect_error_gives_up(monkeypatch):
     assert len(tapped(game, (640, 572))) == navigator.MAX_CONNECT_RETRIES
 
 
+@pytest.mark.parametrize("call", ["ensure_band_confirm", "ensure_in_game", "go_home", "read_result"])
+def test_maintenance_fails_at_once(call):
+    """服务器维护页：任何导航都立刻报错（什么都不点、不干等超时），错误里带上维护时间。"""
+    game = FakeGame("maintenance")
+    nav = make_nav(game, game, game)
+    with pytest.raises(ServerMaintenance, match="2026/10/02 11:00 ~ 2026/10/02 16:00"):
+        getattr(nav, call)()
+    assert game.taps == []
+
+
+def test_relogin_after_maintenance(monkeypatch):
+    """开服后：维护页点「返回标题画面」→ 标题 → 登录奖励 → 获得奖励 → 公告 → 主界面。"""
+    monkeypatch.setitem(TRANSITIONS, "maintenance", [((640, 650), "title")])
+    game = FakeGame("maintenance")
+    nav = make_nav(game, game, game)
+    assert nav.relogin() == navigator.Screen.HOME
+    assert tapped(game, (638, 650), radius=2) == ["maintenance"]  # 按 OCR 到的按钮位置点
+    assert [s for s, _ in game.taps] == ["maintenance", "title", "login_bonus", "reward", "notice"]
+
+
+def test_login_downloads_data(monkeypatch):
+    """游戏更新后登录先弹「数据下载」：点右边的 OK（不点取消），之后照常领登录奖励进到主界面。"""
+    monkeypatch.setitem(TRANSITIONS, "title", [((950, 585), "data_download")])
+    monkeypatch.setitem(TRANSITIONS, "data_download", [((782, 655), "login_bonus"), ((497, 654), "title")])
+    game = FakeGame("title")
+    nav = make_nav(game, game, game)
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert tapped(game, (782, 655), radius=2) == ["data_download"]  # 按 OCR 到的按钮位置点
+    assert [s for s, _ in game.taps] == ["title", "data_download", "login_bonus", "reward", "notice"]
+
+
+@pytest.mark.parametrize("call", ["ensure_in_game", "ensure_band_confirm", "relogin"])
+def test_update_required_fails_at_once(call):
+    """要求更新安装包（检测到新版本）：立刻报错停下，「前往商店」不点。"""
+    game = FakeGame("update_required")
+    nav = make_nav(game, game, game)
+    nav.save_debug = lambda *a: None
+    with pytest.raises(GameUpdateRequired, match="手动更新游戏") as e:
+        getattr(nav, call)()
+    assert isinstance(e.value, ScreenFrozen)  # 任务和挂机都按画面卡住处理：直接停止
+    assert game.taps == []
+
+
+def test_relogin_still_in_maintenance(monkeypatch):
+    monkeypatch.setitem(TRANSITIONS, "maintenance", [((640, 650), "title")])
+    monkeypatch.setitem(TRANSITIONS, "title", [((950, 585), "maintenance")])
+    game = FakeGame("maintenance")
+    nav = make_nav(game, game, game)
+    with pytest.raises(ServerMaintenance):
+        nav.relogin()
+    assert [s for s, _ in game.taps] == ["maintenance", "title"]
+
+
 def test_ensure_in_game_times_out(monkeypatch):
     game = FakeGame("loading")
     nav = make_nav(game, game, game)
@@ -1048,6 +1138,298 @@ def test_read_result_waits_through_still_screen(monkeypatch):
     with pytest.raises(NavigationError, match="没有出现结算页") as e:
         nav.read_result(timeout_s=150)
     assert not isinstance(e.value, ScreenFrozen)
+
+
+# ---------------------------------------------------------------- 挑战演出
+
+SKIP = (780, 665)  # 挑战演出乐队确认页的「跳过 还剩n次」，绝不能点
+CP_OK = (782, 570)
+CP_CANCEL = (496, 570)
+
+
+class ChallengeGame(FakeGame):
+    """演出首页（有「挑战演出」）→ 挑战演出乐曲选择 → 乐队确认 → 挑战pt消耗设置。
+
+    乐曲选择页左边是 ``songs``，第 ``sel`` 首选中、总在中间那一行（y=324），点哪一行就选中哪一首；点难度按钮
+    改 ``diff``。右侧面板是选中的歌，(曲名, 难度) 在 ``ap`` 里时有 ALL PERFECT 标记；面板在点击后要再过 ``lag``
+    次识别才跟上（模拟切换动画）。
+    消耗设置弹窗按选中项画出白色单选按钮，点 OK 才改 ``cost``、点取消还原。顶栏和弹窗上的 CP 持有数按 ``held``
+    改写，``bar`` 指定顶栏的识别结果（模拟读错）。"""
+
+    MOVES = {
+        "live_top_challenge": [((870, 637), "challenge_song_select"), ((873, 348), "song_select")],
+        "challenge_song_select": [((1163, 658), "challenge_band_confirm"), ((56, 38), "live_top_challenge")],
+        "challenge_band_confirm": [
+            ((1140, 648), "live_options"),
+            ((56, 38), "challenge_song_select"),
+            ((920, 665), "challenge_cp_setting"),
+        ],
+        "song_select": [((56, 38), "live_top_challenge")],
+    }
+    ROW_GAP = 115
+
+    def __init__(
+        self,
+        state="live_top_challenge",
+        cost=400,
+        held=3708,
+        bar=None,
+        songs=("A曲", "B曲", "C曲"),
+        sel=0,
+        ap=(),
+        lag=0,
+    ):
+        super().__init__(state)
+        self.cost = self.pending = cost
+        self.held = held
+        self.bar = bar
+        self.songs = list(songs)
+        self.sel = sel
+        self.diff = "expert"
+        self.ap = set(ap)
+        self.lag = lag
+        self.stale = 0
+        self.panel = (self.songs[sel], (self.songs[sel], self.diff) in self.ap)
+
+    def rows(self):
+        for j, title in enumerate(self.songs):
+            cy = 324 + (j - self.sel) * self.ROW_GAP
+            if 60 <= cy <= 640:
+                yield j, title, cy
+
+    def grab(self):
+        if self.state != "challenge_cp_setting":
+            return super().grab()
+        w, h = self.size
+        img = np.full((h, w, 3), (71, 38, 38), np.uint8)
+        x, y = CP_RADIO[self.pending]
+        cv2.circle(img, (x * w // 1280, y * h // 720), 12, (255, 255, 255), -1)
+        return img, 0.0
+
+    def read(self, frame, roi=None):
+        name = "challenge_cp_setting" if isinstance(frame, np.ndarray) else frame
+        items = load_items(name)
+        if name == "challenge_song_select":  # 换成 songs 里的歌
+            items = [it for it in items if it.y < 60 or not 250 <= it.x + it.w / 2 <= 540 or it.text.startswith("Lv")]
+            items = [it for it in items if not in_roi(it, SELECT_TITLE_ROI) and not in_roi(it, CLEAR_MARK_ROI)]
+            items += [OcrItem(300, cy - 12, 160, 24, title) for _, title, cy in self.rows()]
+            if self.stale:
+                self.stale -= 1
+            else:
+                self.panel = (self.songs[self.sel], (self.songs[self.sel], self.diff) in self.ap)
+            items.append(OcrItem(784, 423, 272, 32, self.panel[0]))
+            if self.panel[1]:
+                items.append(OcrItem(1064, 210, 120, 24, "ALLPERFECT"))
+        held = {"challenge_band_confirm": str(self.held) if self.bar is None else self.bar}
+        held["challenge_cp_setting"] = str(self.held)
+        if name in held:
+            items = [OcrItem(it.x, it.y, it.w, it.h, held[name] if it.text == "3708" else it.text) for it in items]
+        return items
+
+    def tap(self, x, y):
+        p = (x * 1280 / self.size[0], y * 720 / self.size[1])
+        here = self.state
+        if here == "challenge_cp_setting":
+            self.pending = next((c for c, q in CP_RADIO.items() if math.dist(p, q) < 20), self.pending)
+            if math.dist(p, CP_OK) < 40:
+                self.cost = self.pending
+            elif math.dist(p, CP_CANCEL) < 40:
+                self.pending = self.cost
+            if math.dist(p, CP_OK) < 40 or math.dist(p, CP_CANCEL) < 40:
+                self.state = "challenge_band_confirm"
+            self.taps.append((here, p))
+            return
+        if here == "challenge_song_select" and abs(p[0] - 420) < 120:
+            self.sel = next((j for j, _, cy in self.rows() if abs(p[1] - cy) < 40), self.sel)
+            self.stale = self.lag
+        if here == "challenge_song_select":
+            for d, q in BTN_DIFFICULTY.items():
+                if math.dist(p, q) < 40:
+                    self.diff, self.stale = d, self.lag
+        for target, nxt in self.MOVES.get(here, []):
+            if math.dist(p, target) < 40:
+                self.taps.append((here, p))
+                self.state = nxt
+                return
+        super().tap(x, y)
+
+
+def challenge_nav(game, cost=200):
+    cfg = Config()
+    cfg.game.difficulty = "expert"
+    cfg.loop.challenge = True
+    cfg.game.challenge_cost = cost
+    nav = GameNavigator(cfg, game, game, game, settle_s=0)
+    nav._sleep = lambda s: None
+    nav.save_debug = lambda *a, **k: None
+    return nav
+
+
+def test_challenge_enter_and_set_cost():
+    """演出首页 → 挑战演出 → EXPERT、确定 → 乐队确认；第一局前把每局消耗从 400 改成 200（核对过才点 OK）。"""
+    game = ChallengeGame()
+    nav = challenge_nav(game)
+    nav.ensure_band_confirm()
+    assert game.state == "challenge_band_confirm"
+    assert [s for s, _ in game.taps] == ["live_top_challenge", "challenge_song_select", "challenge_song_select"]
+    nav.start_live()
+    assert game.cost == 200 and game.state == "loading"
+    assert tapped(game, CP_RADIO[200]) == ["challenge_cp_setting"]
+    assert tapped(game, CP_OK) == ["challenge_cp_setting"] and not tapped(game, CP_CANCEL)
+    # 之后顶栏的 CP 够就不再打开弹窗
+    game.state = "challenge_band_confirm"
+    nav.start_live()
+    assert len(tapped(game, (920, 665))) == 1 and game.state == "loading"
+    assert not tapped(game, SKIP, 30)
+
+
+def test_challenge_cost_already_set():
+    game = ChallengeGame("challenge_band_confirm", cost=200)
+    nav = challenge_nav(game)
+    nav.start_live()
+    assert tapped(game, CP_OK) == ["challenge_cp_setting"] and not tapped(game, CP_RADIO[200])
+    assert nav._cp_cost == 200 and game.state == "loading"
+
+
+def test_challenge_keep_cost_only_cancels():
+    """不改游戏里的设置时只看一眼当前消耗，点「取消」关掉，绝不点 OK。"""
+    game = ChallengeGame("challenge_band_confirm", cost=800)
+    nav = challenge_nav(game, cost=None)
+    nav.start_live()
+    assert tapped(game, CP_CANCEL) == ["challenge_cp_setting"] and not tapped(game, CP_OK)
+    assert game.cost == 800 and nav._cp_cost == 800 and game.state == "loading"
+
+
+@pytest.mark.parametrize("bar", [None, ""])
+def test_challenge_cp_exhausted(bar):
+    """CP 不够一局（顶栏没读到时用弹窗里的持有数核对）就停下，不点 LIVE START。"""
+    game = ChallengeGame("challenge_band_confirm", cost=200, held=150, bar=bar)
+    nav = challenge_nav(game)
+    with pytest.raises(CpExhausted, match="持有 150"):
+        nav.start_live()
+    assert isinstance(CpExhausted("x"), LbExhausted)  # 和 LB 用完一样结束
+    assert game.state == "challenge_band_confirm" and not tapped(game, (1140, 648))
+
+
+def test_challenge_cp_rechecked_when_bar_short():
+    """顶栏读成不够时打开弹窗核对，弹窗上够就照常开始。"""
+    game = ChallengeGame("challenge_band_confirm", cost=200, bar="100")
+    nav = challenge_nav(game)
+    nav._cp_cost = 200
+    nav.start_live()
+    assert tapped(game, CP_OK) == ["challenge_cp_setting"] and game.state == "loading"
+
+
+def test_stray_cp_setting_is_cancelled():
+    game = ChallengeGame("challenge_cp_setting", cost=400)
+    nav = challenge_nav(game)
+    nav.ensure_band_confirm()
+    assert game.state == "challenge_band_confirm" and tapped(game, CP_CANCEL) == ["challenge_cp_setting"]
+    assert not tapped(game, CP_OK) and game.cost == 400
+
+
+def test_challenge_mode_leaves_free_live():
+    """挑战演出时停在自由演出的乐队确认页：连续两次认出后返回，退到演出首页再进挑战演出。"""
+    game = ChallengeGame("band_confirm")
+    nav = challenge_nav(game)
+    nav.ensure_band_confirm()
+    assert game.state == "challenge_band_confirm"
+    assert [s for s, _ in game.taps] == [
+        "band_confirm",
+        "song_select",
+        "live_top_challenge",
+        "challenge_song_select",
+        "challenge_song_select",
+    ]
+
+
+def test_free_live_leaves_challenge():
+    game = ChallengeGame("challenge_band_confirm")
+    nav = make_nav(game, game, game)
+    nav.ensure_band_confirm()
+    assert game.state == "band_confirm"
+    assert [s for s, _ in game.taps][:3] == ["challenge_band_confirm", "challenge_song_select", "live_top_challenge"]
+    assert not tapped(game, SKIP, 30) and not tapped(game, (920, 665))
+
+
+def test_challenge_not_open():
+    """不在活动期间（演出首页没有「挑战演出」）：多看几次还是没有就报错，不去点别的。"""
+    game = ChallengeGame("live_top")
+    nav = challenge_nav(game)
+    with pytest.raises(NavigationError, match="挑战演出"):
+        nav.ensure_band_confirm()
+    assert game.taps == []
+
+
+def test_invalid_challenge_cost():
+    cfg = Config()
+    cfg.game.challenge_cost = 300
+    with pytest.raises(ValueError, match="challenge_cost"):
+        GameNavigator(cfg, None, None, None)
+
+
+@pytest.mark.parametrize("count, sel", [(3, 0), (3, 1), (3, 2), (6, 5), (6, 2)])
+def test_next_challenge_song(count, sel):
+    """选中下一首；最后一首之后回到第一首（列表长时一直往上点）。"""
+    game = ChallengeGame("challenge_song_select", songs=[f"{j}曲" for j in range(count)], sel=sel)
+    nav = challenge_nav(game)
+    nav.next_challenge_song()
+    assert game.sel == (sel + 1) % count and game.state == "challenge_song_select"
+
+
+def test_next_challenge_song_from_band_confirm():
+    game = ChallengeGame("challenge_band_confirm", sel=1)
+    nav = challenge_nav(game)
+    nav.next_challenge_song()
+    assert game.sel == 2 and game.state == "challenge_song_select"
+    assert not tapped(game, SKIP, 30)
+
+
+def test_next_challenge_song_single():
+    game = ChallengeGame("challenge_song_select", songs=["A曲"])
+    nav = challenge_nav(game)
+    nav.next_challenge_song()
+    assert game.sel == 0 and game.taps == []
+
+
+@pytest.mark.parametrize("lag", [0, 1])
+def test_challenge_song_ap(lag):
+    """选上难度后读右侧面板：曲名对上选中行、连续两次读数一样才算数（实测点难度后 0.2 秒内面板就跟上了）。"""
+    game = ChallengeGame("challenge_song_select", sel=1, ap={("B曲", "expert"), ("C曲", "hard")}, lag=lag)
+    nav = challenge_nav(game)
+    assert nav.challenge_song_ap("expert") == ("B曲", True)
+    assert nav.challenge_song_ap("hard") == ("B曲", False) and game.diff == "hard"
+    nav.next_challenge_song()
+    assert nav.challenge_song_ap("hard") == ("C曲", True)
+    assert tapped(game, BTN_DIFFICULTY["hard"]) == ["challenge_song_select"] * 2
+    assert not tapped(game, SKIP, 30)
+
+
+def test_challenge_song_ap_from_band_confirm():
+    game = ChallengeGame("challenge_band_confirm", ap={("A曲", "expert")})
+    nav = challenge_nav(game)
+    assert nav.challenge_song_ap("expert") == ("A曲", True) and game.state == "challenge_song_select"
+    assert not tapped(game, SKIP, 30)
+
+
+def test_challenge_song_ap_panel_mismatch():
+    """面板上的曲名一直对不上选中行：报错，不乱猜。"""
+    game = ChallengeGame("challenge_song_select", lag=100)
+    game.panel, game.stale = ("别的歌", False), 100
+    nav = challenge_nav(game)
+    with pytest.raises(NavigationError, match="AP"):
+        nav.challenge_song_ap("expert")
+
+
+def test_challenge_ap_first_run():
+    """ap_first：跳过已 AP 的，打第一首没 AP 的（打完再次演出回到乐曲选择页）。"""
+    game = ChallengeGame("challenge_song_select", ap={("A曲", "expert"), ("B曲", "expert")})
+    nav = challenge_nav(game)
+    src = sources.ChallengeApFirst(["expert"])
+    assert src.advance(nav, True)
+    assert game.songs[game.sel] == "C曲" and src.difficulty == "expert"
+    nav.ensure_band_confirm(src.difficulty)
+    assert game.state == "challenge_band_confirm" and game.diff == "expert"
 
 
 # ---------------------------------------------------------------- 真实 OCR（需要模型）

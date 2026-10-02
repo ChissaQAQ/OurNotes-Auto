@@ -88,6 +88,47 @@ def test_check_run_config():
         check_run_config(cfg)
     cfg.game.lb_cost = 1
     check_run_config(cfg)
+    cfg.loop.studio_claim_hours = -1
+    with pytest.raises(SetupError, match="录音室练习"):
+        check_run_config(cfg)
+    cfg.loop.studio_claim_hours = 0.5
+    check_run_config(cfg)
+
+
+def test_check_run_config_challenge():
+    cfg = Config()
+    cfg.loop.challenge = True
+    check_run_config(cfg)
+    cfg.loop.song_mode = "rotate"
+    cfg.game.challenge_cost = 1600
+    check_run_config(cfg)
+    cfg.game.challenge_cost = None  # 不改游戏里的设置
+    check_run_config(cfg)
+    cfg.game.challenge_cost = 300
+    with pytest.raises(SetupError, match="挑战pt"):
+        check_run_config(cfg)
+    cfg.game.challenge_cost = 200
+    cfg.loop.song_mode = "ap_first"
+    cfg.loop.ap_first_difficulties = "expert,hard"
+    check_run_config(cfg)
+    cfg.loop.ap_first_difficulties = "expert,master"
+    with pytest.raises(SetupError):
+        check_run_config(cfg)
+    cfg.loop.song_mode = "random"
+    with pytest.raises(SetupError, match="挑战演出的选曲方式"):
+        check_run_config(cfg)
+    cfg.loop.song_mode = "current"
+    cfg.loop.until_lb_empty, cfg.game.lb_cost = True, 3
+    with pytest.raises(SetupError, match="不消耗 LB"):
+        check_run_config(cfg)
+    cfg.loop.until_lb_empty = False
+    cfg.game.lb_refill = True
+    with pytest.raises(SetupError, match="道具补充"):
+        check_run_config(cfg)
+    cfg = Config()
+    cfg.loop.song_mode = "rotate"
+    with pytest.raises(SetupError, match="rotate"):
+        check_run_config(cfg)
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,8 @@ from ournotes_auto.records import PlayResult
 from ournotes_auto.sources import (
     ApComplete,
     ApFirst,
+    ChallengeApFirst,
+    ChallengeRotate,
     CurrentSong,
     RandomSong,
     SongList,
@@ -234,6 +236,134 @@ def test_make_source():
     cfg.loop.song_mode = "playlist"
     with pytest.raises(ValueError, match="选曲模式"):
         make_source(cfg, CATALOG)
+    cfg.loop.song_mode = "rotate"
+    with pytest.raises(ValueError, match="挑战演出"):
+        make_source(cfg)
+
+
+def test_make_source_challenge():
+    cfg = Config()
+    cfg.loop.challenge = True
+    assert isinstance(make_source(cfg), CurrentSong)
+    cfg.loop.song_mode = "rotate"
+    assert isinstance(make_source(cfg), ChallengeRotate)
+    cfg.loop.song_mode = "ap_first"
+    cfg.game.difficulty = "hard"
+    src = make_source(cfg)
+    assert isinstance(src, ChallengeApFirst) and src.difficulties == ["hard"] and src.fallback == "hard"
+    cfg.loop.ap_first_difficulties = "expert,hard"
+    cfg.loop.ap_max_attempts = 2
+    src = make_source(cfg)
+    assert src.difficulties == ["expert", "hard"] and src.fallback == "hard" and src.max_attempts == 2
+    for mode in ("random", "ap", "list"):
+        cfg.loop.song_mode = mode
+        with pytest.raises(ValueError, match="挑战演出"):
+            make_source(cfg, CATALOG)
+
+
+class RotateNav:
+    def __init__(self):
+        self.calls = 0
+
+    def next_challenge_song(self):
+        self.calls += 1
+
+
+def test_challenge_rotate_changes_song_after_first():
+    nav = RotateNav()
+    src = ChallengeRotate("expert")
+    assert src.advance(nav, True) and nav.calls == 0  # 第一局打当前选中的
+    assert src.advance(nav, False) and src.advance(nav, False) and nav.calls == 2
+    assert src.difficulty == "expert"
+
+
+class ApNav:
+    """挑战演出乐曲选择页：``songs`` 依次排列、选中第 ``sel`` 首，``ap`` 里是已 AP 的 (曲名, 难度)。"""
+
+    def __init__(self, songs, ap=(), sel=0):
+        self.songs = list(songs)
+        self.ap = set(ap)
+        self.sel = sel
+        self.calls = []
+
+    def challenge_song_ap(self, difficulty):
+        title = self.songs[self.sel]
+        self.calls.append(f"{title}:{difficulty}")
+        return title, (title, difficulty) in self.ap
+
+    def next_challenge_song(self):
+        self.calls.append("next")
+        self.sel = (self.sel + 1) % len(self.songs)
+
+
+def test_challenge_ap_first_skips_ap_songs():
+    nav = ApNav(["A", "B", "C"], ap={("A", "expert")})
+    src = ChallengeApFirst(["expert"])
+    assert src.advance(nav, True) and nav.songs[nav.sel] == "B" and src.difficulty == "expert"
+    assert nav.calls == ["A:expert", "next", "B:expert"]
+    src.done(song(2), "expert", result(2, "expert", 0))  # B 打出了 AP
+    nav.ap.add(("B", "expert"))
+    nav.calls.clear()
+    assert src.advance(nav, False) and nav.songs[nav.sel] == "C"  # 再次演出后还选着 B
+    assert nav.calls == ["B:expert", "next", "C:expert"]
+
+
+def test_challenge_ap_first_gives_up_then_rotates():
+    """同一首打 max_attempts 次没 AP 就不再打；都 AP 或放弃了就改为轮流打（这一局打选中的，之后每局换下一首）。"""
+    nav = ApNav(["A", "B"], ap={("A", "expert")}, sel=1)
+    src = ChallengeApFirst(["expert"], max_attempts=2)
+    for _ in range(2):
+        assert src.advance(nav, False) and nav.songs[nav.sel] == "B"
+        src.done(song(2), "expert", result(2, "expert", 3))
+    nav.calls.clear()
+    assert src.advance(nav, False) and src.difficulty == "expert"
+    assert nav.calls == ["B:expert", "next", "A:expert", "next", "B:expert"]  # 转了一圈
+    nav.calls.clear()
+    assert src.advance(nav, False) and src.advance(nav, False)
+    assert nav.calls == ["next", "next"]
+
+
+def test_challenge_ap_first_difficulties_in_order():
+    nav = ApNav(["A", "B"], ap={("A", "expert"), ("B", "expert"), ("B", "hard")})
+    src = ChallengeApFirst(["expert", "hard"], fallback="expert")
+    assert src.advance(nav, True) and src.difficulty == "hard" and nav.songs[nav.sel] == "A"
+    assert nav.calls == ["A:expert", "next", "B:expert", "next", "A:expert", "A:hard"]  # 读回 A 才知道转了一圈
+    src.done(song(1), "hard", None, playable=False)  # 谱面站没有：不再打
+    nav.calls.clear()
+    assert src.advance(nav, False) and src.difficulty == "expert"  # 都没有了：按 fallback 轮流打
+    assert nav.calls == ["A:hard", "next", "B:hard", "next", "A:hard"]
+
+
+class NoisyNav(ApNav):
+    """每次读出的曲名末尾都不一样（OCR 读错）。"""
+
+    def challenge_song_ap(self, difficulty):
+        title, ap = super().challenge_song_ap(difficulty)
+        return title[:-1] + "あいうえお"[len(self.calls) % 5], ap
+
+
+def test_challenge_ap_first_noisy_titles():
+    """同一首歌每次读出的曲名差几个字也认得出：放弃过的不再打，转一圈能停下。"""
+    nav = NoisyNav(["夢我夢中", "これはぼくたちの生存のあらすじ"], ap={("夢我夢中", "expert")}, sel=1)
+    src = ChallengeApFirst(["expert"], max_attempts=1)
+    assert src.advance(nav, True) and len(nav.calls) == 1
+    src.done(song(1), "expert", result(1, "expert", 2))
+    nav.calls.clear()
+    assert src.advance(nav, False) and src._rotate
+    assert len(nav.calls) == 5 and nav.calls.count("next") == 2
+
+
+def test_challenge_ap_first_single_song():
+    nav = ApNav(["A"], ap={("A", "expert")})
+    nav.next_challenge_song = lambda: nav.calls.append("next")  # 只有一首：换不了
+    src = ChallengeApFirst(["expert"])
+    assert src.advance(nav, True) and nav.calls == ["A:expert", "next", "A:expert"]
+
+
+@pytest.mark.parametrize("args", [([],), (["master"],), (["expert"], 0), (["expert"], 3, "master")])
+def test_challenge_ap_first_invalid(args):
+    with pytest.raises(ValueError):
+        ChallengeApFirst(*args)
 
 
 # ---------------------------------------------------------------- 歌单

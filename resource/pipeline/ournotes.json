@@ -9,6 +9,8 @@
             "clear_lb_cost": 3,
             "lb_refill": false,
             "lb_refill_count": 0,
+            "studio_claim": true,
+            "studio_claim_hours": 4,
             "touch": "minitouch",
             "watch_combo": false,
             "debug_log": false,
@@ -22,6 +24,8 @@
             "ap_easy": true,
             "ap_order": "hard_first",
             "ap_max_attempts": 3,
+            "challenge_song_mode": "rotate",
+            "challenge_cost": 200,
             "daily_studio": true,
             "daily_story": false,
             "daily_missions": true,
@@ -94,6 +98,17 @@
                 "custom_action": "OurNotesRun",
                 "custom_action_param": {
                     "task": "ap"
+                }
+            }
+        }
+    },
+    "OurNotes_Challenge": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "challenge"
                 }
             }
         }
