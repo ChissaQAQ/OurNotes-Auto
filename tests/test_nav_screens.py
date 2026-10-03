@@ -102,6 +102,7 @@ def load(name: str) -> list[OcrItem]:
         ("story_song_unlock", Screen.UNLOCK),  # 乐曲解锁（看完故事）
         ("story_unlock", Screen.UNLOCK),  # 故事解锁：视角故事（看完乐队故事）
         ("bond_story_unlock", Screen.UNLOCK),  # 故事解锁：羁绊故事（结算后羁绊升级）
+        ("home_unlock", Screen.UNLOCK),  # 沉浸式主页解锁（领通行证奖励后回主界面）
         ("new_song", Screen.NEW_SONG),  # 回主界面时的「追加翻唱乐曲！」演出
         ("daily_missions", Screen.UNKNOWN),  # 任务页左侧的「乐曲解锁」分页不算
         ("notice", Screen.POPUP),  # 登录后的公告

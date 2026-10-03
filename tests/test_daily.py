@@ -474,6 +474,16 @@ def test_go_home_through_new_song(clock):
     assert [s for s, _ in game.taps] == ["song_select", "new_song"]
 
 
+def test_go_home_through_home_unlock(clock):
+    """领完任务通行证回主界面时弹出「沉浸式主页解锁」：点下方的关闭（比别的解锁提示低）。"""
+    routes = {"daily_pass": [((164, 40), "home_unlock")], "home_unlock": [((640, 613), "home")]}
+    game = DailyGame("daily_pass", routes=routes)
+    nav = daily_nav(game, clock)
+    nav.go_home()
+    assert game.state == "home"
+    assert [s for s, _ in game.taps] == ["daily_pass", "home_unlock"]
+
+
 def test_failed_job_does_not_stop_others(clock):
     """某一项出错（这里是切换分页后页面不对）时记下来，接着做后面的项目。"""
     routes = {"daily_missions": [((133, 206), "daily_gifts_empty"), ((497, 655), "home")]}
