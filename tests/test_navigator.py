@@ -88,6 +88,7 @@ TRANSITIONS = {
     "new_song": [((640, 627), "home")],
     "band_rank_up": [((640, 660), "result_exp")],
     "daily_pass_pt": [((640, 546), "home")],  # 当作没见过、只有 OK 的弹窗
+    "birthday": [((1213, 36), "home")],  # 右上角「跳过」
 }
 
 TOTALS = {"perfect": 340, "great": 2, "good": 0, "bad": 0, "miss": 0}
@@ -191,6 +192,14 @@ def test_unknown_ok_popup_is_dismissed():
     assert game.state == "band_confirm"
     assert [s for s, _ in game.taps][:2] == ["daily_pass_pt", "home"]
     assert saved == ["ok_popup"]
+
+
+def test_birthday_is_skipped():
+    """重新登录后的生日演出（一直循环播放）：点右上角「跳过」。"""
+    game = FakeGame("birthday")
+    nav = make_nav(game, game, game)
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert tapped(game, (1213, 36), radius=2) == ["birthday"]  # 按 OCR 到的按钮位置点
 
 
 def test_event_result_pages():
@@ -1194,7 +1203,7 @@ def frozen_nav(monkeypatch, game):
     ],
 )
 def test_frozen_screen_stops_early(monkeypatch, state, drop):
-    """画面一直不动、游戏还在运行：FROZEN_S 后就抛 ScreenFrozen，不等到超时。"""
+    """画面一直不动、游戏还在运行、不能重启游戏：FROZEN_S 后就抛 ScreenFrozen，不等到超时。"""
     game = FrozenGame(state, drop=drop)
     nav, now = frozen_nav(monkeypatch, game)
     start = now[0]
@@ -1214,13 +1223,66 @@ def test_moving_or_crashed_screen_is_not_frozen(monkeypatch, moving, running, er
     assert not isinstance(e.value, ScreenFrozen)
 
 
-def test_read_result_waits_through_still_screen(monkeypatch):
-    """等结算时歌可能还在放（同步失败），画面不动也不算卡住。"""
-    game = FrozenGame("intro_card")
+@pytest.mark.parametrize("moving", [False, True])
+def test_read_result_waits_through_still_screen(monkeypatch, moving):
+    """等结算时歌可能还在放（同步失败），画面不动、一直认不出也不算卡住，不重启游戏。"""
+    game = FrozenGame("intro_card", moving=moving)
     nav, _ = frozen_nav(monkeypatch, game)
+    nav.restart_app = lambda: pytest.fail("不该重启游戏")
     with pytest.raises(NavigationError, match="没有出现结算页") as e:
-        nav.read_result(timeout_s=150)
+        nav.read_result(timeout_s=400)
     assert not isinstance(e.value, ScreenFrozen)
+
+
+class StuckGame(FrozenGame):
+    """停在认不出的画面上（``moving`` 时一直在动，比如循环播放的演出），点了没反应；重启游戏后从标题画面
+    照常登录，``again`` 时重启后还是停在原来的画面上。"""
+
+    def __init__(self, state, moving=False, again=False):
+        super().__init__(state, moving=moving)
+        self.stuck, self.again = state, again
+        self.restarts: list[float] = []
+
+    def restart(self):
+        self.restarts.append(navigator.time.monotonic())
+        self.state = self.stuck if self.again else "title"
+
+    def tap(self, x, y):
+        FakeGame.tap(self, x, y)
+
+
+@pytest.mark.parametrize("moving, wait", [(False, navigator.FROZEN_S), (True, navigator.UNKNOWN_STUCK_S)])
+def test_stuck_screen_restarts_game(monkeypatch, moving, wait):
+    """保底：画面停住 FROZEN_S、一直在动但认不出 UNKNOWN_STUCK_S，就重启游戏重新登录，不停下任务。"""
+    game = StuckGame("intro_card", moving=moving)
+    nav, now = frozen_nav(monkeypatch, game)
+    nav.restart_app = game.restart
+    start = now[0]
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert len(game.restarts) == 1 and wait <= game.restarts[0] - start < wait + 5
+    assert [s for s, _ in game.taps] == ["title", "login_bonus", "reward", "notice"]
+
+
+@pytest.mark.parametrize("moving, error", [(False, ScreenFrozen), (True, NavigationError)])
+def test_stuck_screen_restarts_are_limited(monkeypatch, moving, error):
+    """重启后还是卡住：回到主界面之前最多重启 MAX_RESTARTS 次，用完了报错停下。"""
+    game = StuckGame("intro_card", moving=moving, again=True)
+    nav, _ = frozen_nav(monkeypatch, game)
+    nav.restart_app = game.restart
+    with pytest.raises(error, match="没有变化" if error is ScreenFrozen else "认不出"):
+        nav.ensure_in_game(timeout_s=1000)
+    assert len(game.restarts) == navigator.MAX_RESTARTS
+
+
+def test_loading_screen_is_not_stuck(monkeypatch):
+    """下载、加载中的画面（一直在动）不算卡住，照常等到超时。"""
+    game = StuckGame("intro_card", moving=True)
+    game.read = lambda frame, roi=None: [*load_items("intro_card"), OcrItem(1000, 650, 200, 30, "NOW LOADING")]
+    nav, _ = frozen_nav(monkeypatch, game)
+    nav.restart_app = game.restart
+    with pytest.raises(NavigationError, match="未能进入游戏"):
+        nav.ensure_in_game(timeout_s=400)
+    assert game.restarts == []
 
 
 # ---------------------------------------------------------------- 挑战演出

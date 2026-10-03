@@ -131,7 +131,7 @@ HOME_BUTTON_SCREENS = frozenset(
         Screen.SETTINGS,
     )
 )
-# 领取后可能弹出、只需要关掉的弹窗（底部中央是「关闭」或「OK」）
+# 领取后可能弹出、只需要关掉的弹窗（底部中央是「关闭」或「OK」，或者右上角有「跳过」的演出）
 KNOWN_POPUPS = frozenset(
     (
         Screen.REWARD,
@@ -142,6 +142,7 @@ KNOWN_POPUPS = frozenset(
         Screen.UNLOCK,
         Screen.NEW_SONG,
         Screen.OK_POPUP,
+        Screen.SKIPPABLE,
     )
 )
 

@@ -80,10 +80,12 @@ from .screens import (
     lb_held,
     lb_preview,
     lb_recover_amount,
+    loading,
     maintenance_period,
     note_speed,
     parse_level,
     result_cells,
+    skip_button,
     title_startable,
 )
 from .challenge import BTN_CP_CANCEL, CHALLENGE_SCREENS, CP_CANCEL_ROI, ChallengeMixin
@@ -175,6 +177,9 @@ APP_CHECK_S = 30.0
 FROZEN_S = 60.0
 FROZEN_THUMB = (160, 90)
 FROZEN_DIFF = 4
+# 保底：认不出的画面一直在动（循环播放的演出等，不算上面的停住）这么久，也当成卡住了。卡住时重启游戏
+# （回到主界面之前最多 MAX_RESTARTS 次，重启次数用完才报错停下）
+UNKNOWN_STUCK_S = 150.0
 # LB 用完改为消耗 0 后，这么久之内不再尝试按配置消耗（LB 随时间恢复；玩家升级时回满，看到升级画面就重新尝试）
 LB_EMPTY_RETRY_S = 30 * 60
 # start_live("auto")（挂机不等 LB）：持有 LB 时每局消耗这么多，没有时消耗 0
@@ -261,6 +266,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
         self._connect_errors = 0  # 进到游戏之前连续遇到「连接失败」的次数
         self._unknown_since: float | None = None  # 连续认不出画面的起点（每检查一次游戏进程重新计）
         self._still = None  # (起点, 缩略图)：认不出的画面从什么时候起没变过
+        self._stuck_since: float | None = None  # 从什么时候起一直认不出画面（不论在不在动）
         self._pause_template = load_template()  # 认演奏画面右上角的暂停按钮（重试前确认还在演奏）
 
     # ------------------------------------------------------------ 基础操作
@@ -311,6 +317,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
         else:
             self._unknown_since = None
         self._check_frozen(screen, still_ok)
+        self._check_stuck(screen, items, still_ok)
         return screen, items
 
     def _check_app(self) -> None:
@@ -337,8 +344,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
         self.restart_app()
 
     def _check_frozen(self, screen: Screen, still_ok: bool) -> None:
-        """认不出（或以为还在播动画）的画面 FROZEN_S 内一点没变：抛 :class:`ScreenFrozen` 让任务停下，不再反复重试。
-        要能确认游戏还在运行才判断。"""
+        """认不出（或以为还在播动画）的画面 FROZEN_S 内一点没变：重启游戏；不能重启（重启次数用完）时抛
+        :class:`ScreenFrozen` 让任务停下，不再反复重试。要能确认游戏还在运行才判断。"""
         if still_ok or screen not in (Screen.UNKNOWN, Screen.RESULT_OTHER) or self.app_running is None:
             self._still = None
             return
@@ -361,7 +368,29 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
         if not running:
             self._still = (now, thumb)  # 过一阵再查
             return
-        raise self._fail(f"画面 {now - since:.0f}s 没有变化，也认不出是什么页面（可能是没见过的页面或弹窗）", ScreenFrozen)
+        self._restart_stuck(f"画面 {now - since:.0f}s 没有变化，也认不出是什么页面（可能是没见过的页面或弹窗）", ScreenFrozen)
+
+    def _check_stuck(self, screen: Screen, items: list[OcrItem], still_ok: bool) -> None:
+        """保底：一直认不出画面（画面在动，_check_frozen 不管）UNKNOWN_STUCK_S，就重启游戏。加载、下载中不算；
+        不能重启游戏（没有 ``restart_app``）时不管，等导航自己超时。"""
+        if still_ok or screen not in (Screen.UNKNOWN, Screen.RESULT_OTHER) or loading(items) or self.restart_app is None:
+            self._stuck_since = None
+            return
+        now = time.monotonic()
+        if self._stuck_since is None:
+            self._stuck_since = now
+        elif now - self._stuck_since >= UNKNOWN_STUCK_S:
+            self._restart_stuck(f"{now - self._stuck_since:.0f}s 都认不出是什么页面（可能是没见过的页面或演出）")
+
+    def _restart_stuck(self, why: str, error: type[NavigationError] = NavigationError) -> None:
+        """卡在认不出的画面上：重启游戏（之后从标题画面重新登录）；不能重启或回到主界面之前已经重启了
+        MAX_RESTARTS 次时抛 ``error``。"""
+        self._still = self._stuck_since = None
+        if self.restart_app is None or self._restarts >= MAX_RESTARTS:
+            raise self._fail(why, error)
+        logger.warning("%s，重启游戏（截图 %s）", why, self.save_debug(self.last_screen.name.lower()))
+        self._restarts += 1
+        self.restart_app()
 
     def tap(self, point: tuple[int, int], what: str = "") -> None:
         w, h = self.source.size
@@ -476,6 +505,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
             self.tap(TAP_LOGIN_BONUS, "登录奖励")
         elif screen in (Screen.REWARD, Screen.GRADE_UP, Screen.BOND_UP):
             self.tap(self._button(items, "OK", BTN_REWARD_OK, CLOSE_ROI), "OK")
+        elif screen is Screen.SKIPPABLE:
+            logger.info("跳过演出：%s", " / ".join(it.text.strip() for it in items))
+            self.tap(center(skip_button(items)), "跳过")
         elif screen is Screen.OK_POPUP:
             # 没见过的提示：记下文字，同一个弹窗只存一张截图，以后加进识别
             texts = " / ".join(it.text.strip() for it in items)

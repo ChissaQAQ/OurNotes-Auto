@@ -56,6 +56,8 @@ class Screen(StrEnum):
     REWARD = "获得奖励"  # 领到东西后的确认弹窗（登录奖励、评级提升奖励等），只有「OK」
     # 别的都认不出、只有「OK」的提示（没有取消、确定、购买、星钻等字样），点 OK 继续（用户 2026-10-03 同意）
     OK_POPUP = "只有 OK 的弹窗"
+    # 别的都认不出、右上角有「跳过」/「SKIP」的全屏演出（如重新登录后的角色生日演出，一直循环播放），点跳过
+    SKIPPABLE = "可跳过的演出"
     # B 站 SDK 在标题画面上弹出的「开启消息通知」：只点右上角的 ⓧ（「去开启」会跳到系统的通知设置）
     NOTIFY = "开启消息通知"
     CONNECT_ERROR = "连接失败"  # 「发生网络连接错误。」只有「返回标题画面」，回到标题重新登录
@@ -143,6 +145,11 @@ TITLE_LOGO_ROI: Rect = (1060, 50, 100, 35)
 TAP_TO_START_ROI: Rect = (800, 565, 300, 40)
 # 登录奖励演出右上角的 SKIP
 SKIP_ROI: Rect = (1150, 20, 110, 40)
+# 其他全屏演出右上角的「跳过」（挑战演出乐队确认页底部的「跳过 还剩n次」不在这里，绝不能点）
+SKIP_CORNER_ROI: Rect = (1050, 0, 230, 90)
+SKIP_TEXTS = ("跳过", "SKIP")
+# 加载、下载中的画面认不出，但可能持续很久（下载数据、故事），不算卡住
+LOADING_TEXTS = ("LOADING", "下载", "%")
 
 # 乐队确认页左下角的曲名与难度
 SONG_TITLE_ROI: Rect = (100, 588, 420, 42)
@@ -173,6 +180,16 @@ def find(items: list[OcrItem], text: str, roi: Rect | None = None, exact: bool =
 
 def center(item: OcrItem) -> tuple[int, int]:
     return round(item.x + item.w / 2), round(item.cy)
+
+
+def skip_button(items: list[OcrItem]) -> OcrItem | None:
+    """全屏演出右上角的「跳过」/「SKIP」。"""
+    return next((it for text in SKIP_TEXTS if (it := find(items, text, SKIP_CORNER_ROI))), None)
+
+
+def loading(items: list[OcrItem]) -> bool:
+    """加载、下载中的画面（「NOW LOADING」、下载进度）。"""
+    return any(text in it.text.upper() for it in items for text in LOADING_TEXTS)
 
 
 def _setting_dialog(items: list[OcrItem], title: OcrItem) -> Screen:
@@ -238,6 +255,8 @@ def classify(items: list[OcrItem]) -> Screen:
     # 主界面没有标题，底部一排入口
     if find(items, "招募", (500, 620, 450, 60)) and find(items, "故事", (500, 620, 450, 60)):
         return Screen.HOME
+    if skip_button(items):
+        return Screen.SKIPPABLE
     if find(items, "OK", OK_POPUP_ROI, exact=True) and not any(find(items, text) for text in OK_POPUP_BLOCK):
         return Screen.OK_POPUP
     return Screen.UNKNOWN
