@@ -46,6 +46,8 @@ class Screen(StrEnum):
     # 看完故事、羁绊升级后的「乐曲解锁」（现在可以选择「曲名」了。）「故事解锁」（视角故事 / 羁绊故事…已解锁。），
     # 只有「关闭」，比一般弹窗靠上
     UNLOCK = "解锁提示"
+    # 新增乐曲后回主界面时的全屏演出「追加翻唱乐曲！」（封面、作词作曲），点下方「TAP TO NEXT」继续
+    NEW_SONG = "追加乐曲"
     # 每天游戏日期变更时弹出，只能回到标题画面重新登录；之后依次是登录奖励（可能有好几页）、公告、主界面
     DATE_CHANGE = "日期变更"
     TITLE = "标题画面"
@@ -122,6 +124,8 @@ CLOSE_ROI: Rect = (540, 620, 200, 70)
 UNLOCK_TITLES = ("乐曲解锁", "故事解锁")
 UNLOCK_TITLE_ROI: Rect = (440, 90, 400, 60)
 UNLOCK_CLOSE_ROI: Rect = (440, 530, 400, 80)
+# 追加乐曲演出：标题在上方中间
+NEW_SONG_ROI: Rect = (440, 60, 400, 100)
 # 只有「OK」的弹窗顶部的标题：「获得奖励」「领取奖励」（两种弹窗标题高度不同）、GRADE UP 大字
 REWARD_ROI: Rect = (440, 10, 400, 160)
 # 结算页右下角的「下一步」
@@ -191,6 +195,8 @@ def classify(items: list[OcrItem]) -> Screen:
         find(items, title, UNLOCK_TITLE_ROI, exact=True) for title in UNLOCK_TITLES
     ):
         return Screen.UNLOCK
+    if (it := find(items, "追加", NEW_SONG_ROI)) and "乐曲" in it.text:
+        return Screen.NEW_SONG
     if find(items, "OK", CLOSE_ROI, exact=True):
         if find(items, "奖励", REWARD_ROI):
             return Screen.REWARD

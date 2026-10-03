@@ -85,6 +85,7 @@ TRANSITIONS = {
     "notice": [((640, 654), "home")],
     "home": [((1081, 650), "live_top")],
     "live_top": [((872, 350), "song_select")],
+    "new_song": [((640, 627), "home")],
 }
 
 TOTALS = {"perfect": 340, "great": 2, "good": 0, "bad": 0, "miss": 0}
@@ -831,6 +832,15 @@ def test_relogin_after_date_change():
         "song_select",
         "song_select",
     ]
+
+
+def test_new_song_then_band_confirm():
+    """新增乐曲的「追加翻唱乐曲！」演出：点 TAP TO NEXT 回到主界面，再进自由演出。"""
+    game = FakeGame("new_song")
+    nav = make_nav(game, game, game)
+    nav.ensure_band_confirm()
+    assert game.state == "band_confirm"
+    assert [s for s, _ in game.taps][:3] == ["new_song", "home", "live_top"]
 
 
 def test_read_result_gives_up_on_date_change():
