@@ -133,7 +133,16 @@ HOME_BUTTON_SCREENS = frozenset(
 )
 # 领取后可能弹出、只需要关掉的弹窗（底部中央是「关闭」或「OK」）
 KNOWN_POPUPS = frozenset(
-    (Screen.REWARD, Screen.GRADE_UP, Screen.POPUP, Screen.ACHIEVEMENT, Screen.UNLOCK, Screen.NEW_SONG)
+    (
+        Screen.REWARD,
+        Screen.GRADE_UP,
+        Screen.BOND_UP,
+        Screen.POPUP,
+        Screen.ACHIEVEMENT,
+        Screen.UNLOCK,
+        Screen.NEW_SONG,
+        Screen.OK_POPUP,
+    )
 )
 
 

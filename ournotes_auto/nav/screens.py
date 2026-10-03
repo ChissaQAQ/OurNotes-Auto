@@ -41,7 +41,8 @@ class Screen(StrEnum):
     RESULT_OTHER = "结算-过渡"  # 标题已出现但内容还在动画中
     RANK_UP = "玩家等级提升"  # 结算奖励页上弹出，LB 同时回满
     GRADE_UP = "评级提升"  # 结算页上弹出的「GRADE UP」（最高分评级升段），只有「OK」
-    BOND_UP = "羁绊等级提升"  # 结算奖励页之后弹出的「RANK UP」（两位成员的羁绊等级），只有「OK」，LB 不回满
+    # 结算奖励页之后弹出的「RANK UP」（两位成员的羁绊等级，或「乐队RANK」），只有「OK」，LB 不回满
+    BOND_UP = "羁绊/乐队等级提升"
     POPUP = "弹窗"  # 其他底部中央只有「关闭」的弹窗（如最高分评级提升、登录后的公告），关掉即可
     # 看完故事、羁绊升级后的「乐曲解锁」（现在可以选择「曲名」了。）「故事解锁」（视角故事 / 羁绊故事…已解锁。），
     # 只有「关闭」，比一般弹窗靠上
@@ -53,6 +54,8 @@ class Screen(StrEnum):
     TITLE = "标题画面"
     LOGIN_BONUS = "登录奖励"  # 右上角有 SKIP 的登录奖励演出，点空白处继续
     REWARD = "获得奖励"  # 领到东西后的确认弹窗（登录奖励、评级提升奖励等），只有「OK」
+    # 别的都认不出、只有「OK」的提示（没有取消、确定、购买、星钻等字样），点 OK 继续（用户 2026-10-03 同意）
+    OK_POPUP = "只有 OK 的弹窗"
     # B 站 SDK 在标题画面上弹出的「开启消息通知」：只点右上角的 ⓧ（「去开启」会跳到系统的通知设置）
     NOTIFY = "开启消息通知"
     CONNECT_ERROR = "连接失败"  # 「发生网络连接错误。」只有「返回标题画面」，回到标题重新登录
@@ -118,6 +121,9 @@ LIVE_END_ROI: Rect = (250, 60, 780, 170)
 RANK_UP_ROI: Rect = (440, 220, 400, 120)
 # 羁绊等级的 RANK UP 大字在更上面，OK 在底部中央
 BOND_UP_ROI: Rect = (440, 90, 400, 100)
+# 认不出的弹窗：「OK」在中下部，画面上没有这些字才点（确认框、花星钻、招募之类的一律不点）
+OK_POPUP_ROI: Rect = (340, 450, 600, 250)
+OK_POPUP_BLOCK = ("取消", "确定", "购买", "星钻", "恢复", "使用", "招募", "下载")
 # 弹窗底部中央的「关闭」按钮
 CLOSE_ROI: Rect = (540, 620, 200, 70)
 # 解锁提示：标题在上方中间（任务页左侧也有「乐曲解锁」「主页解锁」分页，不在这个范围），「关闭」在 (640,570)；
@@ -203,7 +209,7 @@ def classify(items: list[OcrItem]) -> Screen:
             return Screen.REWARD
         if find(items, "GRADE", REWARD_ROI):
             return Screen.GRADE_UP
-        if find(items, "ANKUP", BOND_UP_ROI) and find(items, "羁绊等级"):
+        if find(items, "ANKUP", BOND_UP_ROI) and (find(items, "羁绊等级") or find(items, "乐队RANK")):
             return Screen.BOND_UP
     if find(items, "CRIWARE", TITLE_LOGO_ROI):
         return Screen.TITLE
@@ -232,6 +238,8 @@ def classify(items: list[OcrItem]) -> Screen:
     # 主界面没有标题，底部一排入口
     if find(items, "招募", (500, 620, 450, 60)) and find(items, "故事", (500, 620, 450, 60)):
         return Screen.HOME
+    if find(items, "OK", OK_POPUP_ROI, exact=True) and not any(find(items, text) for text in OK_POPUP_BLOCK):
+        return Screen.OK_POPUP
     return Screen.UNKNOWN
 
 

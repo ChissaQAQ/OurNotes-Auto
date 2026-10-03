@@ -86,6 +86,8 @@ TRANSITIONS = {
     "home": [((1081, 650), "live_top")],
     "live_top": [((872, 350), "song_select")],
     "new_song": [((640, 627), "home")],
+    "band_rank_up": [((640, 660), "result_exp")],
+    "daily_pass_pt": [((640, 546), "home")],  # 当作没见过、只有 OK 的弹窗
 }
 
 TOTALS = {"perfect": 340, "great": 2, "good": 0, "bad": 0, "miss": 0}
@@ -166,6 +168,29 @@ def test_bond_up_after_result():
     assert game.state == "song_select"
     assert nav._lb_empty_at == 1.0
     assert [s for s, _ in game.taps][:2] == ["bond_up", "bond_story_unlock"]
+
+
+def test_band_rank_up_after_result():
+    """结算羁绊页之后弹出乐队RANK 的 RANK UP：点 OK 继续，不当成玩家升级。"""
+    game = FakeGame("band_rank_up")
+    nav = make_nav(game, game, game)
+    nav._lb_empty_at = 1.0
+    nav.leave_result()
+    assert game.state == "song_select"
+    assert nav._lb_empty_at == 1.0
+    assert [s for s, _ in game.taps][:2] == ["band_rank_up", "result_exp"]
+
+
+def test_unknown_ok_popup_is_dismissed():
+    """认不出、只有 OK 的弹窗：点 OK 继续，存一张截图。"""
+    game = FakeGame("daily_pass_pt")
+    nav = make_nav(game, game, game)
+    saved = []
+    nav.save_debug = lambda name, *a: saved.append(name)
+    nav.ensure_band_confirm()
+    assert game.state == "band_confirm"
+    assert [s for s, _ in game.taps][:2] == ["daily_pass_pt", "home"]
+    assert saved == ["ok_popup"]
 
 
 def test_event_result_pages():

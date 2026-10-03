@@ -99,6 +99,8 @@ def load(name: str) -> list[OcrItem]:
         ("reward_claimed", Screen.REWARD),  # 评级提升奖励，标题在更上面
         ("grade_up", Screen.GRADE_UP),
         ("bond_up", Screen.BOND_UP),  # 羁绊等级的 RANK UP（不是玩家等级）
+        ("band_rank_up", Screen.BOND_UP),  # 乐队RANK 的 RANK UP（结算羁绊页之后）
+        ("daily_pass_pt", Screen.OK_POPUP),  # 领取日常里另外认（reward_ok），这里当没见过的 OK 弹窗
         ("story_song_unlock", Screen.UNLOCK),  # 乐曲解锁（看完故事）
         ("story_unlock", Screen.UNLOCK),  # 故事解锁：视角故事（看完乐队故事）
         ("bond_story_unlock", Screen.UNLOCK),  # 故事解锁：羁绊故事（结算后羁绊升级）
@@ -110,6 +112,14 @@ def load(name: str) -> list[OcrItem]:
 )
 def test_classify(name, screen):
     assert classify(load(name)) is screen
+
+
+@pytest.mark.parametrize("extra", ["取消", "确定", "购买", "消耗星钻"])
+def test_ok_popup_with_risky_text_is_not_tapped(extra):
+    """有取消、确定、购买、星钻之类字样的弹窗不算只有 OK 的提示（不会去点）。"""
+    items = [OcrItem(560, 300, 160, 30, "要继续吗？"), OcrItem(616, 645, 48, 31, "OK"), OcrItem(400, 645, 80, 31, extra)]
+    assert classify(items) is Screen.UNKNOWN
+    assert classify(items[:2]) is Screen.OK_POPUP
 
 
 def test_title_startable():

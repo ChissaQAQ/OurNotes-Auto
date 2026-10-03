@@ -61,6 +61,7 @@ from .screens import (
     LB_TAB_OTHERS,
     LEVEL_ROI,
     NEXT_ROI,
+    OK_POPUP_ROI,
     RELOGIN_SCREENS,
     RESULT_COMBO_ROI,
     RESULT_SCORE_ROI,
@@ -179,7 +180,7 @@ LB_EMPTY_RETRY_S = 30 * 60
 # start_live("auto")（挂机不等 LB）：持有 LB 时每局消耗这么多，没有时消耗 0
 LB_AUTO_COST = 1
 # 结算页出现约 1s 后可能叠上来的弹窗（首次达成奖励、评级提升及其奖励等），读数前先关掉
-RESULT_POPUPS = (Screen.ACHIEVEMENT, Screen.POPUP, Screen.GRADE_UP, Screen.REWARD)
+RESULT_POPUPS = (Screen.ACHIEVEMENT, Screen.POPUP, Screen.GRADE_UP, Screen.REWARD, Screen.OK_POPUP)
 # 已经进入游戏、可以开始任务的画面（启动游戏时等到这些之一）
 IN_GAME_SCREENS = frozenset((Screen.HOME, Screen.LIVE_TOP, Screen.SONG_SELECT, Screen.BAND_CONFIRM, *CHALLENGE_SCREENS))
 # 乐曲选择、乐队确认页（自由演出和挑战演出的）
@@ -230,6 +231,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
         self.prev_screen = Screen.UNKNOWN  # 上一次 look 认出的画面
         self._frame = None
         self._items: list[OcrItem] = []
+        self._ok_popup_seen: str | None = None  # 上一个点掉的没见过的弹窗的文字（同一个只存一张截图）
         lb = config.game.lb_cost
         if lb is not None and lb not in LB_RADIO:
             raise ValueError(f"game.lb_cost 应为 0~3 或 null，而不是 {lb!r}")
@@ -474,6 +476,13 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
             self.tap(TAP_LOGIN_BONUS, "登录奖励")
         elif screen in (Screen.REWARD, Screen.GRADE_UP, Screen.BOND_UP):
             self.tap(self._button(items, "OK", BTN_REWARD_OK, CLOSE_ROI), "OK")
+        elif screen is Screen.OK_POPUP:
+            # 没见过的提示：记下文字，同一个弹窗只存一张截图，以后加进识别
+            texts = " / ".join(it.text.strip() for it in items)
+            if texts != self._ok_popup_seen:
+                self._ok_popup_seen = texts
+                logger.warning("没见过的弹窗，只有 OK，点掉：%s（截图 %s）", texts, self.save_debug("ok_popup"))
+            self.tap(self._button(items, "OK", BTN_REWARD_OK, OK_POPUP_ROI), "OK")
         else:
             return False
         return True
