@@ -108,7 +108,9 @@ def load(name: str) -> list[OcrItem]:
         ("home_unlock", Screen.UNLOCK),  # 沉浸式主页解锁（领通行证奖励后回主界面）
         ("new_song", Screen.NEW_SONG),  # 回主界面时的「追加翻唱乐曲！」演出
         ("birthday", Screen.SKIPPABLE),  # 重新登录后的角色生日演出，右上角「跳过」
-        ("story_skip", Screen.UNKNOWN),  # 「要跳过故事吗？」中间的「跳过」不算
+        ("story_skip", Screen.STORY_SKIP),  # 「要跳过故事吗？」（中间的「跳过」不算可跳过的演出）
+        ("story_player_menu", Screen.STORY_MENU),
+        ("bond_player_menu", Screen.STORY_MENU),
         ("daily_missions", Screen.UNKNOWN),  # 任务页左侧的「乐曲解锁」分页不算
         ("notice", Screen.POPUP),  # 登录后的公告
     ],

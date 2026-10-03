@@ -29,7 +29,7 @@ import numpy as np
 
 from ..result_reader import OcrItem
 from .daily import BOTTOM_ROI, has_confirm
-from .screens import CLOSE_ROI, TITLE_ROI, Rect, Screen, center, find, in_roi
+from .screens import CLOSE_ROI, PLAYER_MENU_ROI, TITLE_ROI, Rect, Screen, center, find, in_roi
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,6 @@ BTN_BOND_CLOSE = (638, 662)
 BTN_PLAYER_MENU = (1201, 101)
 PLAYER_MENU_RING = ((1182, 101), (1220, 101), (1201, 122))
 BTN_SKIP = (1201, 168)
-PLAYER_MENU_ROI: Rect = (1150, 140, 100, 60)
 PLAYER_MENU_GAP_S = 3.0  # 菜单展开要一点时间，点了没反应隔这么久再点
 
 EPISODE_TIMEOUT_S = 180.0  # 一话从点观看到回到话数选择（含下载）

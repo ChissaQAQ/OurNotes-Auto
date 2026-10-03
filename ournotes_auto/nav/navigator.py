@@ -99,7 +99,7 @@ from .song_select import (
     filter_open,
     song_locked,
 )
-from .story import StoryMixin
+from .story import BTN_PLAYER_MENU, BTN_SKIP, BTN_SKIP_CONFIRM, PLAYER_MENU_GAP_S, SKIP_CONFIRM_ROI, StoryMixin
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +180,8 @@ FROZEN_DIFF = 4
 # 保底：认不出的画面一直在动（循环播放的演出等，不算上面的停住）这么久，也当成卡住了。卡住时重启游戏
 # （回到主界面之前最多 MAX_RESTARTS 次，重启次数用完才报错停下）
 UNKNOWN_STUCK_S = 150.0
+# 按上面两条判断卡住的画面（故事播放画面是认出来了，但一直跳不过去也算卡住）
+STUCK_SCREENS = (Screen.UNKNOWN, Screen.RESULT_OTHER, Screen.STORY_PLAYER)
 # LB 用完改为消耗 0 后，这么久之内不再尝试按配置消耗（LB 随时间恢复；玩家升级时回满，看到升级画面就重新尝试）
 LB_EMPTY_RETRY_S = 30 * 60
 # start_live("auto")（挂机不等 LB）：持有 LB 时每局消耗这么多，没有时消耗 0
@@ -267,6 +269,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
         self._unknown_since: float | None = None  # 连续认不出画面的起点（每检查一次游戏进程重新计）
         self._still = None  # (起点, 缩略图)：认不出的画面从什么时候起没变过
         self._stuck_since: float | None = None  # 从什么时候起一直认不出画面（不论在不在动）
+        self._story_menu_at = -PLAYER_MENU_GAP_S  # 上次点故事播放画面右上角菜单的时刻
         self._pause_template = load_template()  # 认演奏画面右上角的暂停按钮（重试前确认还在演奏）
 
     # ------------------------------------------------------------ 基础操作
@@ -296,6 +299,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
         self._frame = frame
         items = self._items = self.ocr.read(frame)
         screen = classify(items)
+        if screen is Screen.UNKNOWN and isinstance(frame, np.ndarray) and self._player_menu_button():
+            screen = Screen.STORY_PLAYER
         if screen != self.last_screen:
             logger.debug("画面：%s", screen)
         self.prev_screen, self.last_screen = self.last_screen, screen
@@ -346,7 +351,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
     def _check_frozen(self, screen: Screen, still_ok: bool) -> None:
         """认不出（或以为还在播动画）的画面 FROZEN_S 内一点没变：重启游戏；不能重启（重启次数用完）时抛
         :class:`ScreenFrozen` 让任务停下，不再反复重试。要能确认游戏还在运行才判断。"""
-        if still_ok or screen not in (Screen.UNKNOWN, Screen.RESULT_OTHER) or self.app_running is None:
+        if still_ok or screen not in STUCK_SCREENS or self.app_running is None:
             self._still = None
             return
         if not isinstance(self._frame, np.ndarray):  # 测试里用画面名代替截图
@@ -373,7 +378,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
     def _check_stuck(self, screen: Screen, items: list[OcrItem], still_ok: bool) -> None:
         """保底：一直认不出画面（画面在动，_check_frozen 不管）UNKNOWN_STUCK_S，就重启游戏。加载、下载中不算；
         不能重启游戏（没有 ``restart_app``）时不管，等导航自己超时。"""
-        if still_ok or screen not in (Screen.UNKNOWN, Screen.RESULT_OTHER) or loading(items) or self.restart_app is None:
+        if still_ok or screen not in STUCK_SCREENS or loading(items) or self.restart_app is None:
             self._stuck_since = None
             return
         now = time.monotonic()
@@ -508,6 +513,18 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
         elif screen is Screen.SKIPPABLE:
             logger.info("跳过演出：%s", " / ".join(it.text.strip() for it in items))
             self.tap(center(skip_button(items)), "跳过")
+        elif screen is Screen.STORY_PLAYER:
+            # 菜单展开要一点时间，点了没反应隔一会儿再点（展开到一半再点会收起来）
+            now = time.monotonic()
+            if now - self._story_menu_at < PLAYER_MENU_GAP_S:
+                return False
+            self._story_menu_at = now
+            self.tap(BTN_PLAYER_MENU, "故事菜单")
+        elif screen is Screen.STORY_MENU:
+            self.tap(BTN_SKIP, "SKIP")
+        elif screen is Screen.STORY_SKIP:
+            logger.info("跳过故事")
+            self.tap(self._button(items, "跳过", BTN_SKIP_CONFIRM, SKIP_CONFIRM_ROI), "跳过")
         elif screen is Screen.OK_POPUP:
             # 没见过的提示：记下文字，同一个弹窗只存一张截图，以后加进识别
             texts = " / ".join(it.text.strip() for it in items)
