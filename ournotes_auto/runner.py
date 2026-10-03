@@ -9,12 +9,13 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from .charts.bdon import BdonClient, ChartNotFound
 from .charts.catalog import Catalog, Song
 from .charts.model import Chart
-from .config import Config
+from .config import Config, parse_daily_time
 from .player.guard import LifeDepleted, PlayInterrupted
 from .player.session import PlayOutcome, PlaySession, SyncFailed
 from .player.sync import SyncTimeout
@@ -32,6 +33,20 @@ LB_POLL_S = 600.0
 LB_POLL_MARGIN_S = 5.0
 # 挂机遇到服务器维护：隔这么久回到标题画面重新登录一次，看开服没有
 MAINTENANCE_POLL_S = 600.0
+# 挂机定时领取：录音室练习没领成时最多隔这么久再领；日常没领全时隔这么久再领，一天最多领这么多次
+STUDIO_RETRY_S = 1800.0
+DAILY_RETRY_S = 600.0
+DAILY_TRIES = 3
+# 挂机每天领取的日常（录音室练习由定时收获领，看故事要等剧情播完，不在这里领）
+IDLE_DAILY_JOBS = ("missions", "pass", "limited", "beginner", "tgw", "gifts")
+
+
+def next_daily_time(now: float, at: tuple[int, int]) -> float:
+    """``now``（Unix 秒）之后下一次到本地时间 ``at``（时, 分）的时刻。"""
+    t = datetime.fromtimestamp(now).replace(hour=at[0], minute=at[1], second=0, microsecond=0)
+    if t.timestamp() <= now:
+        t += timedelta(days=1)
+    return t.timestamp()
 
 
 class NavigationError(RuntimeError):
@@ -198,10 +213,17 @@ class Runner:
         self.source = source or make_source(config, catalog)
         self.stats = RunStats()
         self.clock = time.monotonic  # 定时领取录音室练习用（测试里换成假时钟）
+        self.wall_clock = time.time  # 每天定时领取日常用（按电脑的本地时间）
         self._next_claim = 0.0  # 下次领取录音室练习的时刻：开始时先领一次
         lc = config.loop
-        if (lc.until_lb_empty or lc.wait_lb) and not config.game.lb_cost:
-            raise ValueError(f"{'挂机' if lc.wait_lb else '打到 LB 用完'}需要设置 game.lb_cost 为 1~3")
+        if lc.until_lb_empty and not config.game.lb_cost:
+            raise ValueError("打到 LB 用完需要设置 game.lb_cost 为 1~3")
+        if lc.wait_lb and config.game.lb_cost is None:
+            raise ValueError("挂机需要设置 game.lb_cost 为 0~3")
+        if str(lc.daily_claim_time).strip():
+            parse_daily_time(lc.daily_claim_time)  # 时间格式不对时现在就报错
+        self._next_daily: float | None = None  # 下次领取日常的时刻：开始后第一次到点时领
+        self._daily_tries = 0
 
     def _identify(self):
         label = self.nav.selected_song()
@@ -352,7 +374,8 @@ class Runner:
 
     def _claim_studio(self) -> None:
         """到时间就去领录音室练习（收获，``loop.studio_claim_hours``，开始时先领一次），领完停在主界面，
-        下一局开头的导航会回到乐队确认页。领不成只记录，过一个间隔再领；画面卡住不动、服务器维护时照常停止。"""
+        下一局开头的导航会回到乐队确认页。领不成只记录，过一会儿（最多 STUDIO_RETRY_S）再领；
+        画面卡住不动、服务器维护时照常停止。"""
         hours = self.cfg.loop.studio_claim_hours
         if hours <= 0 or self.clock() < self._next_claim:
             return
@@ -366,24 +389,74 @@ class Runner:
                 return
             logger.error("领取录音室练习：%s", e)
             ok = False
-        self._next_claim = self.clock() + hours * 3600
+        wait = hours * 3600 if ok else min(hours * 3600, STUDIO_RETRY_S)
+        self._next_claim = self.clock() + wait
         if not ok:
-            logger.warning("录音室练习没领成，%g 小时后再领", hours)
+            logger.warning("录音室练习没领成，%.0f 分钟后再领", wait / 60)
+
+    @property
+    def _daily_at(self) -> tuple[int, int] | None:
+        """每天领取日常的时间（时, 分），不领时为 None。"""
+        text = self.cfg.loop.daily_claim_time
+        return parse_daily_time(text) if str(text).strip() else None
+
+    def _daily_due(self) -> float:
+        """下次领取日常的时刻（Unix 秒）。"""
+        if self._next_daily is None:
+            self._next_daily = next_daily_time(self.wall_clock(), self._daily_at)
+        return self._next_daily
+
+    def _claim_daily(self) -> None:
+        """挂机每天到 ``loop.daily_claim_time`` 回主界面领一次日常（任务列表里的「领取日常」只在挂机前跑一次，
+        挂机跨天后就领不到了；游戏 23:00 日期变更，默认 22:30 领）。有没领成的隔 DAILY_RETRY_S 再领一遍，
+        一天最多 DAILY_TRIES 次；画面卡住不动、服务器维护时照常停止。"""
+        at = self._daily_at
+        if at is None or self.wall_clock() < self._daily_due():
+            return
+        self._daily_tries += 1
+        logger.info("领取日常（每天 %d:%02d）", *at)
+        try:
+            ok = not self.nav.run_daily(IDLE_DAILY_JOBS)  # 领取时出的错 run_daily 自己记了
+        except (ScreenFrozen, ServerMaintenance):
+            raise
+        except (NavigationError, TimeoutError) as e:
+            if self.stop.is_set():
+                return
+            logger.error("领取日常：%s", e)
+            ok = False
+        now = self.wall_clock()
+        if not ok and self._daily_tries < DAILY_TRIES:
+            self._next_daily = now + DAILY_RETRY_S
+            logger.warning("日常没领全，%.0f 分钟后再领一遍", DAILY_RETRY_S / 60)
+            return
+        if not ok:
+            logger.warning("日常领了 %d 遍还没领全，明天再领", self._daily_tries)
+        self._daily_tries = 0
+        self._next_daily = next_daily_time(now, at)
+
+    def _claim_timed(self) -> None:
+        """挂机的定时领取：录音室练习、每天的日常（到时间才领）。"""
+        self._claim_studio()
+        if not self.stop.is_set():
+            self._claim_daily()
 
     def _claim_wait(self) -> float:
-        """距下次领取录音室练习还有多少秒（不领时为无穷大）。"""
-        if self.cfg.loop.studio_claim_hours <= 0:
-            return float("inf")
-        return max(0.0, self._next_claim - self.clock())
+        """距下次定时领取还有多少秒（都不领时为无穷大）。"""
+        wait = float("inf")
+        if self.cfg.loop.studio_claim_hours > 0:
+            wait = max(0.0, self._next_claim - self.clock())
+        if self._daily_at is not None:
+            wait = min(wait, max(0.0, self._daily_due() - self.wall_clock()))
+        return wait
 
     def _wait_lb(self) -> None:
         """挂机：停在乐队确认页等 LB 恢复到每局消耗数（LB 少于它时每局奖励也少）。
         每次醒来都重新进入乐队确认页：等待期间游戏可能日期变更、回到标题画面重新登录；
-        到了领取录音室练习的时间也会醒来去领。"""
+        到了定时领取录音室练习、日常的时间也会醒来去领。"""
         need = self.cfg.game.lb_cost
         last: int | None = -1
         while True:
-            self._claim_studio()
+            self._claim_timed()
             if self.stop.is_set():
                 raise NavigationError("已停止")
             self.nav.ensure_band_confirm(self.source.difficulty)
@@ -456,7 +529,7 @@ class Runner:
         while not self.stop.is_set() and (lc.max_plays <= 0 or self.stats.plays < lc.max_plays):
             try:
                 if not wait_lb:
-                    self._claim_studio()  # 在换歌之前领：领完从主界面回来再选歌
+                    self._claim_timed()  # 在换歌之前领：领完从主界面回来再选歌
                     if self.stop.is_set() or not self._advance(first) or self.stop.is_set():
                         break
                 first = False

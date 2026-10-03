@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from ..config import parse_daily_time
 from ..device.mumu_ipc import find_dll
 from ..sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
 
@@ -173,6 +174,18 @@ def _studio_claim(attach: Mapping[str, Any]) -> str:
     return str(_int(attach, "studio_claim_hours", 1, 12))
 
 
+def _daily_claim(attach: Mapping[str, Any]) -> str:
+    """挂机的 ``daily_claim``（开关）、``daily_claim_time``（每天领取日常的时间 时:分）；资源是旧版没有这两项时不领。"""
+    if not flag(attach, "daily_claim"):
+        return ""
+    raw = str(_get(attach, "daily_claim_time"))
+    try:
+        hour, minute = parse_daily_time(raw)
+    except ValueError:
+        raise ParamError(f"参数 daily_claim_time 应为 时:分（如 22:30）：{raw!r}") from None
+    return f"{hour:02d}:{minute:02d}"
+
+
 def _ap_settings(attach: Mapping[str, Any]) -> dict[str, str]:
     chosen = [d for d in DIFFICULTIES if _bool(attach, f"ap_{d}")]  # DIFFICULTIES 从低到高
     if not chosen:
@@ -239,9 +252,10 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     共用 attach 键：``max_plays`` ``touch`` 和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
     重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
     ``song_list``）；重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
-    清体力 / 挂机另有 ``clear_lb_cost``（1~3）；AP补完另有 ``ap_expert`` 等四个难度开关、``ap_order``、
-    ``ap_max_attempts`` 和 ``lb_cost``。四个任务都有 ``lb_refill`` ``lb_refill_count``（LB 不足时用道具补充）。
-    挂机另有 ``studio_claim`` ``studio_claim_hours``（定时领取录音室练习），其他任务不领。
+    清体力 / 挂机另有 ``clear_lb_cost``（清体力 1~3，挂机 0~3：0 时不消耗 LB、一直打）；AP补完另有 ``ap_expert`` 等
+    四个难度开关、``ap_order``、``ap_max_attempts`` 和 ``lb_cost``。四个任务都有 ``lb_refill`` ``lb_refill_count``
+    （LB 不足时用道具补充）。挂机另有 ``studio_claim`` ``studio_claim_hours``（定时领取录音室练习）和
+    ``daily_claim`` ``daily_claim_time``（每天定时领取日常），其他任务不领。
     挑战演出只有 ``challenge_song_mode``（current / rotate / ap_first）、``difficulty`` 和 ``challenge_cost``
     （``keep`` 或 200/400/800/1600），不用 LB 相关的选项。
     """
@@ -252,6 +266,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.max_plays": str(_int(attach, "max_plays", 0)),
         "loop.challenge": "true" if task == "challenge" else "false",
         "loop.studio_claim_hours": _studio_claim(attach) if task == "idle" else "0",
+        "loop.daily_claim_time": _daily_claim(attach) if task == "idle" else "",
         **_humanize(attach),
     }
     if task == "ap":
@@ -271,8 +286,9 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
         sets["game.lb_cost"] = _lb_cost(attach)
         sets["loop.until_lb_empty"] = "false"
     else:
-        sets["game.lb_cost"] = str(_int(attach, "clear_lb_cost", 1, 3))
-        sets["loop.until_lb_empty"] = "true"
+        cost = _int(attach, "clear_lb_cost", 0 if task == "idle" else 1, 3)
+        sets["game.lb_cost"] = str(cost)
+        sets["loop.until_lb_empty"] = "true" if cost else "false"  # 挂机消耗 0 时用不完 LB，一直打
     sets.update(_lb_refill(attach, sets["game.lb_cost"]))
     sets["loop.wait_lb"] = "true" if task == "idle" else "false"
     return sets

@@ -1,6 +1,7 @@
 """用假对象验证全自动循环的编排逻辑。"""
 
 import threading
+from datetime import datetime
 
 import pytest
 
@@ -13,7 +14,7 @@ from ournotes_auto.player.session import PlayOutcome, SyncFailed
 from ournotes_auto.player.sync import SyncResult
 from ournotes_auto.records import RecordStore
 from ournotes_auto.result_reader import ResultCounts
-from ournotes_auto.runner import Runner, SongLabel
+from ournotes_auto.runner import IDLE_DAILY_JOBS, Runner, SongLabel, next_daily_time
 
 
 class FakeNav:
@@ -305,6 +306,12 @@ def test_until_lb_empty_needs_lb_cost(tmp_path, flag):
     setattr(cfg.loop, flag, True)
     with pytest.raises(ValueError):
         Runner(cfg, FakeNav(), FakeSession(), FakeClient(), Catalog({}), RecordStore(tmp_path))
+    cfg.game.lb_cost = 0  # 挂机可以消耗 0（一直打），打到 LB 用完不行
+    if flag == "wait_lb":
+        Runner(cfg, FakeNav(), FakeSession(), FakeClient(), Catalog({}), RecordStore(tmp_path))
+    else:
+        with pytest.raises(ValueError):
+            Runner(cfg, FakeNav(), FakeSession(), FakeClient(), Catalog({}), RecordStore(tmp_path))
 
 
 class FakeStop(threading.Event):
@@ -423,7 +430,7 @@ def test_idle_claims_studio_on_schedule(tmp_path):
 
 
 def test_studio_claim_failure_keeps_playing(tmp_path):
-    """领不成（回不到主界面、领取出错）只记录，过一个间隔再领，不算演奏失败。"""
+    """领不成（回不到主界面、领取出错）只记录，过一会儿再领，不算演奏失败。"""
     from ournotes_auto.runner import NavigationError
 
     runner, nav, store = make(tmp_path)
@@ -468,6 +475,119 @@ def test_studio_claim_stopped_or_frozen(tmp_path, frozen):
     stats = runner.run()
     assert stats.plays == 0 and stats.failures == int(frozen)
     assert not any(c.startswith("start") for c in nav.calls)
+
+
+def test_studio_claim_retries_sooner(tmp_path):
+    """录音室练习没领成时不等满间隔，最多 30 分钟后再领；领成了按间隔。"""
+    from ournotes_auto.runner import STUDIO_RETRY_S
+
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.studio_claim_hours = 4
+    runner.clock = lambda: 100.0
+    nav.run_daily = lambda jobs: ["录音室练习"]
+    runner._claim_studio()
+    assert runner._next_claim == 100 + STUDIO_RETRY_S == 1900
+    runner.clock = lambda: 1900.0
+    nav.run_daily = lambda jobs: []
+    runner._claim_studio()
+    assert runner._next_claim == 1900 + 4 * 3600
+    runner.cfg.loop.studio_claim_hours = 0.25  # 间隔本来就短于 30 分钟时按间隔
+    runner._next_claim = 0.0
+    nav.run_daily = lambda jobs: ["录音室练习"]
+    runner._claim_studio()
+    assert runner._next_claim == 1900 + 900
+
+
+def at(day, hour, minute):
+    """2026-10-<day> hour:minute（本地时间）的 Unix 秒。"""
+    return datetime(2026, 10, day, hour, minute).timestamp()
+
+
+def test_next_daily_time():
+    assert next_daily_time(at(3, 12, 0), (22, 30)) == at(3, 22, 30)
+    assert next_daily_time(at(3, 22, 29), (22, 30)) == at(3, 22, 30)
+    assert next_daily_time(at(3, 22, 30), (22, 30)) == at(4, 22, 30)  # 刚到点（刚领过）算明天
+    assert next_daily_time(at(3, 23, 10), (22, 30)) == at(4, 22, 30)
+    assert next_daily_time(at(3, 23, 10), (0, 5)) == at(4, 0, 5)
+
+
+def test_idle_claims_daily_while_waiting_lb(tmp_path):
+    """每天领取日常：开始时不领，等第一次到点；等 LB 时到了领取时间也醒来去领，领完回乐队确认页接着等。"""
+    runner, nav, starts, statuses = idle(tmp_path, [(0, 1000), (3, None), (3, None)])
+    runner.cfg.loop.daily_claim_time = "22:30"
+    runner.wall_clock = lambda: at(3, 22, 25) + runner.stop.now
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 0 and not statuses
+    assert runner.stop.waits == [300]  # 本该睡到 LB 恢复（1005s），先醒来领
+    daily = "daily:" + ",".join(IDLE_DAILY_JOBS)
+    waiting = ["ensure:expert", "lb", daily, "ensure:expert", "lb", "lb_check"]
+    expected = ["ensure:expert", "start", "next:random", "ensure:expert", "start", *waiting]
+    expected += ["ensure:expert", "start", "next:random", "ensure:expert", "start"]
+    calls = [c for c in nav.calls if c not in ("result", "leave", "clear_status")]
+    assert calls[: len(expected)] == expected
+    assert nav.calls.count(daily) == 1 and runner._next_daily == at(4, 22, 30)
+    assert "studio" not in IDLE_DAILY_JOBS and "story" not in IDLE_DAILY_JOBS
+
+
+def test_idle_lb_cost_zero_plays_on(tmp_path):
+    """挂机每局消耗 0：不会用完 LB，不等恢复，一直打；跨过领取时间时在两局之间（换歌前）领日常。"""
+    runner, nav, store = make(tmp_path, mode="random")
+    runner.cfg.loop.max_plays = 4
+    runner.cfg.loop.wait_lb = True
+    runner.cfg.game.lb_cost = 0
+    runner.cfg.loop.daily_claim_time = "22:30"
+    runner.stop = FakeStop()
+    now = [at(3, 21, 0)]
+    runner.wall_clock = lambda: now[0]
+
+    def leave_result():
+        nav.calls.append("leave")
+        now[0] += 3600  # 每局之间过一小时
+
+    nav.leave_result = leave_result
+    stats = runner.run()
+    assert stats.plays == 4 and stats.failures == 0
+    assert runner.stop.waits == [] and "lb" not in nav.calls
+    calls = [c for c in nav.calls if c in ("start:stop", "leave") or c.startswith("daily")]
+    daily = "daily:" + ",".join(IDLE_DAILY_JOBS)
+    assert calls == ["start:stop", "leave"] * 2 + [daily] + ["start:stop", "leave"] * 2
+    assert nav.calls[nav.calls.index(daily) + 1] == "next:random"
+
+
+def test_daily_claim_retries_then_waits_for_tomorrow(tmp_path):
+    """日常没领全（或领取出错）隔 10 分钟再领一遍，一天最多 3 遍；电脑睡过几天也只补领一次。"""
+    from ournotes_auto.runner import DAILY_RETRY_S, NavigationError
+
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.daily_claim_time = "22:30"
+    now = [at(3, 12, 0)]
+    runner.wall_clock = lambda: now[0]
+    outcomes = [["礼物盒"], NavigationError("回不到主界面"), ["任务"], [], []]
+    jobs = []
+
+    def run_daily(chosen):
+        jobs.append(tuple(chosen))
+        out = outcomes.pop(0)
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+    nav.run_daily = run_daily
+    runner._claim_daily()
+    assert jobs == [] and runner._claim_wait() == 10.5 * 3600
+    for i, minute in enumerate((30, 40, 50)):
+        now[0] = at(3, 22, minute)
+        runner._claim_daily()
+        assert len(jobs) == i + 1
+    assert DAILY_RETRY_S == 600 and runner._next_daily == at(4, 22, 30)  # 领了 3 遍还没领全：明天再领
+    now[0] = at(4, 22, 31)
+    runner._claim_daily()
+    assert len(jobs) == 4 and runner._next_daily == at(5, 22, 30)
+    now[0] = at(8, 9, 0)  # 电脑睡了几天
+    runner._claim_daily()
+    runner._claim_daily()
+    assert len(jobs) == 5 and runner._next_daily == at(8, 22, 30) and not outcomes
+    assert set(jobs) == {IDLE_DAILY_JOBS}
 
 
 class ApSource:

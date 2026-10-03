@@ -6,7 +6,7 @@ import logging
 import time
 from pathlib import Path
 
-from .config import Config
+from .config import Config, parse_daily_time
 from .context import SetupError, open_context
 from .context import open_device as _device
 from .context import open_ocr as _ocr
@@ -184,14 +184,22 @@ def check_run_config(cfg: Config) -> None:
         raise SetupError(f"每局 LB 消耗应为 0~3：{cfg.game.lb_cost}")
     if cfg.loop.until_lb_empty and not cfg.game.lb_cost:
         raise SetupError("打到 LB 用完需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
-    if cfg.loop.wait_lb and not cfg.game.lb_cost:
-        raise SetupError("挂机需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
+    if cfg.loop.wait_lb and cfg.game.lb_cost is None:
+        raise SetupError("挂机需要把每局 LB 消耗设为 0~3（--lb-cost 或 game.lb_cost；0 为不消耗、一直打）")
     if cfg.game.lb_refill and not cfg.game.lb_cost:
         raise SetupError("LB 不足时用道具补充需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
     if cfg.game.lb_refill_limit < 0:
         raise SetupError(f"用道具补充 LB 的上限应为 0（不限）或正整数：{cfg.game.lb_refill_limit}")
     if cfg.loop.studio_claim_hours < 0:
         raise SetupError(f"领取录音室练习的间隔应为 0（不领）或正数（小时）：{cfg.loop.studio_claim_hours:g}")
+    claim = cfg.loop.daily_claim_time
+    if not isinstance(claim, str):  # 配置文件里不加引号的 22:30 会被 YAML 读成六十进制的整数
+        raise SetupError(f'每天领取日常的时间要加引号，如 daily_claim_time: "22:30"：{claim!r}')
+    if claim.strip():
+        try:
+            parse_daily_time(claim)
+        except ValueError as e:
+            raise SetupError(f"每天领取日常的{e}") from None
     touch = cfg.play.touch
     if not 0 <= touch.great_ratio <= MAX_GREAT_RATIO:
         raise SetupError(f"故意打 GREAT 的比例应在 0~{MAX_GREAT_RATIO}：{touch.great_ratio}")
@@ -232,6 +240,8 @@ def cmd_run(cfg: Config, args) -> int:
         cfg.loop.wait_lb = True
     if args.claim_studio is not None:
         cfg.loop.studio_claim_hours = args.claim_studio
+    if args.claim_daily is not None:
+        cfg.loop.daily_claim_time = args.claim_daily
     if args.ap_difficulties:
         cfg.loop.ap_difficulties = args.ap_difficulties
     if args.ap_attempts is not None:
@@ -431,13 +441,21 @@ def register(sub) -> None:
     )
     sp.add_argument("--until-lb-empty", action="store_true", help="打到 LB 用完为止（清体力）")
     sp.add_argument(
-        "--wait-lb", action="store_true", help="挂机：LB 用完后在乐队确认页等它恢复到每局消耗数再继续，一直运行"
+        "--wait-lb",
+        action="store_true",
+        help="挂机：LB 用完后在乐队确认页等它恢复到每局消耗数再继续，一直运行（每局消耗 0 时不用等，一直打）",
     )
     sp.add_argument(
         "--claim-studio",
         type=float,
         metavar="H",
         help="覆盖 loop.studio_claim_hours：每隔 H 小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领",
+    )
+    sp.add_argument(
+        "--claim-daily",
+        metavar="HH:MM",
+        help="覆盖 loop.daily_claim_time：每天到这个时间（电脑的本地时间）回主界面领一次日常（任务、礼物盒等）；"
+        "空字符串为不领",
     )
     sp.add_argument("--ap-difficulties", metavar="D,D", help="覆盖 loop.ap_difficulties（如 expert,hard）")
     sp.add_argument("--ap-attempts", type=int, help="覆盖 loop.ap_max_attempts（AP 补完每首最多打几次）")

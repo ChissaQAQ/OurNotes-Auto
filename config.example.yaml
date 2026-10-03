@@ -41,7 +41,10 @@ loop:
   challenge: false           # true：打挑战演出（部分活动期间开放，消耗挑战pt），打到 CP 不够一局为止
   until_lb_empty: false      # true：打到 LB 用完为止（清体力，需要 game.lb_cost 为 1~3）
   wait_lb: false             # true：挂机，LB 用完后停在乐队确认页等它恢复到 game.lb_cost 个再接着打，一直运行
+                             # （game.lb_cost 为 0 时不消耗 LB，不用等，一直打）
   studio_claim_hours: 0      # 每隔这么多小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领（最多累计 12 小时）
+  daily_claim_time: ""       # 每天到这个时间（电脑的本地时间，要加引号，如 "22:30"）回主界面领一次任务、礼物盒等日常；
+                             # 留空不领。游戏每天 23:00 日期变更，挂机跨天时用
   max_failures: 5            # 连续失败这么多次后停止
   sync_retries: 2            # 首音符同步失败、演奏中生命值归零时暂停、点「重试」从头再来的次数（每局），用完了等歌曲放完；0 为不重试
   ap_difficulties: expert,hard,normal,easy  # AP 补完依次处理的难度
