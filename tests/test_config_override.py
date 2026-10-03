@@ -86,6 +86,8 @@ def test_check_run_config():
     cfg.loop.wait_lb = True
     with pytest.raises(SetupError, match="挂机"):
         check_run_config(cfg)
+    cfg.game.lb_cost = 0  # 挂机消耗 0：一直打
+    check_run_config(cfg)
     cfg.game.lb_cost = 1
     check_run_config(cfg)
     cfg.loop.studio_claim_hours = -1
@@ -93,6 +95,16 @@ def test_check_run_config():
         check_run_config(cfg)
     cfg.loop.studio_claim_hours = 0.5
     check_run_config(cfg)
+    for text in ("22:30", "7:05", " 23：59 ", ""):
+        cfg.loop.daily_claim_time = text
+        check_run_config(cfg)
+    for text in ("24:00", "22:60", "2230", "22:3"):
+        cfg.loop.daily_claim_time = text
+        with pytest.raises(SetupError, match="领取日常"):
+            check_run_config(cfg)
+    cfg.loop.daily_claim_time = 1350  # 配置文件里不加引号的 22:30
+    with pytest.raises(SetupError, match="引号"):
+        check_run_config(cfg)
 
 
 def test_check_run_config_challenge():

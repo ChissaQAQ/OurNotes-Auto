@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 import typing
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -181,11 +182,15 @@ class LoopConfig:
     # 打挑战演出（部分活动期间开放，消耗挑战pt，见 game.challenge_cost）而不是自由演出，打到 CP 不够一局为止
     challenge: bool = False
     until_lb_empty: bool = False  # 打到 LB 用完为止（需要 game.lb_cost 为 1~3；用完后不再改为消耗 0 继续）
-    # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 1~3）
+    # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 0~3；
+    # 0 时不消耗 LB，不用等，一直打）
     wait_lb: bool = False
     # 每隔这么多小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领。
     # 录音室练习最多累计 12 小时，超过后效率降到 30%，挂机等长时间运行时用
     studio_claim_hours: float = 0.0
+    # 每天到这个时间（电脑的本地时间，时:分，如 "22:30"）回主界面领一次日常（任务、任务通行证、限定任务、新手任务、
+    # T.G.W CARD、礼物盒），开始后第一次到点时领；留空不领。游戏每天 23:00 日期变更，挂机等跨天运行时用
+    daily_claim_time: str = ""
     max_failures: int = 5  # 连续失败次数上限
     # 首音符同步失败、演奏中生命值归零时暂停、点「重试」让这首歌从头开始的次数（每局）；用完了就等歌曲放完。0 为不重试
     sync_retries: int = 2
@@ -195,6 +200,14 @@ class LoopConfig:
     ap_first_difficulties: str = ""
     ap_max_attempts: int = 3  # AP 补完 / ap_first 时同一首歌最多打几次
     ocr_model: str = ""  # 留空使用 resource/model/ocr 下的默认模型
+
+
+def parse_daily_time(text: str) -> tuple[int, int]:
+    """解析 ``loop.daily_claim_time`` 这样的「时:分」（24 小时制，如 22:30）→ (时, 分)，格式不对时抛 ValueError。"""
+    m = re.fullmatch(r"\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*", str(text))
+    if not m or int(m[1]) > 23 or int(m[2]) > 59:
+        raise ValueError(f"时间应为 时:分（如 22:30）：{text!r}")
+    return int(m[1]), int(m[2])
 
 
 @dataclass

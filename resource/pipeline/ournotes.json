@@ -11,6 +11,8 @@
             "lb_refill_count": 0,
             "studio_claim": true,
             "studio_claim_hours": 4,
+            "daily_claim": true,
+            "daily_claim_time": "22:30",
             "touch": "minitouch",
             "watch_combo": false,
             "debug_log": false,

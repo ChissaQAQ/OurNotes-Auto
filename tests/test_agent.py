@@ -22,6 +22,8 @@ ATTACH = {
     "lb_refill_count": 0,
     "studio_claim": True,
     "studio_claim_hours": 4,
+    "daily_claim": True,
+    "daily_claim_time": "22:30",
     "touch": "minitouch",
     "watch_combo": False,
     "debug_log": False,
@@ -118,6 +120,7 @@ def test_run_settings_repeat():
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
         "loop.studio_claim_hours": "0",
+        "loop.daily_claim_time": "",
         **HUMAN_OFF,
     }
     sets = run_settings("repeat", {**ATTACH, "lb_cost": 3, "max_plays": "20", "difficulty": "HARD"})
@@ -141,13 +144,37 @@ def test_run_settings_clear_lb():
 
 
 def test_run_settings_idle():
-    """挂机和清体力一样打到 LB 用完，只是之后等它恢复，并定时领取录音室练习。"""
+    """挂机和清体力一样打到 LB 用完，只是之后等它恢复，并定时领取录音室练习、每天领取日常。"""
     attach = {**ATTACH, "clear_lb_cost": 2, "song_mode": "ap_first", "difficulty": "high_first"}
     sets = run_settings("idle", attach)
-    assert sets == {**run_settings("clear_lb", attach), "loop.wait_lb": "true", "loop.studio_claim_hours": "4"}
+    assert sets == {
+        **run_settings("clear_lb", attach),
+        "loop.wait_lb": "true",
+        "loop.studio_claim_hours": "4",
+        "loop.daily_claim_time": "22:30",
+    }
     assert sets["game.lb_cost"] == "2" and sets["loop.until_lb_empty"] == "true"
+    # 挂机可以每局消耗 0：用不完 LB，一直打（清体力不行）
+    sets = run_settings("idle", {**ATTACH, "clear_lb_cost": 0})
+    assert sets["game.lb_cost"] == "0" and sets["loop.until_lb_empty"] == "false" and sets["loop.wait_lb"] == "true"
+    with pytest.raises(ParamError, match="1~3"):  # 消耗 0 用不着补充
+        run_settings("idle", {**ATTACH, "clear_lb_cost": 0, "lb_refill": True})
     with pytest.raises(ParamError, match="clear_lb_cost"):
-        run_settings("idle", {**ATTACH, "clear_lb_cost": 0})
+        run_settings("idle", {**ATTACH, "clear_lb_cost": 4})
+
+
+def test_run_settings_daily_claim():
+    """「每天领取日常」只有挂机有；关掉或旧资源没有这两项时不领，时间统一成 HH:MM。"""
+    assert run_settings("idle", {**ATTACH, "daily_claim_time": "7:05"})["loop.daily_claim_time"] == "07:05"
+    assert run_settings("idle", {**ATTACH, "daily_claim_time": " 23：59 "})["loop.daily_claim_time"] == "23:59"
+    assert run_settings("idle", {**ATTACH, "daily_claim": "No"})["loop.daily_claim_time"] == ""
+    old = {k: v for k, v in ATTACH.items() if not k.startswith("daily_claim")}
+    assert run_settings("idle", old)["loop.daily_claim_time"] == ""
+    for task in ("repeat", "clear_lb", "ap", "challenge"):
+        assert run_settings(task, ATTACH)["loop.daily_claim_time"] == "", task
+    for text in ("24:00", "22:60", "2230", "", "{time}"):
+        with pytest.raises(ParamError, match="daily_claim_time"):
+            run_settings("idle", {**ATTACH, "daily_claim_time": text})
 
 
 def test_run_settings_studio_claim():
@@ -184,6 +211,7 @@ def test_run_settings_ap():
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
         "loop.studio_claim_hours": "0",
+        "loop.daily_claim_time": "",
         **HUMAN_OFF,
     }
     sets = run_settings(
@@ -206,6 +234,7 @@ def test_run_settings_challenge():
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
         "loop.studio_claim_hours": "0",
+        "loop.daily_claim_time": "",
         **HUMAN_OFF,
     }
     attach = {**ATTACH, "challenge_song_mode": "current", "challenge_cost": "1600", "difficulty": "high_first"}
@@ -268,6 +297,7 @@ def test_run_settings_humanize():
         ("repeat", {"max_plays": True}, "max_plays"),
         ("repeat", {"lb_cost": 4}, "lb_cost"),
         ("clear_lb", {"clear_lb_cost": 0}, "clear_lb_cost"),
+        ("idle", {"clear_lb_cost": -1}, "clear_lb_cost"),
         ("repeat", {"human_great": 30}, "human_great"),
         ("repeat", {"human_timing": 25}, "human_timing"),
         ("ap", {"human_position": "maybe"}, "human_position"),
@@ -369,8 +399,19 @@ def test_worker_args_parse_back():
         apply_override(cfg, key, value)
     check_run_config(cfg)
     assert cfg.game.lb_cost == 3 and cfg.loop.until_lb_empty and cfg.loop.wait_lb
-    assert cfg.loop.studio_claim_hours == 4.0
+    assert cfg.loop.studio_claim_hours == 4.0 and cfg.loop.daily_claim_time == "22:30"
     assert build_parser().parse_args(["run", "--claim-studio", "2.5"]).claim_studio == 2.5
+    assert build_parser().parse_args(["run", "--claim-daily", "6:00"]).claim_daily == "6:00"
+
+    # 挂机每局消耗 0：不打到 LB 用完，一直打；不领日常时传空字符串
+    args = build_parser().parse_args(worker_args("idle", {**ATTACH, "clear_lb_cost": 0, "daily_claim": False}, device))
+    cfg = Config()
+    for item in args.set:
+        key, _, value = item.partition("=")
+        apply_override(cfg, key, value)
+    check_run_config(cfg)
+    assert cfg.game.lb_cost == 0 and not cfg.loop.until_lb_empty and cfg.loop.wait_lb
+    assert cfg.loop.daily_claim_time == ""
 
     args = build_parser().parse_args(worker_args("ap", {**ATTACH, "ap_normal": False}, device))
     cfg = Config()
