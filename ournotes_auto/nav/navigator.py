@@ -157,6 +157,7 @@ BTN_NOTIFY_CLOSE = (822, 171)  # 「开启消息通知」弹窗右上角的 ⓧ
 TAP_LOGIN_BONUS = (640, 650)  # 登录奖励演出：点下方空白处继续
 BTN_REWARD_OK = (640, 659)  # 获得奖励 / GRADE UP 弹窗底部的 OK
 BTN_UNLOCK_CLOSE = (640, 570)  # 乐曲解锁 / 故事解锁：关闭
+TAP_NEW_SONG = (640, 627)  # 追加乐曲演出：TAP TO NEXT
 TITLE_TAP_GAP_S = 3.0
 # 标题画面出现 TAP TO START 后点了这么久还没反应就重启游戏；回到主界面之前最多重启几次
 TITLE_STUCK_S = 60.0
@@ -405,7 +406,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
             what = find(items, "现在可以选择") or find(items, "已解锁")
             logger.info("解锁：%s", what.text.strip() if what else "（没认出内容）")
             self.tap(self._button(items, "关闭", BTN_UNLOCK_CLOSE, UNLOCK_CLOSE_ROI), "关闭")
-        elif screen in (Screen.RESULT, Screen.RESULT_REWARD, Screen.RESULT_EXP_NEXT):
+        elif screen is Screen.NEW_SONG:
+            self.tap(TAP_NEW_SONG, "TAP TO NEXT")
+        elif screen in (Screen.RESULT,Screen.RESULT_REWARD, Screen.RESULT_EXP_NEXT):
             self.tap(self._button(items, "下一步", BTN_NEXT), "下一步")
         elif screen is Screen.RESULT_OTHER and (it := find(items, "下一步", NEXT_ROI, exact=True)):
             # 没见过的结算页（活动可能多出几页）。读判定数时不经过这里，所以看到「下一步」就点

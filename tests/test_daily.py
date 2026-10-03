@@ -402,6 +402,16 @@ def test_go_home_cancels_leftover_gift_confirm(clock):
     assert len(taps) == 1 and math.dist(taps[0], (496, 570)) < 5
 
 
+def test_go_home_through_new_song(clock):
+    """回主界面途中出现「追加翻唱乐曲！」演出：点 TAP TO NEXT。"""
+    routes = {"song_select": [((164, 40), "new_song")], "new_song": [((640, 627), "home")]}
+    game = DailyGame("song_select", routes=routes)
+    nav = daily_nav(game, clock)
+    nav.go_home()
+    assert game.state == "home"
+    assert [s for s, _ in game.taps] == ["song_select", "new_song"]
+
+
 def test_failed_job_does_not_stop_others(clock):
     """某一项出错（这里是切换分页后页面不对）时记下来，接着做后面的项目。"""
     routes = {"daily_missions": [((133, 206), "daily_gifts_empty"), ((497, 655), "home")]}
