@@ -22,6 +22,7 @@ from ournotes_auto.nav.screens import (
     lb_held,
     lb_preview,
     lb_recover_amount,
+    loading,
     maintenance_period,
     note_speed,
     parse_difficulty,
@@ -106,6 +107,8 @@ def load(name: str) -> list[OcrItem]:
         ("bond_story_unlock", Screen.UNLOCK),  # 故事解锁：羁绊故事（结算后羁绊升级）
         ("home_unlock", Screen.UNLOCK),  # 沉浸式主页解锁（领通行证奖励后回主界面）
         ("new_song", Screen.NEW_SONG),  # 回主界面时的「追加翻唱乐曲！」演出
+        ("birthday", Screen.SKIPPABLE),  # 重新登录后的角色生日演出，右上角「跳过」
+        ("story_skip", Screen.UNKNOWN),  # 「要跳过故事吗？」中间的「跳过」不算
         ("daily_missions", Screen.UNKNOWN),  # 任务页左侧的「乐曲解锁」分页不算
         ("notice", Screen.POPUP),  # 登录后的公告
     ],
@@ -120,6 +123,12 @@ def test_ok_popup_with_risky_text_is_not_tapped(extra):
     items = [OcrItem(560, 300, 160, 30, "要继续吗？"), OcrItem(616, 645, 48, 31, "OK"), OcrItem(400, 645, 80, 31, extra)]
     assert classify(items) is Screen.UNKNOWN
     assert classify(items[:2]) is Screen.OK_POPUP
+
+
+def test_loading():
+    assert loading([OcrItem(1000, 650, 200, 30, "NOW LOADING")])
+    assert loading([OcrItem(560, 400, 160, 30, "下载中…45%")])
+    assert not loading(load("birthday"))
 
 
 def test_title_startable():
