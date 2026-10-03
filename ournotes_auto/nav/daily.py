@@ -3,6 +3,7 @@
 - 入口都在主界面。右侧一排从上到下是：礼物盒、任务、PASS（任务通行证）、交换所、录音室练习、消息。
   左侧一列是：新手任务、好友邀请、限定任务。底部是招募、商店。左侧的入口随活动增减，位置可能变化，所以打开后都要核对标题。
 - 任务、礼物盒、通行证任务是弹窗，左下角有「关闭」。其余是整页，左上角有主页按钮（房子图标）。
+- 任务通行证可能同时有几个（左侧列表），通行证任务也是每个通行证各一份，逐个选中来领。
 - 「一键领取」没有可领的奖励时是灰的，亮着才点。
   - 录音室练习的一键领取总是亮的，没有奖励时提示「没有可领取的奖励。」。
 - 领取后依次弹出的「获得奖励」只点 OK（T.G.W CARD 积分的只有「关闭」）；练习等级提升点空白处继续；其他弹窗只点「关闭」「取消」。
@@ -87,6 +88,12 @@ _DAY_TAB = re.compile(r"\d+天")
 # 任务通行证页右上角的「通行证任务」（左边 pt 旁的「+」是购买，不要点）
 BTN_PASS_MISSIONS = (1165, 40)
 PASS_MISSIONS_ROI: Rect = (1080, 10, 190, 60)
+# 任务通行证页左侧的通行证列表（活动通行证和赛季通行证可能同时有），每个横幅下面写着截止时间。
+# 选中的横幅放大、右移，截止时间的中心 x≈178，没选中的 x≈138；横幅图片在截止时间上方约 55px
+PASS_LIST_ROI: Rect = (0, 80, 300, 640)
+PASS_SELECTED_X = 158
+PASS_BANNER_DY = -55
+_PASS_DATE = re.compile(r"\d{4}/\d{1,2}/\d{1,2}")
 # 商店左下角的 T.G.W CARD 入口；左侧分页从上到下是星钻、礼包、T.G.W CARD 专享商品目录、交织的乐章通行证
 BTN_TGW = (113, 555)
 TGW_ROI: Rect = (0, 480, 240, 140)
@@ -222,6 +229,17 @@ def day_tabs(items: list[OcrItem]) -> list[tuple[str, tuple[int, int]]]:
     return sorted(tabs, key=lambda t: t[1][1])
 
 
+def pass_banners(items: list[OcrItem]) -> list[tuple[str, tuple[int, int], bool]]:
+    """任务通行证页左侧的通行证（从上到下）：(截止日期, 横幅的点击位置, 是否选中)。"""
+    banners = []
+    for it in items:
+        m = _PASS_DATE.match(_compact(it.text))
+        if m and in_roi(it, PASS_LIST_ROI):
+            x, y = center(it)
+            banners.append((m.group(), (x, y + PASS_BANNER_DY), x >= PASS_SELECTED_X))
+    return sorted(banners, key=lambda b: b[1][1])
+
+
 class DailyMixin:
     """:class:`~ournotes_auto.nav.navigator.GameNavigator` 的日常领取。
 
@@ -264,17 +282,45 @@ class DailyMixin:
             self._claim_tabs("任务", MISSION_TABS)
 
     def _daily_pass(self) -> None:
-        """通行证任务（弹窗）领完 pt 再领任务通行证的奖励：pt 可能刚好让通行证升级。"""
+        """左侧列表里的通行证逐个选中来领（通行证任务每个通行证各一份）：
+        通行证任务（弹窗）领完 pt 再领任务通行证的奖励，pt 可能刚好让通行证升级。"""
         if not self._open_page("任务通行证"):
             return
-        self.tap(self._button(self._items, "通行证任务", BTN_PASS_MISSIONS, PASS_MISSIONS_ROI), "通行证任务")
-        if not self._wait_page("通行证任务"):
-            raise self._fail("没能打开通行证任务")
-        self._claim_tabs("通行证任务", PASS_MISSION_TABS)
-        self._leave_page("通行证任务")
-        if not self._wait_page("任务通行证"):
-            raise self._fail("关闭通行证任务后没有回到任务通行证")
-        self._claim("任务通行证")
+        count = len(pass_banners(self._items))
+        for i in range(max(count, 1)):
+            label = "任务通行证" if count <= 1 else f"任务通行证（{i + 1}/{count}）"
+            if count > 1:
+                self._select_pass(i, count, label)
+            self.tap(self._button(self._items, "通行证任务", BTN_PASS_MISSIONS, PASS_MISSIONS_ROI), "通行证任务")
+            if not self._wait_page("通行证任务"):
+                raise self._fail(f"{label}：没能打开通行证任务")
+            self._claim_tabs("通行证任务", PASS_MISSION_TABS, label.replace("任务通行证", "通行证任务"))
+            self._leave_page("通行证任务")
+            if not self._wait_page("任务通行证"):
+                raise self._fail(f"{label}：关闭通行证任务后没有回到任务通行证")
+            self._claim("任务通行证", label)
+
+    def _select_pass(self, index: int, count: int, label: str) -> None:
+        """在任务通行证页左侧选中第 ``index`` 个通行证（已经选中就不点），等到它放大、按钮状态刷新。"""
+        banners = pass_banners(self._items)
+        if len(banners) != count:
+            raise self._fail(f"任务通行证左侧的通行证从 {count} 个变成了 {len(banners)} 个")
+        date, point, selected = banners[index]
+        if not selected:
+            self.tap(point, label)
+            for _ in range(10):
+                self._sleep(0.5)
+                _, items = self.look()
+                if page_title(items) != "任务通行证":
+                    raise self._fail(f"点{label}后不在任务通行证页")
+                banners = pass_banners(items)
+                if len(banners) == count and banners[index][2]:
+                    break
+            else:
+                raise self._fail(f"没能选中{label}")
+            self._sleep(1.0)
+            self.look()
+        logger.info("%s：%s 截止", label, date)
 
     def _daily_limited(self) -> None:
         if self._open_page("限定任务"):
@@ -404,14 +450,15 @@ class DailyMixin:
 
     # ------------------------------------------------------------ 领取
 
-    def _claim_tabs(self, title: str, tabs) -> None:
+    def _claim_tabs(self, title: str, tabs, label: str | None = None) -> None:
+        label = label or title
         for tab, default in tabs:
-            self.tap(self._button(self._items, tab, default, TAB_ROI), f"{title}·{tab}")
+            self.tap(self._button(self._items, tab, default, TAB_ROI), f"{label}·{tab}")
             self._sleep(1.2)
             _, items = self.look()
             if page_title(items) != title:
                 raise self._fail(f"切换到「{tab}」分页后不在{title}页")
-            self._claim(title, f"{title}·{tab}")
+            self._claim(title, f"{label}·{tab}")
 
     def _claim_days(self, title: str) -> None:
         tabs = day_tabs(self._items)

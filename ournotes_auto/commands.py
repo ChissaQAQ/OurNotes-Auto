@@ -185,7 +185,7 @@ def check_run_config(cfg: Config) -> None:
     if cfg.loop.until_lb_empty and not cfg.game.lb_cost:
         raise SetupError("打到 LB 用完需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
     if cfg.loop.wait_lb and cfg.game.lb_cost is None:
-        raise SetupError("挂机需要把每局 LB 消耗设为 0~3（--lb-cost 或 game.lb_cost；0 为不消耗、一直打）")
+        raise SetupError("挂机需要把每局 LB 消耗设为 0~3（--lb-cost 或 game.lb_cost；0 为不等 LB：有就每局消耗 1 个，用完消耗 0 接着打）")
     if cfg.game.lb_refill and not cfg.game.lb_cost:
         raise SetupError("LB 不足时用道具补充需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
     if cfg.game.lb_refill_limit < 0:
@@ -443,7 +443,7 @@ def register(sub) -> None:
     sp.add_argument(
         "--wait-lb",
         action="store_true",
-        help="挂机：LB 用完后在乐队确认页等它恢复到每局消耗数再继续，一直运行（每局消耗 0 时不用等，一直打）",
+        help="挂机：LB 用完后在乐队确认页等它恢复到每局消耗数再继续，一直运行（每局消耗 0 时不等：有 LB 就每局消耗 1 个，用完消耗 0 接着打）",
     )
     sp.add_argument(
         "--claim-studio",

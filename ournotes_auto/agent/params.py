@@ -252,7 +252,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     共用 attach 键：``max_plays`` ``touch`` 和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
     重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
     ``song_list``）；重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
-    清体力 / 挂机另有 ``clear_lb_cost``（清体力 1~3，挂机 0~3：0 时不消耗 LB、一直打）；AP补完另有 ``ap_expert`` 等
+    清体力 / 挂机另有 ``clear_lb_cost``（清体力 1~3，挂机 0~3：0 时不等 LB，有就消耗、用完消耗 0 一直打）；AP补完另有 ``ap_expert`` 等
     四个难度开关、``ap_order``、``ap_max_attempts`` 和 ``lb_cost``。四个任务都有 ``lb_refill`` ``lb_refill_count``
     （LB 不足时用道具补充）。挂机另有 ``studio_claim`` ``studio_claim_hours``（定时领取录音室练习）和
     ``daily_claim`` ``daily_claim_time``（每天定时领取日常），其他任务不领。
@@ -288,7 +288,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     else:
         cost = _int(attach, "clear_lb_cost", 0 if task == "idle" else 1, 3)
         sets["game.lb_cost"] = str(cost)
-        sets["loop.until_lb_empty"] = "true" if cost else "false"  # 挂机消耗 0 时用不完 LB，一直打
+        sets["loop.until_lb_empty"] = "true" if cost else "false"  # 挂机消耗 0 时不等 LB，一直打
     sets.update(_lb_refill(attach, sets["game.lb_cost"]))
     sets["loop.wait_lb"] = "true" if task == "idle" else "false"
     return sets
