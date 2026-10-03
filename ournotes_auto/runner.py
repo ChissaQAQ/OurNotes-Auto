@@ -246,7 +246,11 @@ class Runner:
             raise NavigationError(f"谱面站没有 {song.music_id}_{diff}") from e
         self.session.learned_offset_ms = self.store.learned_offset_ms
         lc = self.cfg.loop
-        self.nav.start_live("stop" if lc.until_lb_empty or lc.wait_lb else "zero")
+        if lc.wait_lb and not self.cfg.game.lb_cost:
+            lb_short = "auto"  # 挂机消耗 0：有 LB 就消耗，用完消耗 0 接着打，不等
+        else:
+            lb_short = "stop" if lc.until_lb_empty or lc.wait_lb else "zero"
+        self.nav.start_live(lb_short)
         outcome = self._play(chart)
         counts = self.nav.read_result(chart.judged_count or None)
         # 先记下这一局再离开结算页：离开时出错（如遇到没见过的结算页）也不丢记录

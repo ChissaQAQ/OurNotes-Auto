@@ -21,6 +21,7 @@ from ournotes_auto.nav.daily import (
     gift_confirm,
     home_icon,
     page_title,
+    pass_banners,
     practice_level_up,
     purchase_ok,
     reward_close,
@@ -47,6 +48,10 @@ PAGES = {
     "daily_pass": "任务通行证",
     "daily_pass_missions": "通行证任务",
     "daily_pass_missions_regular": "通行证任务",
+    # 两个通行证：选中第一个（活动）/ 第二个（赛季），第二个的通行证任务
+    "daily_pass_two": "任务通行证",
+    "daily_pass_two_second": "任务通行证",
+    "daily_pass_missions_second": "通行证任务",
     "daily_limited": "限定任务",
     "daily_beginner": "新手任务",
     "daily_gifts_empty": "礼物盒",
@@ -87,6 +92,26 @@ UNKNOWN_CONFIRM = [OcrItem(560, 300, 160, 30, "要领取吗？"), OcrItem(760, 6
 TGW_BUTTONS = {"tgw_points": (136, 664), "tgw_daily": (1016, 657)}
 SHOP_CATALOG_TAB = (112, 279)  # 没选中时「专享商品目录」的位置
 FREE_BUY = (375, 350)  # shop_tgw_free 里免费商品的「购买」；领完这一格补上来的是 100 星钻的乐曲交换券
+# 两个通行证时左侧横幅的位置（实测：第一个选中时第二个在 (140, 270)，第二个选中时第一个在 (140, 150)）
+PASS_BANNER_1 = (140, 150)
+PASS_BANNER_2 = (140, 270)
+TWO_PASS_ROUTES = {
+    "home": [p if p[1] != "daily_pass" else (p[0], "daily_pass_two") for p in ROUTES["home"]],
+    "daily_pass_two": [
+        (PASS_BANNER_2, "daily_pass_two_second"),
+        ((1165, 38), "daily_pass_missions"),
+        ((164, 40), "home"),
+    ],
+    "daily_pass_missions": [((148, 192), "daily_pass_missions_regular"), ((497, 657), "daily_pass_two")],
+    "daily_pass_missions_regular": [((131, 118), "daily_pass_missions"), ((497, 657), "daily_pass_two")],
+    "daily_pass_two_second": [
+        (PASS_BANNER_1, "daily_pass_two"),
+        ((1165, 38), "daily_pass_missions_second"),
+        ((164, 40), "home"),
+    ],
+    # 第二个通行证的通行证任务只有「每日」分页的夹具，点「常规」停在原画面
+    "daily_pass_missions_second": [((497, 659), "daily_pass_two_second")],
+}
 
 
 class DailyGame:
@@ -220,6 +245,14 @@ def test_page_helpers():
     assert [t for t, _ in day_tabs(load_items("daily_beginner"))] == [f"{i}天" for i in range(1, 7)]
     assert [t for t, _ in day_tabs(load_items("daily_limited"))] == ["1天"]
     assert day_tabs(load_items("daily_missions")) == []
+    # 任务通行证左侧的通行证：截止日期、横幅位置、是否选中
+    assert [(d, s) for d, _, s in pass_banners(load_items("daily_pass"))] == [("2026/10/28", True)]
+    two = pass_banners(load_items("daily_pass_two"))
+    assert [(d, s) for d, _, s in two] == [("2026/10/08", True), ("2026/10/28", False)]
+    assert math.dist(two[1][1], PASS_BANNER_2) < 10
+    second = pass_banners(load_items("daily_pass_two_second"))
+    assert [(d, s) for d, _, s in second] == [("2026/10/08", False), ("2026/10/28", True)]
+    assert pass_banners(load_items("home")) == []
     for name in ("daily_pass", "daily_studio", "daily_limited", "daily_beginner", "band_confirm", "settings"):
         assert home_icon(load_items(name)), name
     for name in ("home", "home_badges", "daily_missions", "result"):
@@ -336,6 +369,35 @@ def test_run_daily_claims_lit_buttons(clock):
     home_taps = {p for s, p in game.taps if s == "home"}
     assert home_taps <= {p for p, _ in ROUTES["home"]}
     assert all(math.dist(p, (836, 40)) > 30 for _, p in game.taps)
+
+
+def test_two_passes_are_both_claimed(clock):
+    """同时有两个通行证：逐个选中，各自领通行证任务和任务通行证的奖励。"""
+    claimable = {"daily_pass_missions_regular", "daily_pass_two", "daily_pass_missions_second", "daily_pass_two_second"}
+    game = DailyGame("home", claimable, routes=TWO_PASS_ROUTES)
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["pass"]) == []
+    assert game.state == "home"
+    assert game.claimed == [
+        "daily_pass_missions_regular",
+        "daily_pass_two",
+        "daily_pass_missions_second",
+        "daily_pass_two_second",
+    ]
+    # 第一个通行证本来就选中着，没有点它的横幅；第二个的横幅点了一次
+    banner_taps = [(s, p) for s, p in game.taps if s.startswith("daily_pass_two") and p[0] < 300 and p[1] > 100]
+    assert len(banner_taps) == 1 and banner_taps[0][0] == "daily_pass_two"
+    assert all(math.dist(p, (836, 40)) > 30 for _, p in game.taps)
+
+
+def test_pass_selection_failure_is_reported(clock):
+    """点了第二个通行证的横幅没有选中：该项记为出错，回到主界面。"""
+    stuck = [r for r in TWO_PASS_ROUTES["daily_pass_two"] if r[0] != PASS_BANNER_2]
+    game = DailyGame("home", {"daily_pass_two"}, routes={**TWO_PASS_ROUTES, "daily_pass_two": stuck})
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["pass"]) == ["任务通行证"]
+    assert game.claimed == ["daily_pass_two"]
+    assert game.state == "home"
 
 
 def test_run_daily_selected_jobs(clock):

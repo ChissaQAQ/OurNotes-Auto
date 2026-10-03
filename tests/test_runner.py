@@ -530,7 +530,8 @@ def test_idle_claims_daily_while_waiting_lb(tmp_path):
 
 
 def test_idle_lb_cost_zero_plays_on(tmp_path):
-    """挂机每局消耗 0：不会用完 LB，不等恢复，一直打；跨过领取时间时在两局之间（换歌前）领日常。"""
+    """挂机每局消耗选 0：有 LB 就消耗、用完消耗 0（由导航按持有数选），不等恢复，一直打；
+    跨过领取时间时在两局之间（换歌前）领日常。"""
     runner, nav, store = make(tmp_path, mode="random")
     runner.cfg.loop.max_plays = 4
     runner.cfg.loop.wait_lb = True
@@ -548,9 +549,9 @@ def test_idle_lb_cost_zero_plays_on(tmp_path):
     stats = runner.run()
     assert stats.plays == 4 and stats.failures == 0
     assert runner.stop.waits == [] and "lb" not in nav.calls
-    calls = [c for c in nav.calls if c in ("start:stop", "leave") or c.startswith("daily")]
+    calls = [c for c in nav.calls if c in ("start:auto", "leave") or c.startswith("daily")]
     daily = "daily:" + ",".join(IDLE_DAILY_JOBS)
-    assert calls == ["start:stop", "leave"] * 2 + [daily] + ["start:stop", "leave"] * 2
+    assert calls == ["start:auto", "leave"] * 2 + [daily] + ["start:auto", "leave"] * 2
     assert nav.calls[nav.calls.index(daily) + 1] == "next:random"
 
 

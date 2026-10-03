@@ -183,7 +183,7 @@ class LoopConfig:
     challenge: bool = False
     until_lb_empty: bool = False  # 打到 LB 用完为止（需要 game.lb_cost 为 1~3；用完后不再改为消耗 0 继续）
     # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 0~3；
-    # 0 时不消耗 LB，不用等，一直打）
+    # 0 时不等：持有 LB 时每局消耗 1 个，用完了消耗 0 接着打）
     wait_lb: bool = False
     # 每隔这么多小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领。
     # 录音室练习最多累计 12 小时，超过后效率降到 30%，挂机等长时间运行时用

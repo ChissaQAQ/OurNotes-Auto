@@ -176,6 +176,8 @@ FROZEN_THUMB = (160, 90)
 FROZEN_DIFF = 4
 # LB 用完改为消耗 0 后，这么久之内不再尝试按配置消耗（LB 随时间恢复；玩家升级时回满，看到升级画面就重新尝试）
 LB_EMPTY_RETRY_S = 30 * 60
+# start_live("auto")（挂机不等 LB）：持有 LB 时每局消耗这么多，没有时消耗 0
+LB_AUTO_COST = 1
 # 结算页出现约 1s 后可能叠上来的弹窗（首次达成奖励、评级提升及其奖励等），读数前先关掉
 RESULT_POPUPS = (Screen.ACHIEVEMENT, Screen.POPUP, Screen.GRADE_UP, Screen.REWARD)
 # 已经进入游戏、可以开始任务的画面（启动游戏时等到这些之一）
@@ -590,19 +592,50 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
             return 0
         return want
 
+    def _lb_auto(self) -> int:
+        """``auto``：持有 LB 时每局消耗 :data:`LB_AUTO_COST` 个，没有时消耗 0，返回这一局的消耗。
+
+        按乐队确认页顶栏的持有数判断，和现在的消耗设置对不上时才打开消耗设置弹窗，以弹窗上的持有数为准
+        （顶栏的字很小，偶尔读错）。顶栏没读出来时：还没设过就打开弹窗；已经按 0 打了 ``LB_EMPTY_RETRY_S``
+        （该恢复出一个了）也打开看一次。
+        """
+        screen, items = self.look()
+        bar = lb_bar_held(items) if screen is Screen.BAND_CONFIRM else None
+        now = time.monotonic()
+        if bar is not None:
+            check = self._lb_cost != (LB_AUTO_COST if bar else 0)
+        elif self._lb_cost == 0:
+            check = self._lb_empty_at is None or now - self._lb_empty_at >= LB_EMPTY_RETRY_S
+        else:
+            check = self._lb_cost is None
+        if check:
+            before = self._lb_cost
+            held = self.set_lb_cost(LB_AUTO_COST, zero_if_empty=True)
+            if self._lb_cost == 0:
+                self._lb_empty_at = now
+            if self._lb_cost != before:
+                if self._lb_cost:
+                    logger.info("LB 持有 %s 个：每局消耗 %d 个", "?" if held is None else held, self._lb_cost)
+                else:
+                    logger.info("LB 用完了：消耗 0 接着打，恢复后再消耗")
+        return self._lb_cost
+
     def start_live(self, lb_short: str = "zero") -> None:
         """（按配置设好 LB 消耗后）点击 LIVE START，处理演出前选项设置弹窗后立即返回（弹窗关闭后才开始加载）。
 
         开了 ``game.lb_refill`` 时先看持有数，少于每局消耗就用道具补充（:meth:`_refill`）。
         LB 不足时游戏照样开始演出，只消耗持有的全部（持有 0 就不消耗），有时则弹出恢复 LIVE BOOST：点取消
         （能用道具补充的话再从消耗设置进去补）。``lb_short`` 为 ``zero`` 时本局改为消耗 0；为 ``stop`` 时
-        点 LIVE START 前先核对持有数，用完了（或弹出了恢复窗口）就留在乐队确认页并抛出 :class:`LbExhausted`。
+        点 LIVE START 前先核对持有数，用完了（或弹出了恢复窗口）就留在乐队确认页并抛出 :class:`LbExhausted`；
+        为 ``auto`` 时不看 ``game.lb_cost``，每局前按持有数选消耗（:meth:`_lb_auto`），弹出恢复窗口同 ``zero``。
         """
-        if lb_short not in ("zero", "stop"):
+        if lb_short not in ("zero", "stop", "auto"):
             raise ValueError(f"未知的 LB 不足处理方式：{lb_short}")
         if self.challenge:
             self._check_cp()
             want = None
+        elif lb_short == "auto":
+            want = self._lb_auto()
         else:
             want = self._lb_want()
             held = self._refill_if_short(want) if want and self._can_refill() else None
@@ -725,10 +758,12 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
             self.tap(self._button(items, "继续", BTN_PAUSE_CONTINUE), "继续")
         raise self._fail("暂停后重试没有生效")
 
-    def set_lb_cost(self, cost: int, timeout_s: float = 15.0, refill: bool = False) -> int | None:
+    def set_lb_cost(
+        self, cost: int, timeout_s: float = 15.0, refill: bool = False, zero_if_empty: bool = False
+    ) -> int | None:
         """乐队确认页 → 消耗LB → 选中 ``cost``、按像素核对 → OK，回到乐队确认页（游戏会记住设置）。
         返回弹窗上读到的 LB 持有数。``refill`` 时持有数少于 ``cost`` 就点弹窗里的「恢复」用道具补充一次
-        （:meth:`_refill`），否则绝不点「恢复」。"""
+        （:meth:`_refill`），否则绝不点「恢复」。``zero_if_empty`` 时弹窗上读到持有 0 就改选 0。"""
         self.tap(BTN_LB_COST, "消耗LB")
         opened = time.monotonic()
         deadline = opened + timeout_s
@@ -754,6 +789,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
                         continue  # 恢复LIVE BOOST 正在打开
                     logger.warning("点「恢复」没有打开恢复LIVE BOOST，这次不补充")
                     refilled = True
+                if zero_if_empty and lb_held(items) == 0:
+                    cost = 0
                 selected = self._lb_selected()
                 if selected != cost:
                     if radio_taps >= 3:

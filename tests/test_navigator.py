@@ -783,6 +783,54 @@ def test_lb_status_falls_back_to_popup():
         nav.lb_status()
 
 
+def test_lb_auto_follows_held(monkeypatch):
+    """挂机消耗 0（auto）：持有 LB 时每局消耗 1，没有时消耗 0；顶栏的持有数和当前设置对得上就不开弹窗。"""
+    game = LbGame(cost=3, held=5)
+    nav = make_nav(game, game, game)
+    nav.cfg.game.lb_cost = 0
+    now = fake_clock(monkeypatch, nav)
+
+    def start(held, bar=None):
+        game.state, game.held, game.bar = "band_confirm", held, bar
+        game.taps.clear()
+        nav.start_live("auto")
+        assert game.state == "loading"
+        return tapped(game, (920, 665))  # 打开消耗设置弹窗的次数
+
+    assert start(5) == ["band_confirm"] and game.cost == 1
+    assert start(4) == [] and game.cost == 1
+    assert start(0) == ["band_confirm"] and game.cost == 0  # 用完了改为 0，不弹恢复窗口
+    assert "lb_recover" not in [s for s, _ in game.taps]
+    assert start(0) == [] and game.cost == 0
+    assert start(1) == ["band_confirm"] and game.cost == 1  # 恢复了一个
+    # 顶栏读错（实际 4 个却读成 0）：弹窗上看到有 LB，照样消耗 1
+    assert start(4, bar="0/10") == ["band_confirm"] and game.cost == 1
+    # 顶栏读多了（实际 0 个）：弹窗核对后改为 0
+    game.cost = 0
+    nav._lb_cost = 0
+    assert start(0, bar="2/10") == ["band_confirm"] and game.cost == 0
+    # 顶栏没读出来、已经按 0 打着：过了 LB_EMPTY_RETRY_S 才开弹窗看一次
+    nav._lb_empty_at = now[0]
+    assert start(3, bar="") == [] and game.cost == 0
+    now[0] += navigator.LB_EMPTY_RETRY_S
+    assert start(3, bar="") == ["band_confirm"] and game.cost == 1
+    assert not tapped(game, (920, 575), radius=60)  # 弹窗里的「恢复」绝不点
+
+
+def test_lb_auto_recover_popup_falls_back_to_zero():
+    """auto 时顶栏没读出来、持有 0 点 LIVE START 弹出恢复窗口：点取消，改为消耗 0 接着打，不用道具。"""
+    game = LbGame(cost=1, held=0, bar="")
+    nav = make_nav(game, game, game)
+    nav.cfg.game.lb_cost = 0
+    nav.cfg.game.lb_refill = True
+    nav._lb_cost = 1
+    nav.start_live("auto")
+    assert game.state == "loading" and game.cost == 0
+    assert tapped(game, (498, 663)) == ["lb_recover"]
+    assert not tapped(game, (940, 575), 60)
+    assert nav._lb_empty_at is not None
+
+
 def test_lb_recover_cancelled_while_navigating():
     game = FakeGame("lb_recover")
     nav = make_nav(game, game, game)
