@@ -58,6 +58,11 @@ class Screen(StrEnum):
     OK_POPUP = "只有 OK 的弹窗"
     # 别的都认不出、右上角有「跳过」/「SKIP」的全屏演出（如重新登录后的角色生日演出，一直循环播放），点跳过
     SKIPPABLE = "可跳过的演出"
+    # 打歌、领取日常时碰到的故事（重新登录后，生日演出之后接着放生日故事）：打开右上角的菜单点 SKIP，确认跳过。
+    # 故事播放画面 OCR 认不出，看右上角的菜单按钮（导航按像素认，见 StoryMixin._player_menu_button）
+    STORY_PLAYER = "故事播放"
+    STORY_MENU = "故事播放菜单"  # 右边一列按钮：SKIP / AUTO / 快进 / 终止 ...
+    STORY_SKIP = "要跳过故事吗"  # 左取消右跳过
     # B 站 SDK 在标题画面上弹出的「开启消息通知」：只点右上角的 ⓧ（「去开启」会跳到系统的通知设置）
     NOTIFY = "开启消息通知"
     CONNECT_ERROR = "连接失败"  # 「发生网络连接错误。」只有「返回标题画面」，回到标题重新登录
@@ -115,6 +120,7 @@ _DIALOGS = {
     "要终止演出": Screen.ABORT_CONFIRM,
     "要重试并从头开始": Screen.RETRY_CONFIRM,
     "演出已暂停": Screen.PAUSE,
+    "要跳过故事吗": Screen.STORY_SKIP,
 }
 # LIVE CLEAR / LIVE FINISH 大字，OCR 常读成 LVEOLEAR、LVEFINSH
 _LIVE_END = re.compile(r"^L.?VE")
@@ -148,6 +154,7 @@ SKIP_ROI: Rect = (1150, 20, 110, 40)
 # 其他全屏演出右上角的「跳过」（挑战演出乐队确认页底部的「跳过 还剩n次」不在这里，绝不能点）
 SKIP_CORNER_ROI: Rect = (1050, 0, 230, 90)
 SKIP_TEXTS = ("跳过", "SKIP")
+PLAYER_MENU_ROI: Rect = (1150, 140, 100, 60)  # 故事播放菜单里的 SKIP
 # 加载、下载中的画面认不出，但可能持续很久（下载数据、故事），不算卡住
 LOADING_TEXTS = ("LOADING", "下载", "%")
 
@@ -255,6 +262,8 @@ def classify(items: list[OcrItem]) -> Screen:
     # 主界面没有标题，底部一排入口
     if find(items, "招募", (500, 620, 450, 60)) and find(items, "故事", (500, 620, 450, 60)):
         return Screen.HOME
+    if find(items, "SKIP", PLAYER_MENU_ROI, exact=True):
+        return Screen.STORY_MENU
     if skip_button(items):
         return Screen.SKIPPABLE
     if find(items, "OK", OK_POPUP_ROI, exact=True) and not any(find(items, text) for text in OK_POPUP_BLOCK):

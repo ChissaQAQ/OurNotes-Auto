@@ -202,6 +202,34 @@ def test_birthday_is_skipped():
     assert tapped(game, (1213, 36), radius=2) == ["birthday"]  # 按 OCR 到的按钮位置点
 
 
+class BirthdayGame(FakeGame):
+    """截图是真图像：故事播放画面（OCR 什么也认不出）右上角画出菜单按钮。"""
+
+    def grab(self):
+        img = np.full((720, 1280, 3), 40, np.uint8)
+        if self.state == "story_player":
+            cv2.circle(img, (1201, 101), 30, (151, 89, 73), -1)
+            for y in (91, 101, 111):
+                img[y - 1 : y + 2, 1188:1215] = 255
+        return img, 0.0
+
+    def read(self, frame, roi=None):
+        return [] if self.state == "story_player" else load_items(self.state)
+
+
+def test_birthday_story_is_skipped(monkeypatch):
+    """生日演出跳过后接着放生日故事：打开右上角菜单 → SKIP → 确认跳过。"""
+    monkeypatch.setitem(TRANSITIONS, "birthday", [((1213, 36), "story_player")])
+    monkeypatch.setitem(TRANSITIONS, "story_player", [((1201, 101), "story_player_menu")])
+    monkeypatch.setitem(TRANSITIONS, "story_player_menu", [((1201, 168), "story_skip")])
+    monkeypatch.setitem(TRANSITIONS, "story_skip", [((756, 532), "home")])
+    game = BirthdayGame("birthday")
+    nav = make_nav(game, game, game)
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert [s for s, _ in game.taps] == ["birthday", "story_player", "story_player_menu", "story_skip"]
+    assert tapped(game, (756, 532), radius=2) == ["story_skip"]  # 按 OCR 到的「跳过」点，不点「取消」
+
+
 def test_event_result_pages():
     """活动期间羁绊页只有「下一步」，后面是活动故事解锁、活动pt达成奖励、活动结算页（再次演出）。"""
     game = FakeGame("result_exp_next")
