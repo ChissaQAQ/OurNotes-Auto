@@ -1,5 +1,8 @@
 """用合成画面验证首音符跟踪同步的外推精度。"""
 
+import math
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -24,18 +27,26 @@ def render(geo: Geometry, span: Span, y_lead: float, height_px: float, rng) -> n
     return frame
 
 
-def simulate(true_geo, tracker_geo, fps, tau_s, rng, jitter_s=0.002, params=None):
-    """按指数逼近模型渲染首音符下落，返回同步结果与真实到达时刻。"""
+def simulate(true_geo, tracker_geo, fps, tau_s, rng, jitter_s=0.002, params=None, render_fps=0.0):
+    """按指数逼近模型渲染首音符下落，返回同步结果与真实到达时刻。
+
+    ``render_fps`` 为 0 时截到的是 1/fps 网格上的画面、时间戳晚 0~jitter_s；否则游戏按这个帧率渲染，
+    截图时刻在 1/fps 网格上晚 0~jitter_s，截到的是这之前最近渲染的那一帧，时间戳就是截图时刻（与实机录像一致）。
+    """
     span = Span(8, 14)
     first_ms = 5000.0
     arrival = 12.3456
 
-    tr = NoteTracker(tracker_geo, params or SyncParams(), first_ms, [span])
+    # 比较的是前沿到达时刻，不按流速修正（见 test_center_lag_scales_with_tau）；默认的画面没有渲染网格，不对齐
+    tr = NoteTracker(tracker_geo, params or SyncParams(center_lag=0, render_fps=0), first_ms, [span])
     t = arrival - 4.0 * tau_s + rng.uniform(0, 1 / fps)
+    phase = rng.uniform(0, 1 / render_fps) if render_fps else 0.0
     while t < arrival + 1.0:
-        y = true_geo.note_y(arrival - t, tau_s)
+        stamp = t + rng.uniform(0, jitter_s)
+        shown = phase + math.floor((stamp - phase) * render_fps) / render_fps if render_fps else t
+        y = true_geo.note_y(arrival - shown, tau_s)
         frame = render(true_geo, span, y, 0.04 * (y - true_geo.motion_horizon_y), rng)
-        result = tr.feed(frame, t + rng.uniform(0, jitter_s))
+        result = tr.feed(frame, stamp)
         if result is not None:
             return result, arrival
         t += 1 / fps
@@ -60,6 +71,44 @@ def test_tracker_extrapolates_arrival(fps, tau_s):
     # 前沿按整像素检测，有约 -1ms 的固定偏差（由 offset_ms 吸收）；随机误差要小
     assert abs(np.mean(errs)) < 3, errs
     assert np.std(errs) < 1.5, errs
+
+
+@pytest.mark.parametrize("tau_s", [0.262, 0.835, 1.3])
+def test_center_lag_scales_with_tau(tau_s):
+    """前沿比音符中间早到的时间与 τ 成正比：offset 是在流速 5.00（τ=0.835）下得到的，其他流速按 τ 之差修正。"""
+    geo = Geometry(W, H)
+    p = SyncParams(tau_s=tau_s, render_fps=0)
+    front, _ = simulate(geo, geo, 60, tau_s, np.random.default_rng(0), params=replace(p, center_lag=0))
+    center, _ = simulate(geo, geo, 60, tau_s, np.random.default_rng(0), params=p)
+    assert center.ok and center.arrival == front.arrival
+    shift_ms = (center.t0 - front.t0) * 1000
+    assert shift_ms == pytest.approx(p.center_lag * (center.tau_s - 0.835) * 1000, abs=1e-6)
+    assert shift_ms == pytest.approx(p.center_lag * (tau_s - 0.835) * 1000, abs=0.5)
+
+
+def test_render_alignment_removes_frame_phase_error():
+    """游戏 60fps 渲染、截图 59fps：截到的画面比截图时刻早多少在一局里缓慢漂移，流速 10.00（τ=0.262）时跟踪很短、
+    平均不掉，每局误差很大；对齐到渲染网格后每局误差小得多，平均值不变（offset_ms 不用重新校准）。"""
+    geo = Geometry(W, H)
+    raw, aligned = [], []
+    for seed in range(8):
+        for errs, fps in ((raw, 0), (aligned, 60)):
+            p = SyncParams(tau_s=0.262, center_lag=0, render_fps=fps)
+            result, arrival = simulate(geo, geo, 59, 0.262, np.random.default_rng(seed), params=p, render_fps=60)
+            assert result.ok, result
+            errs.append((result.arrival - arrival) * 1000)
+            assert fps == 0 or any("对齐到 60fps" in n for n in result.notes), result.notes
+    assert np.std(aligned) < np.std(raw) / 2, (raw, aligned)
+    assert np.ptp(aligned) < 12, aligned
+    assert abs(np.mean(aligned) - np.mean(raw)) < 4, (raw, aligned)
+
+
+def test_render_alignment_skipped_without_render_grid():
+    """画面不是按 60fps 网格渲染的（截图时刻就是画面时刻）：对齐后残差降不下来，不对齐。"""
+    geo = Geometry(W, H)
+    for seed in range(3):
+        result, _ = simulate(geo, geo, 57, 0.835, np.random.default_rng(seed), params=SyncParams(center_lag=0))
+        assert result.ok and not any("对齐" in n for n in result.notes), result.notes
 
 
 def test_horizon_error_gives_constant_bias():
