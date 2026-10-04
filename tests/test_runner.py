@@ -64,6 +64,10 @@ class FakeNav:
     def relogin(self):
         self.calls.append("relogin")
 
+    def restart_game(self):
+        self.calls.append("restart")
+        return True
+
 
 class FakeClient:
     def chart(self, mid, diff, title=""):
@@ -71,9 +75,12 @@ class FakeClient:
 
 
 class FakeSession:
-    def __init__(self, fail=False, max_late=0.2, interrupt=False, stalls=(), fails=0, life_zeros=0):
-        """``fail``：同步总是失败；``fails``：前几次同步失败，之后成功；``life_zeros``：前几次演奏中生命值归零。"""
+    def __init__(self, fail=False, max_late=0.2, interrupt=False, stalls=(), fails=0, life_zeros=0, fps=()):
+        """``fail``：同步总是失败；``fails``：前几次同步失败，之后成功；``life_zeros``：前几次演奏中生命值归零；
+        ``fps``：依次每次同步测到的出帧率（用完了是 60）。"""
         self.fail, self.max_late, self.interrupt = fail, max_late, interrupt
+        self.fps = list(fps)
+        self.last_fps = None
         self.fails = fails
         self.life_zeros = life_zeros
         self.stalls = list(stalls)
@@ -84,7 +91,8 @@ class FakeSession:
         self.retries.append(retry)
         failed = self.fail or self.fails > 0
         self.fails -= 1
-        sync = SyncResult(1.0, 0.0, [], -40.0, 0.835, 1.0, 1.0, 190.0, not failed)
+        self.last_fps = self.fps.pop(0) if self.fps else 60.0
+        sync = SyncResult(1.0, 0.0, [], -40.0, 0.835, 1.0, 1.0, 190.0, not failed, fps=self.last_fps)
         if failed:
             raise SyncFailed("假失败", sync)
         if self.interrupt:
@@ -194,6 +202,57 @@ def test_failed_retry_waits_out_song(tmp_path):
     assert stats.plays == 0 and stats.failures == 1
     assert nav.calls == ["ensure:expert", "start:zero", "retry", "result", "leave"]
     assert store.history() == []
+
+
+def test_slow_game_is_restarted(tmp_path):
+    """连续几局出帧率都很低（游戏运行太久变卡了）：换歌之前重启游戏，之后照常打。重试的同步也算。"""
+    from ournotes_auto.runner import FPS_WINDOW
+
+    runner, nav, store = make(tmp_path, fps=[58, 41, 40, 42, 38, 39], fails=1)
+    runner.cfg.loop.max_plays = FPS_WINDOW + 1
+    stats = runner.run()
+    assert stats.plays == FPS_WINDOW + 1 and stats.failures == 0
+    assert nav.calls.count("restart") == 1
+    # 第一局同步失败重试（两次同步），第四局打完就攒够五次，中位数 41
+    leaves = [i for i, c in enumerate(nav.calls) if c == "leave"]
+    assert nav.calls.index("restart") == leaves[FPS_WINDOW - 2] + 1
+
+
+def test_slow_game_restart_gives_up(tmp_path):
+    """重启后还是一样卡（电脑本身忙不过来）：不再重启；不检查（min_fps 为 0）时从不重启。"""
+    from ournotes_auto.runner import FPS_WINDOW
+
+    runner, nav, _ = make(tmp_path, fps=[40] * 50)
+    runner.cfg.loop.max_plays = 4 * FPS_WINDOW
+    runner.run()
+    assert nav.calls.count("restart") == 1 and not runner.frame_rate.enabled
+
+    runner, nav, _ = make(tmp_path / "off", fps=[40] * 50)
+    runner.cfg.loop.max_plays = 2 * FPS_WINDOW
+    runner.frame_rate.enabled = False
+    runner.run()
+    assert "restart" not in nav.calls
+
+
+def test_frame_rate_watch_recovers():
+    from ournotes_auto.runner import FrameRateWatch
+
+    watch = FrameRateWatch(50, window=3)
+    for fps in (59, 60, None, 30):
+        watch.add(fps)
+    assert watch.slow() is None  # 中位数 59
+    for fps in (31, 32):
+        watch.add(fps)
+    assert watch.slow() == 31
+    watch.restarted()
+    for fps in (60, 59):
+        watch.add(fps)
+    assert watch.slow() is None  # 还没攒够
+    watch.add(58)
+    assert watch.slow() is None
+    for fps in (40, 41, 42):  # 恢复过一次之后又变卡：照样重启
+        watch.add(fps)
+    assert watch.slow() == 41 and watch.enabled
 
 
 def test_interrupted_play_leaves_recovery_to_navigation(tmp_path):

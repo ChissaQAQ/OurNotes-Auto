@@ -105,6 +105,7 @@ class PlaySession:
             logger.warning("找不到 %s，演奏中不检查是否离开了演奏画面", TEMPLATE_PATH)
         # 上一次同步时画面静止取的跟踪区基线（谱面, 基线）：暂停重试后歌曲立即开始，等不到静止，沿用它
         self._baseline: tuple[str, np.ndarray] | None = None
+        self.last_fps: float | None = None  # 最近一次 play 同步时测到的游戏出帧率（没同步出结果时为 None）
 
     @property
     def offset_ms(self) -> float:
@@ -149,6 +150,7 @@ class PlaySession:
 
         ``retry``：刚在暂停菜单点了重试（歌曲立即从头开始，沿用上一次的跟踪区基线，见 player/sync.py）。"""
         plan, tracker = self.prepare(chart, retry)
+        self.last_fps = None
         try:
             sync = tracker.wait(self.source, stop)
         except SyncTimeout:
@@ -158,6 +160,7 @@ class PlaySession:
         finally:
             if tracker.clean_baseline is not None:
                 self._baseline = (chart.key, tracker.clean_baseline)
+        self.last_fps = sync.fps or None
         if not sync.ok and require_sync_ok:
             if self.cfg.play.sync.record_frames:
                 self._dump(tracker, chart, sync)

@@ -970,6 +970,23 @@ def test_ensure_in_game_from_title():
     assert [s for s, _ in game.taps] == ["title", "login_bonus", "reward", "notice"]
 
 
+def test_restart_game(monkeypatch):
+    """游戏变卡了重启：重新登录，停在主界面；没法重启时什么都不做。"""
+    game = FakeGame("song_select")
+    nav = make_nav(game, game, game)
+    fake_clock(monkeypatch, nav)
+    assert not nav.restart_game() and game.taps == []
+    restarts = []
+
+    def restart():
+        restarts.append(game.state)
+        game.state = "title"
+
+    nav.restart_app = restart
+    assert nav.restart_game()
+    assert restarts == ["song_select"] and game.state == "home"
+
+
 def test_ensure_in_game_already_in_game():
     game = FakeGame("band_confirm")
     nav = make_nav(game, game, game)

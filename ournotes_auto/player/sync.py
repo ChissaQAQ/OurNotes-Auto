@@ -60,6 +60,7 @@ class SyncResult:
     ok: bool
     frames: int = 0
     notes: list[str] = field(default_factory=list)
+    fps: float = 0.0  # 跟踪首音符期间游戏的出帧率（音符一直在动，每帧都不一样）
 
 
 @dataclass
@@ -195,6 +196,7 @@ class NoteTracker:
         self._frames = 0
         self.samples: list[tuple[float, float]] = []
         self._first_seen: float | None = None
+        self._seen_frames = 0  # 首音符出现以来的帧数（算出帧率）
         self._start_t: float | None = None
         self._begin_t: float | None = None  # 第一帧的时刻，用于检查推算的歌曲开始时刻
         # 调试用：保留最近若干帧的跟踪区截图，同步后可 dump 下来离线重放
@@ -260,6 +262,7 @@ class NoteTracker:
                 # 音符总是从顶部进入；一出现就在下方说明是转场/弹窗等整体变化
                 return self._rearm(crop, t, f"首次出现在第 {lead} 行")
             self._first_seen = t
+        self._seen_frames += 1
         y = self.y_from + lead + 0.5
         if self.samples and y > self.samples[-1][1] and (why := self._jump(t, y)):
             return self._rearm(crop, t, why)
@@ -290,6 +293,7 @@ class NoteTracker:
         self._stable = 0
         self._start_t = t
         self._first_seen = None
+        self._seen_frames = 0
         self.samples = []
         return None
 
@@ -351,6 +355,8 @@ class NoteTracker:
         if self.max_start_delay_s > 0 and delay > self.max_start_delay_s:
             ok = False
             notes.append(f"推算的歌曲开始时刻在开始同步 {delay:.1f}s 后，跟踪到的多半不是第一个音符")
+        span = t_now - self._first_seen if self._first_seen is not None else 0.0
+        fps = (self._seen_frames - 1) / span if span > 0 else 0.0
         if self.p.tau_s > 0 and abs(fit.tau / self.p.tau_s - 1) > 0.05:
             notes.append(f"τ={fit.tau:.3f}s 与配置的 {self.p.tau_s:.3f}s 相差较大，游戏流速可能已修改，建议重新校准")
         result = SyncResult(
@@ -365,11 +371,13 @@ class NoteTracker:
             ok=ok,
             frames=self._frames,
             notes=notes,
+            fps=fps,
         )
         logger.debug(
-            "同步%s：%d 个样本，τ=%.3fs，残差 %.2fms，外推误差 ±%.2fms，距到达 %.0fms，歌曲开始于 %+.1fs（%s）",
+            "同步%s：%d 个样本，%.0ffps，τ=%.3fs，残差 %.2fms，外推误差 ±%.2fms，距到达 %.0fms，歌曲开始于 %+.1fs（%s）",
             "成功" if ok else "存疑",
             len(ts),
+            fps,
             fit.tau,
             rms_ms,
             sigma_ms,

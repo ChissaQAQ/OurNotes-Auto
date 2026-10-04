@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import logging
+import statistics
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, NamedTuple, Protocol
@@ -39,6 +41,8 @@ DAILY_RETRY_S = 600.0
 DAILY_TRIES = 3
 # 挂机每天领取的日常（录音室练习由定时收获领，看故事要等剧情播完，不在这里领）
 IDLE_DAILY_JOBS = ("missions", "pass", "limited", "beginner", "tgw", "gifts")
+# 游戏出帧率按最近这么多次同步的中位数看（见 loop.min_fps）
+FPS_WINDOW = 5
 
 
 def next_daily_time(now: float, at: tuple[int, int]) -> float:
@@ -158,6 +162,10 @@ class Navigator(Protocol):
         """停在服务器维护页时回到标题画面重新登录，等到进入游戏；还在维护时抛 :class:`ServerMaintenance`。"""
         ...
 
+    def restart_game(self) -> bool:
+        """重启游戏，等到重新进入游戏（主界面）；不能重启时返回 False。"""
+        ...
+
 
 def identify_song(catalog: Catalog, label: SongLabel, difficulty: str) -> tuple[Song, str]:
     """封面优先，曲名兜底；返回 (曲目, 依据说明)，认不出或证据矛盾时抛 NavigationError。
@@ -187,6 +195,40 @@ class RunStats:
     all_perfect: int = 0
     failures: int = 0
     maintenance: bool = False  # 因服务器维护停止
+
+
+class FrameRateWatch:
+    """游戏连续运行十几个小时后会越来越卡（实测 17 小时后从 60fps 掉到 30fps 左右，同步失败、整首对不上），
+    重启游戏就恢复了。最近 ``window`` 次同步时测到的出帧率中位数低于 ``min_fps`` 时该重启了；
+    重启后还是这么低（电脑本身忙不过来、模拟器限了帧率等），重启没用，之后不再管。"""
+
+    def __init__(self, min_fps: float, window: int = FPS_WINDOW):
+        self.min_fps = min_fps
+        self.enabled = min_fps > 0
+        self._recent: deque[float] = deque(maxlen=window)
+        self._restarted = False  # 刚重启过，还没看到帧率恢复
+
+    def add(self, fps: float | None) -> None:
+        if fps:
+            self._recent.append(fps)
+
+    def slow(self) -> float | None:
+        """该重启游戏时返回最近的出帧率（中位数），否则 None。"""
+        if not self.enabled or len(self._recent) < (self._recent.maxlen or 0):
+            return None
+        fps = statistics.median(self._recent)
+        if fps >= self.min_fps:
+            self._restarted = False
+            return None
+        if self._restarted:
+            self.enabled = False
+            logger.warning("重启游戏后出帧率还是只有 %.0ffps（电脑太忙或模拟器限了帧率？），不再因为卡顿重启", fps)
+            return None
+        return fps
+
+    def restarted(self) -> None:
+        self._recent.clear()
+        self._restarted = True
 
 
 class Runner:
@@ -224,6 +266,7 @@ class Runner:
             parse_daily_time(lc.daily_claim_time)  # 时间格式不对时现在就报错
         self._next_daily: float | None = None  # 下次领取日常的时刻：开始后第一次到点时领
         self._daily_tries = 0
+        self.frame_rate = FrameRateWatch(lc.min_fps)
 
     def _identify(self):
         label = self.nav.selected_song()
@@ -283,6 +326,8 @@ class Runner:
             except PlayInterrupted as e:
                 # 暂停菜单、闪退后的桌面等交给下一局开头的导航处理
                 raise NavigationError(str(e)) from e
+            finally:
+                self.frame_rate.add(self.session.last_fps)
             try:
                 self.nav.retry_live()
             except ServerMaintenance:
@@ -438,6 +483,16 @@ class Runner:
         self._daily_tries = 0
         self._next_daily = next_daily_time(now, at)
 
+    def _restart_if_slow(self) -> None:
+        """游戏变卡了（见 :class:`FrameRateWatch`）就重启游戏，回到主界面后照常换歌。"""
+        fps = self.frame_rate.slow()
+        if fps is None:
+            return
+        logger.warning("最近几局游戏只有 %.0ffps（连续运行太久会越来越卡，容易同步失败、打错），重启游戏", fps)
+        self.frame_rate.restarted()  # 重启后没能回到游戏（抛异常）时交给下一局的导航，不接着重启
+        if not self.nav.restart_game():
+            self.frame_rate.enabled = False
+
     def _claim_timed(self) -> None:
         """挂机的定时领取：录音室练习、每天的日常（到时间才领）。"""
         self._claim_studio()
@@ -533,6 +588,7 @@ class Runner:
         while not self.stop.is_set() and (lc.max_plays <= 0 or self.stats.plays < lc.max_plays):
             try:
                 if not wait_lb:
+                    self._restart_if_slow()
                     self._claim_timed()  # 在换歌之前领：领完从主界面回来再选歌
                     if self.stop.is_set() or not self._advance(first) or self.stop.is_set():
                         break
