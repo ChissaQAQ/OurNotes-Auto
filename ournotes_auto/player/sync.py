@@ -12,8 +12,19 @@ y_h 为运动消失线（见 ``motion_horizon_y``，实测与轨道消失线一�
 3. 拟合按每个样本的时间不确定度加权：y 量化误差折算到时间为 τ·σ_y/(y - y_h)，越靠下越可信；
 4. ``fit_horizon=True`` 时额外搜索 y_h，``calibrate motion`` 用它跟踪完整轨迹来实测 y_h 与 τ。
 
-前沿比音符中心略早到达、截图有固定延迟、几何参数的系统误差，这些常量偏差都由 ``offset_ms`` 吸收。
-（前沿与中心的距离随透视缩放，在该模型下正好是固定的时间差。）
+截图有固定延迟、几何参数的系统误差，这些常量偏差都由 ``offset_ms`` 吸收。前沿比音符中间早到：
+两者的距离随透视缩放，在 ln(y - y_h) 上是固定的（半个音符厚度），换算成时间与 τ 成正比，
+流速 5.00 时约 33ms、10.00 时约 10ms。``offset_ms`` 是在流速 5.00 下得到的，已经含了这一项，
+所以推算歌曲开始时刻（``t0``）时按拟合的 τ 与 ``offset_tau_s`` 之差补上（``center_lag``）。
+不补的话流速 10.00 时整体晚约 23ms：拟人化故意打的 GREAT（偏 64~69ms）延后的全成了 GOOD、提前的成了 PERFECT。
+
+游戏按 60fps 渲染，截图拿到的是最近渲染的那一帧，画面比截图时刻早 0~1 帧。截图帧率（约 57~60fps）与渲染帧率接近，
+早多少只在一局里缓慢漂移：流速 5.00 时跟踪约 1.8s，平均下来每局只差 ±2ms；流速 10.00 时只跟踪约 0.45s，
+平均不掉，每局差到 ±10ms（实机同样设置的两局整体差 17ms），拟人化的 GREAT 就会时而变 GOOD、时而变 PERFECT。
+所以给出结果前把截图时刻对齐到渲染网格（``render_fps``）：网格的相位未知，相位只在越过某个截图时刻（取模后）时
+才改变对齐结果，逐段试一遍取残差最小的（实机录像残差从 3~5ms 降到 1~2.5ms），拟合仍是渲染时刻下的到达时刻，
+再把这一局实测的平均提前量（约半帧）加回作为主机侧时刻，与不对齐时的口径一致，``offset_ms`` 不用重新校准。
+截图正好与渲染同步（提前量约 0）时，残差降不下来，就按原来的截图时刻拟合。
 
 开了「小节线显示」（游戏设置 → 详情 → 节奏图示设置）时，小节线和音符一样从顶部落下。它是暗一些的灰白细线
 （亮度一百二三十），只有一部分像素过得了偏白高亮的门槛，但足以让行平均差异超过 ``diff_threshold``。跟踪区右边
@@ -61,7 +72,7 @@ class SyncTimeout(TimeoutError):
 @dataclass
 class SyncResult:
     arrival: float  # 首音符前沿到达判定线的主机时刻（perf_counter 秒）
-    t0: float  # 谱面时间 0 对应的主机时刻
+    t0: float  # 谱面时间 0 对应的主机时刻（已按流速修正前沿与音符中间的时间差，见模块说明）
     samples: list[tuple[float, float]]  # 参与拟合的 (时刻, 前沿 y 像素)
     horizon_y: float  # 拟合用的运动消失线 y（像素）
     tau_s: float  # 拟合得到的逼近时间常数（秒）
@@ -103,6 +114,24 @@ def _wls(tt, lg, weights, lg_judge, tau_prior, tau_w):
     return coef, resid, float(math.sqrt(max(float(x @ cov @ x), 0.0)))
 
 
+def _tau_weight(tau_prior: float, tau_rel_sigma: float) -> float:
+    if tau_prior > 0 and math.isfinite(tau_rel_sigma) and tau_rel_sigma > 0:
+        return 1.0 / (tau_prior * tau_rel_sigma) ** 2
+    return 0.0
+
+
+def render_times(ts: np.ndarray, fps: float) -> np.ndarray:
+    """截图时刻 ``ts`` 在各种渲染相位下对应的渲染时刻（每行一种，越早的相位越靠前）。
+
+    渲染时刻落在周期 1/fps、相位未知的网格上，截图拿到的是不晚于截图时刻的最近一帧。相位只在越过某个截图时刻
+    （取模后）时改变对齐结果，相邻两个越过点之间各帧的渲染时刻只整体平移，所以每段取中点代表。
+    """
+    period = 1.0 / fps
+    cuts = np.unique(np.mod(ts, period))
+    phases = (cuts + np.append(cuts[1:], cuts[0] + period)) / 2
+    return phases[:, None] + np.floor((ts[None, :] - phases[:, None]) / period) * period
+
+
 def fit_arrival(
     ts: np.ndarray,
     ys: np.ndarray,
@@ -118,8 +147,7 @@ def fit_arrival(
     """
     t_ref = float(ts[0])
     tt = ts - t_ref  # 以首个样本为零点，避免大数相减的精度损失
-    use_prior = tau_prior > 0 and math.isfinite(tau_rel_sigma) and tau_rel_sigma > 0
-    tau_w0 = 1.0 / (tau_prior * tau_rel_sigma) ** 2 if use_prior else 0.0
+    tau_w0 = _tau_weight(tau_prior, tau_rel_sigma)
     y_min = float(ys.min())
 
     def solve(h: float, weights: np.ndarray):
@@ -338,6 +366,22 @@ class NoteTracker:
         self.samples = []
         return None
 
+    def _align_render(self, ts: np.ndarray, ys: np.ndarray, fit: _Fit) -> tuple[np.ndarray, float, _Fit] | None:
+        """把截图时刻对齐到渲染网格再拟合（见模块说明），返回各帧的渲染时刻、截图相对渲染晚的平均时间与拟合；
+        残差没有明显变小时返回 None。"""
+        p = self.p
+        cand = render_times(ts, p.render_fps)
+        # 先按原拟合的权重与 y_h 比较各种相位的残差（同一个线性最小二乘，一次解完），再对最好的完整拟合一次
+        lg = np.log(ys - fit.horizon_y)
+        tt = (cand - cand[:, :1]).T
+        _, resid, _ = _wls(tt, lg, fit.weights, 0.0, p.tau_s, _tau_weight(p.tau_s, p.tau_rel_sigma))
+        wn = fit.weights / fit.weights.sum()
+        rend = cand[int(np.argmin(wn @ resid**2))]
+        best = self._fit(rend, ys)
+        # 各帧的渲染时刻比截图时刻平均早多少（截图平均比渲染晚半帧；画面与截图同一时刻时约 0），
+        # 拟合得到的是渲染时刻下的到达时刻，加回来才是主机的截图时刻，与不对齐时口径一致
+        return None if best.rms > p.render_rms_ratio * fit.rms else (rend, float(np.mean(ts - rend)), best)
+
     def _jump(self, t: float, y: float) -> str | None:
         """前沿移动得比音符可能的速度快得多（留了 2 倍余量，流速略有改动也不会误判）。"""
         if self.p.tau_s <= 0:
@@ -374,6 +418,14 @@ class NoteTracker:
         ts = np.array([p[0] for p in pts])
         ys = np.array([p[1] for p in pts])
         fit = self._fit(ts, ys)
+        tf, lag = ts, 0.0  # 拟合用的时刻（对齐到渲染帧后比截图时刻平均早 lag）
+        if self.p.render_fps > 0 and len(ts) >= self.p.min_samples and (aligned := self._align_render(ts, ys, fit)):
+            tf, lag, new = aligned
+            notes.append(
+                f"截图时刻对齐到 {self.p.render_fps:g}fps 渲染帧：残差 {fit.rms * 1000:.2f}→{new.rms * 1000:.2f}ms，"
+                f"比截图早 {lag * 1000:.1f}ms，到达时刻 {(new.arrival + lag - fit.arrival) * 1000:+.1f}ms"
+            )
+            fit = new
         # 剔除离群点（如某帧截图时间戳异常）后重新拟合
         for _ in range(3):
             if len(ts) <= self.p.min_samples:
@@ -383,15 +435,16 @@ class NoteTracker:
             if z[worst] <= 4.0:
                 break
             notes.append(f"剔除离群样本 y={ys[worst]:.0f}（{fit.resid[worst] * 1000:+.1f}ms）")
-            ts, ys = np.delete(ts, worst), np.delete(ys, worst)
-            fit = self._fit(ts, ys)
+            ts, tf, ys = np.delete(ts, worst), np.delete(tf, worst), np.delete(ys, worst)
+            fit = self._fit(tf, ys)
+        arrival = fit.arrival + lag
         rms_ms = fit.rms * 1000
         sigma_ms = fit.sigma * 1000
-        lead_ms = (fit.arrival - t_now) * 1000
+        lead_ms = (arrival - t_now) * 1000
         ok = len(ts) >= self.p.min_samples and rms_ms <= self.p.max_rms_ms and sigma_ms <= self.p.max_sigma_ms
         if not ok:
             notes.append(f"拟合不可信：{len(ts)} 个样本，残差 {rms_ms:.2f}ms，外推误差 ±{sigma_ms:.2f}ms")
-        t0 = fit.arrival - self.first_ms / 1000
+        t0 = arrival + self.p.center_lag * (fit.tau - self.p.offset_tau_s) - self.first_ms / 1000
         delay = t0 - self._begin_t
         if self.max_start_delay_s > 0 and delay > self.max_start_delay_s:
             ok = False
@@ -401,7 +454,7 @@ class NoteTracker:
         if self.p.tau_s > 0 and abs(fit.tau / self.p.tau_s - 1) > 0.05:
             notes.append(f"τ={fit.tau:.3f}s 与配置的 {self.p.tau_s:.3f}s 相差较大，游戏流速可能已修改，建议重新校准")
         result = SyncResult(
-            arrival=fit.arrival,
+            arrival=arrival,
             t0=t0,
             samples=list(zip(ts.tolist(), ys.tolist())),
             horizon_y=fit.horizon_y,
