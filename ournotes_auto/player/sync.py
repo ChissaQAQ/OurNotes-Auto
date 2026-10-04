@@ -15,6 +15,12 @@ y_h 为运动消失线（见 ``motion_horizon_y``，实测与轨道消失线一�
 前沿比音符中心略早到达、截图有固定延迟、几何参数的系统误差，这些常量偏差都由 ``offset_ms`` 吸收。
 （前沿与中心的距离随透视缩放，在该模型下正好是固定的时间差。）
 
+开了「小节线显示」（游戏设置 → 详情 → 节奏图示设置）时，小节线和音符一样从顶部落下。它是暗一些的灰白细线
+（亮度一百二三十），只有一部分像素过得了偏白高亮的门槛，但足以让行平均差异超过 ``diff_threshold``。跟踪区右边
+拼上首音符区间以外的一排轨道采样点（``_BAR_UNITS``），某几行在这些采样点上也大多变亮（不经过偏白高亮的门槛）、
+又只有几像素高，就是横贯轨道的小节线，不算音符覆盖（首音符正好压在小节线上时，音符其余的行照常检测）。
+整片变亮（转场、闪光）不是细线，照旧当成非音符变化；轨道淡入时轨道上是变暗，也不会当成小节线。
+
 暂停菜单「重试」后歌曲立即从头开始（实测点确认后约 0.2s，演奏画面约 0.36s 后出现，再过 0.16s
 100056 的首音符就进入跟踪区），首音符一直在动，等不到画面静止，会错过它、跟上后面的音符。
 所以重试时直接沿用上一次静止时取的基线（``baseline``），不再等静止；歌曲开始时刻也几乎就是开始同步的时刻，
@@ -27,7 +33,7 @@ import logging
 import math
 import threading
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -41,6 +47,11 @@ logger = logging.getLogger(__name__)
 
 _Y_SIGMA_PX = 0.35  # 前沿 y 的量化误差（像素，标准差）
 _T_SIGMA_S = 0.004  # 截图时刻相对游戏内时间的抖动（秒，标准差）；MuMu 60fps 实测拟合残差约 5ms
+# 检查小节线的采样位置（横向单位），去掉首音符区间两侧 _BAR_GAP 个单位以内的；剩下不到 _BAR_MIN_PROBES 个就不检查
+_BAR_UNITS = np.arange(0.75, 23.5, 0.5)
+_BAR_GAP = 1.5
+_BAR_MIN_PROBES = 8
+_BAR_MAX_H = 0.012  # 小节线最多这么高（屏高比例，720p 约 9 像素）；更高的整行变化是转场、闪光
 
 
 class SyncTimeout(TimeoutError):
@@ -184,8 +195,19 @@ class NoteTracker:
         counts = mask.sum(axis=1, keepdims=True)
         # 每行按覆盖像素数归一化，得到「行平均差异」
         self._weights = mask / np.maximum(counts, 1.0)
+        units = [u for u in _BAR_UNITS if all(u < s.left - _BAR_GAP or u > s.right + _BAR_GAP for s in spans)]
+        if params.bar_line_ratio > 0 and len(units) >= _BAR_MIN_PROBES:
+            ys = np.arange(self.y_from, self.y_to)
+            self._probe_y = ys[:, None]
+            self._probe_x = np.clip(
+                np.rint([[geometry.x_at(u, y) for u in units] for y in ys]).astype(np.intp), 0, w - 1
+            )
+        else:
+            self._probe_y = self._probe_x = None
+        self._bar_h = max(2, round(_BAR_MAX_H * h))
+        width = mask.shape[1] + (0 if self._probe_x is None else self._probe_x.shape[1])
         self.max_start_delay_s = params.max_start_delay_s if max_start_delay_s is None else max_start_delay_s
-        if baseline is not None and baseline.shape != mask.shape + (3,):
+        if baseline is not None and baseline.shape != (mask.shape[0], width, 3):
             logger.debug("沿用的基线尺寸 %s 与跟踪区 %s 不符，改为等待静止", baseline.shape, mask.shape)
             baseline = None
         self._preset = None if baseline is None else baseline.astype(np.float32)
@@ -207,7 +229,10 @@ class NoteTracker:
         return self._baseline is not None
 
     def _crop(self, frame: np.ndarray) -> np.ndarray:
-        return frame[self.y_from : self.y_to, self.x_from : self.x_to].astype(np.int16)
+        crop = frame[self.y_from : self.y_to, self.x_from : self.x_to]
+        if self._probe_x is not None:
+            crop = np.concatenate([crop, frame[self._probe_y, self._probe_x]], axis=1)
+        return crop.astype(np.int16)
 
     def _row_scores(self, a: np.ndarray, b: np.ndarray, gate: bool = False) -> np.ndarray:
         diff = np.abs(a - b).max(axis=2).astype(np.float32)
@@ -215,7 +240,23 @@ class NoteTracker:
             diff[a.max(axis=2) < self.p.min_brightness] = 0.0
             if self.p.min_whiteness > 0:
                 diff[a.min(axis=2) < self.p.min_whiteness] = 0.0
-        return (diff * self._weights).sum(axis=1)
+        inner = self._weights.shape[1]
+        scores = (diff[:, :inner] * self._weights).sum(axis=1)
+        if self._probe_x is not None and gate:
+            scores[self._bar_rows(a[:, inner:], b[:, inner:])] = 0.0
+        return scores
+
+    def _bar_rows(self, cur: np.ndarray, ref: np.ndarray) -> np.ndarray:
+        """小节线所在的行：首音符区间以外的采样点大多变亮，且连成的一段不超过 ``_bar_h`` 行。"""
+        brighter = (cur - ref).max(axis=2) >= self.p.diff_threshold
+        lit = brighter.mean(axis=1) >= self.p.bar_line_ratio
+        if not lit.any():
+            return lit
+        edges = np.flatnonzero(np.diff(np.concatenate([[0], lit.view(np.int8), [0]])))
+        for lo, hi in zip(edges[::2], edges[1::2]):
+            if hi - lo > self._bar_h:
+                lit[lo:hi] = False
+        return lit
 
     def _fit(self, ts: np.ndarray, ys: np.ndarray) -> _Fit:
         p = self.p
@@ -426,12 +467,19 @@ def replay_dump(path: str | Path, geometry: Geometry, params: SyncParams) -> Syn
     if (w, h) != (geometry.width, geometry.height):
         raise ValueError(f"记录的分辨率 {w}x{h} 与几何参数 {geometry.width}x{geometry.height} 不符")
     spans = [Span(float(a), float(b)) for a, b in d["spans"]]
-    tracker = NoteTracker(geometry, params, float(d["first_ms"]), spans)
     y0, y1, x0, x1 = (int(v) for v in d["box"])
-    if (tracker.y_from, tracker.y_to, tracker.x_from, tracker.x_to) != (y0, y1, x0, x1):
+    if d["crops"].shape[2] == x1 - x0:
+        params = replace(params, bar_line_ratio=0)  # 加上小节线检查之前的记录，没有轨道采样点
+    tracker = NoteTracker(geometry, params, float(d["first_ms"]), spans)
+    # 不检查小节线（bar_line_ratio=0）时去掉记录里的轨道采样点
+    width = (x1 - x0) + (0 if tracker._probe_x is None else tracker._probe_x.shape[1])
+    recorded = d["crops"].shape[2]
+    if (tracker.y_from, tracker.y_to, tracker.x_from, tracker.x_to) != (y0, y1, x0, x1) or (
+        recorded != width and tracker._probe_x is not None
+    ):
         raise ValueError("跟踪区与记录时不同，无法重放（track_top/track_bottom/几何参数已修改）")
     for t, crop in zip(d["times"], d["crops"]):
-        result = tracker.feed_crop(crop.astype(np.int16), float(t))
+        result = tracker.feed_crop(crop[:, :width].astype(np.int16), float(t))
         if result is not None:
             return result
     return None

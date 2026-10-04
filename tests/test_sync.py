@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from ournotes_auto.charts.model import Span
+from ournotes_auto.charts.model import LANE_UNITS, Span
 from ournotes_auto.config import SyncParams
 from ournotes_auto.geometry import Geometry, GeometryParams
 from ournotes_auto.player.sync import NoteTracker, SyncTimeout
@@ -200,6 +200,50 @@ def test_tracker_ignores_colored_glow():
     assert abs(fooled.arrival - arrival) > 0.3
 
 
+def draw_bar_lines(frame: np.ndarray, geo: Geometry, ys) -> None:
+    """画横贯整条轨道的小节线（2 像素高的灰白线）。实机的小节线偏暗，只有一部分像素过得了偏白高亮的门槛：
+    这里隔一个像素亮一个，暗的那些过不了门槛但也比轨道亮得多。"""
+    for yb in ys:
+        for yy in range(max(int(yb) - 1, 0), min(int(yb) + 1, H)):
+            x0, x1 = int(geo.x_at(0, yy)), int(geo.x_at(LANE_UNITS, yy))
+            frame[yy, x0:x1] = (110, 110, 110)
+            frame[yy, x0:x1:2] = (190, 190, 190)
+
+
+@pytest.mark.parametrize("on_note", [False, True])
+def test_tracker_ignores_bar_lines(on_note):
+    """开了「小节线显示」：比首音符先落下的小节线不能当成首音符（#18），压在首音符中间的小节线不影响跟踪。"""
+    geo = Geometry(W, H)
+    span = Span(8, 14)
+    tau_s, arrival = 0.835, 12.3456
+
+    def run(params):
+        rng = np.random.default_rng(9)
+        tr = NoteTracker(geo, params, 5000.0, [span])
+        t = arrival - 4.5 * tau_s
+        while t < arrival + 1.0:
+            y = geo.note_y(arrival - t, tau_s)
+            height = 0.04 * (y - geo.motion_horizon_y)
+            frame = render(geo, span, y, height, rng)
+            # 每 1.2s 一条小节线，最近的一条比首音符早 0.6s 到达判定线；等静止时就有小节线在动
+            ys = [geo.note_y(arrival - 0.6 - 1.2 * k - t, tau_s) for k in range(4)]
+            if on_note:
+                ys.append(y - height / 2)
+            draw_bar_lines(frame, geo, ys)
+            result = tr.feed(frame, t)
+            if result is not None:
+                return result
+            t += 1 / 60
+        return None
+
+    result = run(SyncParams())
+    assert result is not None and result.ok, result
+    assert abs(result.arrival - arrival) * 1000 < 5
+    # 不检查小节线时一直等不到画面静止（实机上 4s 后直接开始跟踪，就会跟上小节线）
+    fooled = run(SyncParams(bar_line_ratio=0))
+    assert fooled is None or not fooled.ok or abs(fooled.arrival - arrival) > 0.3
+
+
 def test_tracker_rejects_late_start():
     """推算的歌曲开始时刻离开始同步太远，说明错过了第一个音符，跟上的是后面的音符。"""
     geo = Geometry(W, H)
@@ -317,3 +361,6 @@ def test_dump_and_replay(tmp_path):
     path = tr.dump(tmp_path / "sync.npz", result)
     again = replay_dump(path, geo, SyncParams())
     assert again is not None and again.arrival == pytest.approx(result.arrival, abs=1e-9)
+    # 不检查小节线时去掉记录里的轨道采样点照样重放
+    plain = replay_dump(path, geo, SyncParams(bar_line_ratio=0))
+    assert plain is not None and plain.arrival == pytest.approx(result.arrival, abs=1e-9)

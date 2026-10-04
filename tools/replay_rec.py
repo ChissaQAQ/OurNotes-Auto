@@ -28,8 +28,8 @@ fr = np.load(f"{prefix}_frames.npy", mmap_mode="r")
 ts = np.load(f"{prefix}_times.npy")
 tr = NoteTracker(geo, sp, first_ms, spans)
 for g, t in zip(fr, ts):
-    crop = np.repeat(np.asarray(g)[tr.y_from:tr.y_to], 4, axis=1)[:, tr.x_from:tr.x_to]
-    r = tr.feed_crop(np.repeat(crop[:, :, None], 3, axis=2).astype(np.int16), float(t))
+    frame = np.repeat(np.asarray(g), 4, axis=1)
+    r = tr.feed(np.repeat(frame[:, :, None], 3, axis=2), float(t))
     if r is not None:
         ys = np.array([s[1] for s in r.samples])
         print(f"arrival {r.arrival:.4f}  tau {r.tau_s:.4f}  horizon {r.horizon_y:.1f}  rms {r.rms_ms:.2f}ms  "
