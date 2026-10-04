@@ -47,6 +47,7 @@ loop:
                              # 留空不领。游戏每天 23:00 日期变更，挂机跨天时用
   max_failures: 5            # 连续失败这么多次后停止
   sync_retries: 2            # 首音符同步失败、演奏中生命值归零时暂停、点「重试」从头再来的次数（每局），用完了等歌曲放完；0 为不重试
+  min_fps: 50                # 连续打歌时最近 5 次同步测到的游戏出帧率（中位数）低于它就重启游戏（连续运行十几个小时后会越来越卡）；0 为不检查
   ap_difficulties: expert,hard,normal,easy  # AP 补完依次处理的难度
   ap_first_difficulties: ""  # ap_first 依次补的难度（如 expert,hard,normal,easy），都补完了按 game.difficulty 随机；留空只补 game.difficulty
   ap_max_attempts: 3         # AP 补完 / ap_first 时同一首歌最多打几次

@@ -587,6 +587,15 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
             self._sleep(self.settle_s)
         return self.ensure_in_game(timeout_s)
 
+    def restart_game(self, timeout_s: float = 180.0) -> bool:
+        """重启游戏，等到重新进入游戏（从标题画面登录）；没法重启（没有 ``restart_app``）时返回 False。"""
+        if self.restart_app is None:
+            return False
+        self.restart_app()
+        self._sleep(3.0)  # 别把重启前的画面当成已经在游戏里
+        self.ensure_in_game(timeout_s)
+        return True
+
     def ensure_band_confirm(self, difficulty: str | None = None, timeout_s: float = 90.0) -> None:
         deadline = time.monotonic() + timeout_s
         diff = difficulty or self.cfg.game.difficulty

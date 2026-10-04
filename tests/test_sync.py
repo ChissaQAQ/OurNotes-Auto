@@ -54,6 +54,7 @@ def test_tracker_extrapolates_arrival(fps, tau_s):
         assert result.lead_ms > 120  # 在音符落下前就给出结果
         assert result.t0 == pytest.approx(result.arrival - 5.0)
         assert result.tau_s == pytest.approx(tau_s, rel=0.02)
+        assert result.fps == pytest.approx(fps, rel=0.05)  # 出帧率（游戏变卡时重启）
         # 减去截图时刻抖动的均值 1ms
         errs.append((result.arrival - arrival) * 1000 - 1.0)
     # 前沿按整像素检测，有约 -1ms 的固定偏差（由 offset_ms 吸收）；随机误差要小

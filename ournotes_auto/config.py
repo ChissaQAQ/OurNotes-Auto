@@ -194,6 +194,9 @@ class LoopConfig:
     max_failures: int = 5  # 连续失败次数上限
     # 首音符同步失败、演奏中生命值归零时暂停、点「重试」让这首歌从头开始的次数（每局）；用完了就等歌曲放完。0 为不重试
     sync_retries: int = 2
+    # 最近几局同步时测到的游戏出帧率（中位数）低于这个值就重启游戏：游戏连续运行十几个小时后会越来越卡
+    # （正常 60fps），容易同步失败、整首对不上，重启就恢复了。0 为不检查
+    min_fps: float = 50.0
     ap_difficulties: str = "expert,hard,normal,easy"  # AP 补完依次处理的难度（逗号分隔）
     # ap_first 依次补的难度（逗号分隔，如 "expert,hard,normal,easy"），都补完了按 game.difficulty 随机；
     # 留空只补 game.difficulty
