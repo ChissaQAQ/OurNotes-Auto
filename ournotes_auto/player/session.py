@@ -193,6 +193,8 @@ class PlaySession:
         if guard is not None and guard.lost:
             raise PlayInterrupted("演奏中途离开了演奏画面")
         if guard is not None and guard.life_zero:
+            if self.cfg.play.sync.record_frames:
+                self._dump(tracker, chart, sync)  # 多半是同步跟错了，和同步失败一样保存
             raise LifeDepleted("演奏中生命值降到 0（整体对不上了）")
         if self.cfg.play.sync.record_frames and self.dump_success:
             self._dump(tracker, chart, sync)
