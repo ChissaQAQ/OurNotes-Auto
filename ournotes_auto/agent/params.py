@@ -14,6 +14,7 @@ from ..sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
 PARAM_NODE = "OurNotesParam"  # 界面选项都覆盖到这个节点的 attach 上
 TASKS = {
     "start": "启动游戏",
+    "switch_account": "切换账号",
     "daily": "领取日常",
     "repeat": "重复刷歌",
     "clear_lb": "清体力",
@@ -313,6 +314,12 @@ def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str])
     if task == "start":
         sets = {**device, "device.touch": _choice(attach, "touch", TOUCH_MODES)}
         tail = ["start"]
+    elif task == "switch_account":
+        account = str(_get(attach, "account")).strip()
+        if not account:
+            raise ParamError("切换账号要填写账号名")
+        sets = {**device, "device.touch": _choice(attach, "touch", TOUCH_MODES)}
+        tail = ["switch-account", account]
     elif task == "daily":
         sets = {**device, "device.touch": _choice(attach, "touch", TOUCH_MODES)}
         tail = ["daily", "--jobs", _daily_jobs(attach)]

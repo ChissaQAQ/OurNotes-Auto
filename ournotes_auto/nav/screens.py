@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import StrEnum
@@ -73,6 +74,10 @@ class Screen(StrEnum):
     DATA_DOWNLOAD = "数据下载"
     # 「检测到新版本」：游戏需要进行版本更新，只有「前往商店」（会跳到应用商店），不点，任务直接失败
     UPDATE_REQUIRED = "需要更新游戏"
+    # 切换账号（见 AccountMixin）：标题画面右上角 ☰ 打开的菜单 → B 站 SDK 的用户中心 → 退出登录后的登录记录
+    TITLE_MENU = "标题菜单"  # 公告 / 选择语言 / 用户中心 / 一键下载 / 切换服务器 / 清除缓存 / 模式设置，底部「关闭」
+    USER_CENTER = "用户中心"  # UID、修改密码、退出登录等；往下滚还有「注销」（删除账号），绝不能点
+    LOGIN_HISTORY = "登录记录"  # 记住的账号（点「登录」不用密码），展开后每行右边的 ⓧ 会删掉这条记录，绝不能点
 
 
 # 重新登录途中的画面：导航的超时从最后一次看到这些画面算起
@@ -145,6 +150,14 @@ NEW_SONG_ROI: Rect = (440, 60, 400, 100)
 REWARD_ROI: Rect = (440, 10, 400, 160)
 # 结算页右下角的「下一步」
 NEXT_ROI: Rect = (980, 630, 260, 60)
+# 标题菜单的按钮（三个都在才算，别的页面不会同时有）
+TITLE_MENU_MARKS = ("用户中心", "切换服务器", "清除缓存")
+# B 站 SDK 弹窗上方中间 bilibili 标志下面的标题（「用户中心」「登录记录」）
+SDK_TITLE_ROI: Rect = (480, 180, 320, 70)
+# 登录记录：账号名下面一行是「上次登录：n分钟前」。收起时只有选中的一行（名字在 (610,292)），
+# 展开后按最近登录排列，每行约 84px，能看到三行左右
+LOGIN_ROWS_ROI: Rect = (500, 265, 270, 310)
+LAST_LOGIN = "上次登录"
 # 标题画面右上角的 CRIWARE 标志（整页只有它读得稳）；「TAP TO START」读不准，只看那一带有没有字：
 # 刚启动时标题画面要加载一阵才出现这行字，这之前点击无效
 TITLE_LOGO_ROI: Rect = (1060, 50, 100, 35)
@@ -215,6 +228,14 @@ def classify(items: list[OcrItem]) -> Screen:
     for text, screen in _DIALOGS.items():
         if it := find(items, text):
             return _setting_dialog(items, it) if screen is Screen.LB_SETTING else screen
+    # 登录记录、用户中心叠在标题画面上（底下的 CRIWARE 还读得到），要先认
+    if find(items, "bilibili"):
+        if find(items, "登录记录", SDK_TITLE_ROI):
+            return Screen.LOGIN_HISTORY
+        if find(items, "用户中心", SDK_TITLE_ROI):
+            return Screen.USER_CENTER
+    if all(find(items, text) for text in TITLE_MENU_MARKS):
+        return Screen.TITLE_MENU
     for it in items:
         if it.h >= 50 and in_roi(it, LIVE_END_ROI) and _LIVE_END.match(_norm(it.text)):
             return Screen.LIVE_END
@@ -290,6 +311,29 @@ def maintenance_period(items: list[OcrItem]) -> str | None:
         if times:
             return " ~ ".join(f"{d} {t}" for d, t in times)
     return None
+
+
+def login_rows(items: list[OcrItem]) -> list[OcrItem]:
+    """登录记录里的账号名（从上到下）：下面紧跟着「上次登录」的那一项。"""
+    lasts = [it for it in items if LAST_LOGIN in it.text]
+    rows = [
+        it
+        for it in items
+        if LAST_LOGIN not in it.text
+        and in_roi(it, LOGIN_ROWS_ROI)
+        and any(abs(last.x - it.x) < 40 and 15 < last.cy - it.cy < 50 for last in lasts)
+    ]
+    return sorted(rows, key=lambda it: it.cy)
+
+
+def login_expanded(items: list[OcrItem]) -> bool:
+    """登录记录的账号列表展开了（盖住了下面的「登录」「切换其他账号」）。"""
+    return find(items, "切换其他账号") is None
+
+
+def account_key(text: str) -> str:
+    """比较账号名用：全角转半角、忽略大小写和空白。"""
+    return _compact(unicodedata.normalize("NFKC", text)).lower()
 
 
 def title_startable(items: list[OcrItem]) -> bool:

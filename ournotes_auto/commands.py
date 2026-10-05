@@ -318,6 +318,26 @@ def cmd_start(cfg: Config, args) -> int:
     return 0
 
 
+def cmd_switch_account(cfg: Config, args) -> int:
+    """在标题画面退出当前账号，从登录记录里选账号名包含 ``args.account`` 的账号登录，然后进入游戏。"""
+    from .runner import NavigationError
+
+    _launch_game(cfg)
+    with _device(cfg) as (source, touch):
+        nav = _game_navigator(cfg, args, source, touch)
+        try:
+            nav.switch_account(args.account, args.timeout)
+            screen = nav.ensure_in_game(args.timeout)
+        except NavigationError as e:
+            if args.stop.is_set():
+                logger.info("已停止")
+                return 130
+            logger.error("%s", e)
+            return 1
+    logger.info("已进入游戏（%s）", screen)
+    return 0
+
+
 def _daily_jobs(text: str) -> list[str]:
     import argparse
 
@@ -404,6 +424,11 @@ def register(sub) -> None:
     sp = sub.add_parser("start", help="启动游戏并等到进入游戏")
     sp.add_argument("--timeout", type=float, default=180.0, help="多久没进入游戏就报错（秒，重新登录时重新计时）")
     sp.set_defaults(func=cmd_start)
+
+    sp = sub.add_parser("switch-account", help="退出当前的 B 站账号，从登录记录里选另一个账号登录（不用密码），然后进入游戏")
+    sp.add_argument("account", help="账号名（游戏登录记录里显示的名字，写其中一部分也行，要只对得上一个账号）")
+    sp.add_argument("--timeout", type=float, default=180.0, help="多久没切换好 / 没进入游戏就报错（秒）")
+    sp.set_defaults(func=cmd_switch_account)
 
     sp = sub.add_parser(
         "daily", help="领取日常奖励（录音室练习、任务、通行证、限定/新手任务、T.G.W CARD、礼物盒），可选看故事"
