@@ -101,6 +101,8 @@ EN_WORDS = {
     "Limited-Time Mission": "限定任务",
     "Beginner Mission": "新手任务",
     "Shop": "商店",
+    "SHOP": "商店",  # 主界面底部的入口
+    "BAND": "乐队",
     "Catalog Shop": "专享商品目录",
     "Free": "免费",
     "Gift Box": "礼物盒",

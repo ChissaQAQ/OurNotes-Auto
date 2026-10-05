@@ -317,3 +317,10 @@ def test_result_cells_follow_labels():
         assert fast[0] < slow[0] and fast[1] == slow[1]
         assert abs(fast[1] + fast[3] / 2 - RESULT_ROW_Y[j]) < 5
     assert all(len(v) == 1 for v in result_cells(items, timing=False).values())
+
+
+def test_home_with_one_entry_unreadable():
+    """背景亮的时候底部入口个别字读不出（实机上漏过「招募」），认出两个就算主界面。"""
+    row = [("商店", 690), ("故事", 804), ("乐队", 916)]
+    assert classify([OcrItem(x - 20, 650, 40, 20, text) for text, x in row]) is Screen.HOME
+    assert classify([OcrItem(784, 650, 40, 20, "故事")]) is Screen.UNKNOWN

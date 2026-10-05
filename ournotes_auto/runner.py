@@ -287,6 +287,9 @@ class Runner:
         except ChartNotFound as e:
             self.source.done(song, diff, None, playable=False)
             raise NavigationError(f"谱面站没有 {song.music_id}_{diff}") from e
+        except ConnectionError as e:
+            # 谱面站一时连不上：算这局失败，下一局再试（连续失败够多才停）
+            raise NavigationError(str(e)) from e
         self.session.learned_offset_ms = self.store.learned_offset_ms
         lc = self.cfg.loop
         if lc.wait_lb and not self.cfg.game.lb_cost:
