@@ -9,6 +9,7 @@ from ournotes_auto.nav.screens import (
     CP_RADIO,
     RESULT_ROW_Y,
     Screen,
+    account_key,
     all_perfect_mark,
     band_confirm_song,
     challenge_rows,
@@ -23,6 +24,8 @@ from ournotes_auto.nav.screens import (
     lb_preview,
     lb_recover_amount,
     loading,
+    login_expanded,
+    login_rows,
     maintenance_period,
     note_speed,
     parse_difficulty,
@@ -89,6 +92,12 @@ def load(name: str) -> list[OcrItem]:
         ("title", Screen.TITLE),
         ("title_loading", Screen.TITLE),
         ("title_notify", Screen.NOTIFY),  # 标题画面上 B 站 SDK 的「开启消息通知」
+        # 切换账号：标题菜单、用户中心（往下滚出现「注销」）、登录记录（收起 / 展开），都叠在标题画面上
+        ("title_menu", Screen.TITLE_MENU),
+        ("user_center", Screen.USER_CENTER),
+        ("user_center_scrolled", Screen.USER_CENTER),
+        ("login_history", Screen.LOGIN_HISTORY),
+        ("login_history_expanded", Screen.LOGIN_HISTORY),
         ("connect_error", Screen.CONNECT_ERROR),  # 点 TAP TO START 后连不上服务器
         ("maintenance", Screen.MAINTENANCE),  # 服务器维护中（登录时、对局中途都会弹出）
         ("data_download", Screen.DATA_DOWNLOAD),  # 游戏更新后登录时下载追加数据
@@ -136,6 +145,17 @@ def test_loading():
 def test_title_startable():
     assert title_startable(load("title"))
     assert not title_startable(load("title_loading"))  # 刚启动，TAP TO START 还没出现
+
+
+def test_login_rows():
+    """登录记录的账号名：收起时只有选中的一行，展开后按最近登录从上到下；「登录」按钮不算。"""
+    collapsed = load("login_history")
+    assert [it.text for it in login_rows(collapsed)] == ["user_1234567890"]
+    assert not login_expanded(collapsed)
+    expanded = load("login_history_expanded")
+    assert [it.text for it in login_rows(expanded)] == ["user_98765432100", "user_1234567890"]
+    assert login_expanded(expanded)
+    assert account_key(" User_１２３ ") == "user_123"
 
 
 def test_maintenance_period():

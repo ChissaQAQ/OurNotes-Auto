@@ -342,6 +342,17 @@ def test_worker_args_start():
     assert worker_args("records", {}, {}) == ["records"]  # 不需要设备和选项
 
 
+def test_worker_args_switch_account():
+    """切换账号：账号名去掉首尾空白传给 switch-account，没填时报错。"""
+    from ournotes_auto.cli import build_parser
+
+    args = worker_args("switch_account", {"touch": "mumu", "account": " user_12 "}, {"device.instance": "1"})
+    assert args == ["--set", "device.instance=1", "--set", "device.touch=mumu", "switch-account", "user_12"]
+    assert build_parser().parse_args(args).account == "user_12"
+    with pytest.raises(ParamError, match="账号名"):
+        worker_args("switch_account", {"touch": "mumu", "account": "  "}, {})
+
+
 def test_worker_args_daily():
     from ournotes_auto.agent.params import DAILY_JOBS
     from ournotes_auto.cli import build_parser
@@ -498,7 +509,7 @@ def test_interface_tasks_match_agent():
         assert param["custom_action"] == "OurNotesRun"
         agent_task = param["custom_action_param"]["task"]
         assert TASKS[agent_task] == task["name"]
-        worker_args(agent_task, defaults, {})
+        worker_args(agent_task, {**defaults, "account": "user_1"}, {})  # 切换账号的账号名没有默认值
         seen.add(agent_task)
     assert seen == set(TASKS)
 

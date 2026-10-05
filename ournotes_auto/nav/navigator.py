@@ -81,6 +81,8 @@ from .screens import (
     lb_preview,
     lb_recover_amount,
     loading,
+    login_expanded,
+    login_rows,
     maintenance_period,
     note_speed,
     parse_level,
@@ -88,6 +90,7 @@ from .screens import (
     skip_button,
     title_startable,
 )
+from .account import BTN_LOGIN, BTN_MENU_CLOSE, BTN_USER_CENTER_BACK, AccountMixin
 from .challenge import BTN_CP_CANCEL, CHALLENGE_SCREENS, CP_CANCEL_ROI, ChallengeMixin
 from .daily import DailyMixin
 from .song_select import (
@@ -209,7 +212,7 @@ def plan_refill(drinks: list[LbDrink], need: int, budget: int | None) -> list[in
     return plan
 
 
-class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
+class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, AccountMixin):
     def __init__(
         self,
         config: Config,
@@ -496,6 +499,19 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin):
             self._on_title(items)
         elif screen is Screen.NOTIFY:
             self.tap(BTN_NOTIFY_CLOSE, "关闭「开启消息通知」")
+        elif screen is Screen.TITLE_MENU:
+            self.tap(BTN_MENU_CLOSE, "关闭")
+        elif screen is Screen.USER_CENTER:
+            self.tap(BTN_USER_CENTER_BACK, "返回")
+        elif screen is Screen.LOGIN_HISTORY:
+            # 账号退出了登录（不是切换账号时）：登录上次登录的账号；列表展开着时选第一行（最近登录的）
+            if login_expanded(items):
+                if not (rows := login_rows(items)):
+                    return False
+                self.tap(center(rows[0]), "选择最近登录的账号")
+            else:
+                logger.warning("账号未登录，登录上次登录的账号")
+                self.tap(BTN_LOGIN, "登录")
         elif screen is Screen.CONNECT_ERROR:
             self._connect_errors += 1
             if self._connect_errors > MAX_CONNECT_RETRIES:

@@ -28,6 +28,7 @@
             "ap_max_attempts": 3,
             "challenge_song_mode": "rotate",
             "challenge_cost": 200,
+            "account": "",
             "daily_studio": true,
             "daily_story": false,
             "daily_missions": true,
@@ -45,6 +46,17 @@
                 "custom_action": "OurNotesRun",
                 "custom_action_param": {
                     "task": "start"
+                }
+            }
+        }
+    },
+    "OurNotes_SwitchAccount": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "switch_account"
                 }
             }
         }

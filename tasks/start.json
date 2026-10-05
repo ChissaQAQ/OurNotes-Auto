@@ -8,6 +8,34 @@
             ],
             "description": "游戏没在运行时启动它，等到进入主界面：会点掉标题画面、领取登录奖励、关闭公告。放在其他任务前面。",
             "default_check": true
+        },
+        {
+            "name": "切换账号",
+            "entry": "OurNotes_SwitchAccount",
+            "group": [
+                "play"
+            ],
+            "description": "退出当前的 B 站账号，从游戏的登录记录里选填写的账号登录（不用输密码），然后进入游戏；已经在游戏里时会先重启游戏回到标题画面。只能切到登录记录里有的账号：新账号请先在游戏里手动登录一次。多个账号轮流打：任务列表里按「切换账号(A) → 其他任务 → 切换账号(B) → 其他任务」排，每个切换账号填各自的账号名。",
+            "option": [
+                "Account"
+            ]
         }
-    ]
+    ],
+    "option": {
+        "Account": {
+            "type": "input",
+            "label": "账号",
+            "inputs": [
+                {
+                    "name": "account",
+                    "label": "账号名（登录记录里显示的名字，写一部分也行，要只对得上一个账号）",
+                    "default": "",
+                    "pipeline_type": "string",
+                    "verify": "\\S",
+                    "pattern_msg": "请填写账号名"
+                }
+            ],
+            "pipeline_override": { "OurNotesParam": { "attach": { "account": "{account}" } } }
+        }
+    }
 }
