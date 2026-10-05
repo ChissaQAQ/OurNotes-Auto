@@ -27,6 +27,7 @@ from ournotes_auto.nav.daily import (
     reward_close,
     reward_ok,
 )
+from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import center
 from ournotes_auto.result_reader import OcrItem
@@ -37,7 +38,7 @@ SCREENS = Path(__file__).parent / "fixtures" / "screens"
 
 def load_items(name: str) -> list[OcrItem]:
     data = json.loads((SCREENS / f"{name}.json").read_text(encoding="utf-8"))
-    return [OcrItem(x, y, w, h, text) for x, y, w, h, text in data]
+    return [OcrItem(x, y, w, h, localize(text)) for x, y, w, h, text in data]
 
 # 夹具 → 页面标题
 PAGES = {

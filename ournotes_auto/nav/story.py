@@ -38,7 +38,10 @@ BTN_BAND_STORY = (700, 440)  # 故事菜单：乐队故事
 BAND_STORY_BADGE = (769, 395)
 BTN_BOND_STORY = (900, 440)  # 故事菜单：羁绊故事
 BOND_STORY_BADGE = (967, 395)
-STORY_MENU_ROI: Rect = (600, 480, 420, 50)  # 菜单两个按钮下方的文字「乐队故事」「羁绊故事」
+# 菜单按钮下方的文字「乐队故事」「羁绊故事」。有「特别故事」时是三个按钮，整排左移，所以按文字的位置点按钮、看红点
+STORY_MENU_ROI: Rect = (450, 480, 620, 50)
+STORY_MENU_BUTTON_OFFSET = (-5, -66)  # 按钮中心相对文字中心
+STORY_MENU_BADGE_OFFSET = (64, -111)  # 红点相对文字中心
 CHAPTERS_TITLE = "乐队故事章节选择"
 EPISODES_TITLE = "乐队故事话数选择"
 BOND_MEMBERS_TITLE = "羁绊故事"
@@ -246,7 +249,8 @@ class StoryMixin:
     def _daily_story(self) -> None:
         if not self._open_story_menu():
             return
-        band, bond = self._badge(BAND_STORY_BADGE), self._badge(BOND_STORY_BADGE)
+        band = self._badge(self._menu_point("乐队故事", BAND_STORY_BADGE, STORY_MENU_BADGE_OFFSET))
+        bond = self._badge(self._menu_point("羁绊故事", BOND_STORY_BADGE, STORY_MENU_BADGE_OFFSET))
         if not (band or bond):
             logger.info("故事：没有没看过的")
             self._close_story_menu()
@@ -332,8 +336,13 @@ class StoryMixin:
         self.tap(BTN_HOME_STORY, "收起故事菜单")
         self._sleep(1.0)
 
+    def _menu_point(self, name: str, default: tuple[int, int], offset: tuple[int, int]) -> tuple[int, int]:
+        """故事菜单上 ``name`` 的按钮 / 红点（按最近一帧上文字的位置，没读到时用 ``default``）。"""
+        it = find(self._items, name, STORY_MENU_ROI)
+        return default if it is None else _offset(center(it), offset)
+
     def _enter_story(self, button: tuple[int, int], name: str, title: str) -> None:
-        self.tap(button, name)
+        self.tap(self._menu_point(name, button, STORY_MENU_BUTTON_OFFSET), name)
         if not self._wait_story(title):
             error = self._fail(f"没能打开{name}")
             if story_menu_open(self._items):

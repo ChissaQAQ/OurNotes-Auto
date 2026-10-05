@@ -13,6 +13,7 @@ import pytest
 from ournotes_auto import sources
 from ournotes_auto.config import Config
 from ournotes_auto.nav import navigator
+from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import (
     CLEAR_MARK_ROI,
@@ -40,7 +41,7 @@ MODEL_DIR = Path("resource") / "model" / "ocr"
 
 def load_items(name: str) -> list[OcrItem]:
     data = json.loads((FIXTURES / "screens" / f"{name}.json").read_text(encoding="utf-8"))
-    return [OcrItem(x, y, w, h, text) for x, y, w, h, text in data]
+    return [OcrItem(x, y, w, h, localize(text)) for x, y, w, h, text in data]
 
 
 def make_nav(source, touch, ocr) -> GameNavigator:

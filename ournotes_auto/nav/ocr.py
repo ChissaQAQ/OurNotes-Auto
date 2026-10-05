@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from ..result_reader import OcrItem
+from .lang import localize
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +73,18 @@ def _null_controller():
 
 
 class MaaOcr:
-    """``read`` 返回的坐标已换算到 ``design`` 尺寸（默认 1280x720），界面坐标表都按该尺寸书写。"""
+    """``read`` 返回的坐标已换算到 ``design`` 尺寸（默认 1280x720），界面坐标表都按该尺寸书写。
 
-    def __init__(self, bundle: str | Path = "resource", model: str = "", design: tuple[int, int] = (1280, 720)):
+    读到的文字经 :func:`~ournotes_auto.nav.lang.localize` 换成简中界面上的说法（``raw`` 时原样返回）。
+    """
+
+    def __init__(
+        self,
+        bundle: str | Path = "resource",
+        model: str = "",
+        design: tuple[int, int] = (1280, 720),
+        raw: bool = False,
+    ):
         from maa.resource import Resource
         from maa.tasker import Tasker
 
@@ -86,6 +96,7 @@ class MaaOcr:
             )
         self.model = model
         self.design = design
+        self._text = (lambda t: t) if raw else localize
         self._resource = Resource()
         if not self._resource.post_bundle(Path(bundle)).wait().succeeded:
             raise OcrUnavailable(f"MaaFramework 加载资源 {bundle} 失败")
@@ -114,7 +125,7 @@ class MaaOcr:
         results, sx, sy = self._run(image, roi, only_rec=False)
         items = []
         for r in results:
-            text = r.text.strip()
+            text = self._text(r.text.strip())
             if not text:
                 continue
             bx, by, bw, bh = r.box
@@ -127,4 +138,4 @@ class MaaOcr:
         结算页上孤立的单个数字（如 0、2）经常被检测到却识别为空，逐格识别可靠得多。
         """
         results, _, _ = self._run(image, roi, only_rec=True)
-        return results[0].text.strip() if results else ""
+        return self._text(results[0].text.strip()) if results else ""

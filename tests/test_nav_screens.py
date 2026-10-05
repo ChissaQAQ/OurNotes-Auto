@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.screens import (
     CP_RADIO,
     RESULT_ROW_Y,
@@ -43,7 +44,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "screens"
 
 def load(name: str) -> list[OcrItem]:
     data = json.loads((FIXTURES / f"{name}.json").read_text(encoding="utf-8"))
-    return [OcrItem(x, y, w, h, text) for x, y, w, h, text in data]
+    return [OcrItem(x, y, w, h, localize(text)) for x, y, w, h, text in data]
 
 
 @pytest.mark.parametrize(
@@ -166,11 +167,11 @@ def test_maintenance_period():
 def test_band_confirm_song():
     assert band_confirm_song(load("band_confirm")) == ("迷星叫", "expert")
     assert band_confirm_song(load("band_confirm_avemujica")) == ("AveMujica", "expert")
-    assert band_confirm_song(load("band_confirm_lb_timer")) == ("無路矢", "expert")
+    assert band_confirm_song(load("band_confirm_lb_timer")) == ("无路矢", "expert")  # 繁体字都转成了简体
 
 
 def test_challenge_band_confirm_song():
-    assert band_confirm_song(load("challenge_band_confirm")) == ("夢我夢中", "expert")
+    assert band_confirm_song(load("challenge_band_confirm")) == ("梦我梦中", "expert")
 
 
 def test_setting_dialog_title():
@@ -200,21 +201,21 @@ def test_cp_radio_matches_costs():
 
 def test_challenge_rows():
     rows = challenge_rows(load("challenge_song_select"))
-    assert [t for t, _ in rows] == ["夢我夢中", "これはぼくたちの生存のあらすじ", "オリオンをなぞる"]  # 不含等级、MV
+    assert [t for t, _ in rows] == ["梦我梦中", "これはぼくたちの生存のあらすじ", "オリオンをなぞる"]  # 不含等级、MV
     assert challenge_selected(rows) == 0
     rows = challenge_rows(load("challenge_song_select_last"))  # 选中最后一首，列表滚到底
     assert [t for t, _ in rows][-1] == "オリオンをなぞる"
     assert challenge_selected(rows) == 2
-    assert challenge_selected([("夢我夢中", 110.0), ("オリオンをなぞる", 212.0)]) is None
+    assert challenge_selected([("梦我梦中", 110.0), ("オリオンをなぞる", 212.0)]) is None
     rows = challenge_rows(load("challenge_song_select_ap"))  # 选中中间那首，选中行的曲名截断了
-    assert [t for t, _ in rows] == ["夢我夢中", "これはぼくたちの生存の", "オリオンをなぞる"]
+    assert [t for t, _ in rows] == ["梦我梦中", "これはぼくたちの生存の", "オリオンをなぞる"]
     assert challenge_selected(rows) == 1
 
 
 @pytest.mark.parametrize(
     "name, title, ap",
     [
-        ("challenge_song_select", "夢我夢中", False),  # 没打过：HIGH SCORE 0
+        ("challenge_song_select", "梦我梦中", False),  # 没打过：HIGH SCORE 0
         ("challenge_song_select_last", "オリオンをなぞる", False),
         ("challenge_song_select_ap", "これはぼくたちの生存のあらて", True),  # 面板上是完整曲名（末尾读错）
     ],
@@ -229,11 +230,11 @@ def test_select_panel(name, title, ap):
 
 def test_same_title():
     assert same_title("これはぼくたちの生存の", "これはぼくたちの生存のあらすじ")  # 选中行截断
-    assert same_title("夢我夢中", "夢我夢中 ")
+    assert same_title("梦我梦中", "梦我梦中 ")
     assert same_title(";ぼくたちの生存のあらす", "これはぼくたちの生存のあらて")  # 选中行的曲名在滚动
     assert same_title("の生存のあらすじこれは", "これはぼくたちの生存のあらすじ")
-    assert not same_title("夢我夢中", "オリオンをなぞる")
-    assert not same_title("夢我夢中", None) and not same_title("", "")
+    assert not same_title("梦我梦中", "オリオンをなぞる")
+    assert not same_title("梦我梦中", None) and not same_title("", "")
     assert same_title("R", "R") and not same_title("R", "Rubato")
 
 

@@ -11,6 +11,7 @@ import pytest
 
 from ournotes_auto.config import Config
 from ournotes_auto.nav import daily, story
+from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import Screen, classify
 from ournotes_auto.nav.story import (
@@ -44,7 +45,7 @@ UNKNOWN_CONFIRM = [OcrItem(560, 300, 160, 30, "要领取吗？"), OcrItem(760, 6
 
 def load_items(name: str) -> list[OcrItem]:
     data = json.loads((SCREENS / f"{name}.json").read_text(encoding="utf-8"))
-    return [OcrItem(x, y, w, h, text) for x, y, w, h, text in data]
+    return [OcrItem(x, y, w, h, localize(text)) for x, y, w, h, text in data]
 
 
 RED = (48, 48, 241)  # BGR，截图里红点的颜色

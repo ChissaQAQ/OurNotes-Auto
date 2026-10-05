@@ -207,6 +207,11 @@ def skip_button(items: list[OcrItem]) -> OcrItem | None:
     return next((it for text in SKIP_TEXTS if (it := find(items, text, SKIP_CORNER_ROI))), None)
 
 
+def next_button(items: list[OcrItem]) -> OcrItem | None:
+    """结算页右下角的「下一步」（繁中界面是「繼續」）。"""
+    return find(items, "下一步", NEXT_ROI, exact=True) or find(items, "继续", NEXT_ROI, exact=True)
+
+
 def loading(items: list[OcrItem]) -> bool:
     """加载、下载中的画面（「NOW LOADING」、下载进度）。"""
     return any(text in it.text.upper() for it in items for text in LOADING_TEXTS)
@@ -268,15 +273,18 @@ def classify(items: list[OcrItem]) -> Screen:
         if find(items, "玩家等级"):
             return Screen.RESULT_REWARD
         # 「羁绊」常读成「霜绊」
-        if find(items, "下一步", NEXT_ROI, exact=True) and (find(items, "详情") or find(items, "绊EXP")):
+        # 繁中界面上每一页都是「繼續」，最后一页也认成这个（同样点右下角）
+        if next_button(items) and (find(items, "详情") or find(items, "绊EXP")):
             return Screen.RESULT_EXP_NEXT
         return Screen.RESULT_OTHER
     for text, screen in _TITLES.items():
         if find(items, text, TITLE_ROI):
             if screen is Screen.SONG_SELECT and _challenge_song_select(items):
                 return Screen.CHALLENGE_SONG_SELECT
+            # English 界面上「消耗LB」按钮也叫「Settings」，但上面有「Use All x1 Left」（全部消耗剩余n次）
             if screen is Screen.BAND_CONFIRM and (
-                find(items, "设置", CP_BUTTON_ROI, exact=True) or find(items, "CP", CP_ICON_ROI, exact=True)
+                (find(items, "设置", CP_BUTTON_ROI, exact=True) and not find(items, "全部消耗"))
+                or find(items, "CP", CP_ICON_ROI, exact=True)
             ):
                 return Screen.CHALLENGE_BAND_CONFIRM
             return screen
