@@ -9,14 +9,15 @@ from dataclasses import dataclass, field
 
 from rapidfuzz import fuzz, process
 
+from ..nav.lang import localize
 from .bdon import BdonClient
 
 logger = logging.getLogger(__name__)
 
 
 def normalize(text: str) -> str:
-    """全半角统一、去空白与常见标点、转小写，减少 OCR 误差的影响。"""
-    text = unicodedata.normalize("NFKC", text).lower().replace("|", "l")  # OCR 常把 l/I 读成 |
+    """全半角统一、和 OCR 结果一样换成简中说法（繁体转简体等）、去空白与常见标点、转小写，减少 OCR 误差的影响。"""
+    text = localize(unicodedata.normalize("NFKC", text)).lower().replace("|", "l")  # OCR 常把 l/I 读成 |
     return re.sub(r"[\s　·・,，.。!！?？'\"“”‘’()（）\[\]【】「」『』~〜\-－_:：/]", "", text)
 
 

@@ -60,7 +60,6 @@ from .screens import (
     LB_TAB_ITEMS,
     LB_TAB_OTHERS,
     LEVEL_ROI,
-    NEXT_ROI,
     OK_POPUP_ROI,
     RELOGIN_SCREENS,
     RESULT_COMBO_ROI,
@@ -84,6 +83,7 @@ from .screens import (
     login_expanded,
     login_rows,
     maintenance_period,
+    next_button,
     note_speed,
     parse_level,
     result_cells,
@@ -451,7 +451,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
             self.tap(TAP_NEW_SONG, "TAP TO NEXT")
         elif screen in (Screen.RESULT,Screen.RESULT_REWARD, Screen.RESULT_EXP_NEXT):
             self.tap(self._button(items, "下一步", BTN_NEXT), "下一步")
-        elif screen is Screen.RESULT_OTHER and (it := find(items, "下一步", NEXT_ROI, exact=True)):
+        elif screen is Screen.RESULT_OTHER and (it := next_button(items)):
             # 没见过的结算页（活动可能多出几页）。读判定数时不经过这里，所以看到「下一步」就点
             self.tap(center(it), "下一步")
         elif screen is Screen.RESULT_EXP:

@@ -89,11 +89,12 @@ _DAY_TAB = re.compile(r"\d+天")
 BTN_PASS_MISSIONS = (1165, 40)
 PASS_MISSIONS_ROI: Rect = (1080, 10, 190, 60)
 # 任务通行证页左侧的通行证列表（活动通行证和赛季通行证可能同时有），每个横幅下面写着截止时间。
-# 选中的横幅放大、右移，截止时间的中心 x≈178，没选中的 x≈138；横幅图片在截止时间上方约 55px
+# 选中的横幅放大、右移，截止时间的左边 x≈80~96，没选中的 x≈62；横幅图片在截止时间上方约 55px。
+# 选中的截止时间偶尔被拆成「2026」「0:59」两段，只认得出年份也算
 PASS_LIST_ROI: Rect = (0, 80, 300, 640)
-PASS_SELECTED_X = 158
+PASS_SELECTED_LEFT = 72
 PASS_BANNER_DY = -55
-_PASS_DATE = re.compile(r"\d{4}/\d{1,2}/\d{1,2}")
+_PASS_DATE = re.compile(r"20\d{2}(/\d{1,2}/\d{1,2}|$)")
 # 商店左下角的 T.G.W CARD 入口；左侧分页从上到下是星钻、礼包、T.G.W CARD 专享商品目录、交织的乐章通行证
 BTN_TGW = (113, 555)
 TGW_ROI: Rect = (0, 480, 240, 140)
@@ -246,7 +247,7 @@ def pass_banners(items: list[OcrItem]) -> list[tuple[str, tuple[int, int], bool]
         m = _PASS_DATE.match(_compact(it.text))
         if m and in_roi(it, PASS_LIST_ROI):
             x, y = center(it)
-            banners.append((m.group(), (x, y + PASS_BANNER_DY), x >= PASS_SELECTED_X))
+            banners.append((m.group(), (x, y + PASS_BANNER_DY), it.x >= PASS_SELECTED_LEFT))
     return sorted(banners, key=lambda b: b[1][1])
 
 
