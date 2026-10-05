@@ -707,6 +707,21 @@ def test_runner_marks_missing_chart_unplayable(tmp_path):
     assert src.log[-1] == ("close",)
 
 
+def test_runner_counts_chart_download_error_as_failure(tmp_path):
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.max_plays = 0
+    runner.cfg.loop.max_failures = 2
+    runner.source = src = ApSource(songs=5)
+
+    def offline(mid, diff, title=""):
+        raise ConnectionError("无法下载")
+
+    runner.client.chart = offline
+    stats = runner.run()  # 谱面站连不上：算失败，不是直接崩掉
+    assert stats.failures == 2
+    assert not any(entry[0] == "done" for entry in src.log)
+
+
 def test_runner_skips_close_when_stopped(tmp_path):
     from ournotes_auto.runner import NavigationError
 

@@ -150,6 +150,9 @@ NEW_SONG_ROI: Rect = (440, 60, 400, 100)
 REWARD_ROI: Rect = (440, 10, 400, 160)
 # 结算页右下角的「下一步」
 NEXT_ROI: Rect = (980, 630, 260, 60)
+# 主界面底部一排入口的文字（右边的「演出」在大图标上，不在这个范围）
+HOME_ENTRIES = ("招募", "商店", "故事", "乐队")
+HOME_ENTRIES_ROI: Rect = (500, 620, 450, 60)
 # 标题菜单的按钮（三个都在才算，别的页面不会同时有）
 TITLE_MENU_MARKS = ("用户中心", "切换服务器", "清除缓存")
 # B 站 SDK 弹窗上方中间 bilibili 标志下面的标题（「用户中心」「登录记录」）
@@ -288,8 +291,8 @@ def classify(items: list[OcrItem]) -> Screen:
             ):
                 return Screen.CHALLENGE_BAND_CONFIRM
             return screen
-    # 主界面没有标题，底部一排入口
-    if find(items, "招募", (500, 620, 450, 60)) and find(items, "故事", (500, 620, 450, 60)):
+    # 主界面没有标题，底部一排入口：认出两个就算（背景亮的时候个别字会读不出来）
+    if sum(find(items, text, HOME_ENTRIES_ROI) is not None for text in HOME_ENTRIES) >= 2:
         return Screen.HOME
     if find(items, "SKIP", PLAYER_MENU_ROI, exact=True):
         return Screen.STORY_MENU
