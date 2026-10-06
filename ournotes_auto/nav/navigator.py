@@ -633,10 +633,20 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
                 self.tap(BTN_DIFFICULTY[diff], diff.upper())
                 self._sleep(0.6)
                 self.tap(self._button(items, "确定", BTN_SONG_OK), "确定")
+                # 游戏卡的时候过一阵才切到乐队确认页：等它切过去再看，免得再点一遍难度（点在乐队确认页上会打开综合能力详情）
+                self._wait_leave(screen)
                 acted = True
             else:
                 acted = self._common_step(screen, items)
             self._sleep(self.settle_s if acted else 0.5)
+
+    def _wait_leave(self, screen: Screen, timeout_s: float = 4.0) -> None:
+        """点了按钮之后等画面离开 ``screen``（最多 ``timeout_s``）。"""
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            self._sleep(0.5)
+            if self.look()[0] is not screen:
+                return
 
     def selected_song(self) -> SongLabel:
         """刚进入乐队确认页时曲名还可能在动画中（曾读成单个「编」字），连续两次读数一致才采用。"""

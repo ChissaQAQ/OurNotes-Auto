@@ -65,6 +65,7 @@ def load(name: str) -> list[OcrItem]:
         ("band_confirm", Screen.BAND_CONFIRM),
         ("band_confirm_avemujica", Screen.BAND_CONFIRM),
         ("band_confirm_lb_timer", Screen.BAND_CONFIRM),  # LB 没满，顶栏有恢复倒计时
+        ("band_power", Screen.POPUP),  # 乐队确认页上误点开的「综合能力详情」，左下是「关闭」
         ("live_options", Screen.LIVE_OPTIONS),
         ("live_top", Screen.LIVE_TOP),
         ("live_top_challenge", Screen.LIVE_TOP),  # 活动期间多了「挑战演出」
