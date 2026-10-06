@@ -9,13 +9,17 @@
 
     话数选择右上角切到「视角故事」分页：底部是各成员的「视角Ver.」卡片，选中后同样点观看故事
 
+    主界面 -[演出]-> 演出首页 -[活动]-> 活动页（标题随活动类型变，右边有「活动故事」）-[活动故事]->
+    活动故事话数选择（右上角「活动故事」「视角故事」两个分页，布局同乐队故事）-[卡片 → 观看故事]-> …（同上）
+
     故事菜单 -[羁绊故事]-> 羁绊故事（左侧乐队分页，右边五个成员）-[成员]-> 羁绊故事选择（和其他成员的组合）
     -[组合]-> 羁绊故事弹窗（各话一行，锁着的有锁）-[那一话]-> 要下载语音数据… → 播放 → … → 领取奖励 -[OK]-> 弹窗
 
 - 没看过的故事在菜单按钮、分页、章节 / 成员 / 组合、话的右上角有红点，只进有红点的。锁着的（视角故事要达成
   解锁条件，羁绊故事按羁绊等级解锁）没有红点。
 - 每一话第一次看要下载数据（无语音约 30MB），网络慢时要等一会儿。
-- 只点上面这些按钮；认不出的确认框不点、报错停下。
+- 活动故事一次只解锁下一话（后面的有锁、没有红点），看完一话再看下一话。
+- 只点上面这些按钮；认不出的确认框不点、报错停下。活动页上的交换所、乐队编队、演出都不点。
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from .screens import CLOSE_ROI, PLAYER_MENU_ROI, TITLE_ROI, Rect, Screen, center
 logger = logging.getLogger(__name__)
 
 BTN_HOME_STORY = (805, 625)  # 主界面：故事（打开菜单后再点一次收起）
+BTN_HOME_LIVE = (1081, 650)  # 主界面：演出
 BTN_BAND_STORY = (700, 440)  # 故事菜单：乐队故事
 BAND_STORY_BADGE = (769, 395)
 BTN_BOND_STORY = (900, 440)  # 故事菜单：羁绊故事
@@ -123,13 +128,36 @@ PLAYER_MENU_RING = ((1182, 101), (1220, 101), (1201, 122))
 BTN_SKIP = (1201, 168)
 PLAYER_MENU_GAP_S = 3.0  # 菜单展开要一点时间，点了没反应隔这么久再点
 
+# 限时活动：演出首页右下角的「活动」，活动页右边的「活动故事」（红点在文字右上方）
+EVENT_ENTRY_ROI: Rect = (1060, 600, 180, 80)
+EVENT_STORY_ROI: Rect = (1030, 360, 230, 70)
+EVENT_STORY_BADGE_OFFSET = (101, -22)
+EVENT_EPISODES_TITLE = "活动故事话数选择"
+EVENT_TAB_BADGE = (877, 16)  # 「活动故事」分页的红点（视角故事分页的是 POV_TAB_BADGE）
+# 活动故事话数选择：底部卡片右下角是时长「04:46」，左下角是这话的标题，左侧简介里是选中那话的标题。
+# 两个分页的卡片一样（视角故事的卡片上没有「第N话」「视角Ver.」），所以按时长认卡片。
+# 选中的卡片四角有一闪一闪的青色光框（没选中的只有白色细边框）：看下面两个角上青色的像素占多少。
+# 卡片上的小字标题和简介里的大字标题 OCR 可能读得不一样（韩文尤其），所以不按标题核对选中的。
+# 红点在时长右上方约 (+30~+45, -70)；相邻卡片相距约 266
+EVENT_TIME_ROI: Rect = (20, 630, 950, 40)
+EVENT_CARD_NAME_ROI: Rect = (20, 660, 950, 35)
+EVENT_CARD_NAME_DX = range(-230, -20)  # 标题在时长左边
+EVENT_BADGE_DX = range(10, 66, 4)
+EVENT_BADGE_DY = -70
+EVENT_CARD_OFFSET = (-100, -40)  # 从时长点到卡片缩略图上
+EVENT_SELECTED_CORNERS = (((-196, 35), 0.08), ((38, 35), 0.15))  # (相对时长的位置, 青色像素占比超过多少算选中)
+EVENT_SELECTED_RADIUS = 14
+EVENT_NAME_ROI: Rect = (60, 335, 520, 50)
+_DURATION = re.compile(r"\d{1,2}:\d{2}")
+EVENT_DRAG = ((850, 630), (250, 630))
+
 EPISODE_TIMEOUT_S = 180.0  # 一话从点观看到回到话数选择（含下载）
 MAX_EPISODES = 60  # 一个章节 / 组合最多看这么多话（防止认错了一直循环）
 BADGE_RADIUS = 10
 
 
 def story_title(items: list[OcrItem]) -> str | None:
-    for title in (CHAPTERS_TITLE, EPISODES_TITLE, BOND_MEMBERS_TITLE, BOND_PAIRS_TITLE):
+    for title in (CHAPTERS_TITLE, EPISODES_TITLE, BOND_MEMBERS_TITLE, BOND_PAIRS_TITLE, EVENT_EPISODES_TITLE):
         if find(items, title, TITLE_ROI, exact=True):
             return title
     return None
@@ -182,6 +210,35 @@ def pov_cards(items: list[OcrItem]) -> list[tuple[str, tuple[int, int]]]:
         if any(abs(vx - x) <= 25 and 10 <= vy - y <= 30 for vx, vy in vers):
             cards.append((_compact(it.text), (x, y)))
     return sorted(cards, key=lambda c: c[1][0])
+
+
+def event_cards(items: list[OcrItem]) -> list[tuple[str, tuple[int, int]]]:
+    """活动故事话数选择底部的卡片（标题和时长的位置），从左到右。标题没读到时是空串。"""
+    names = [(_compact(it.text), center(it)) for it in items if in_roi(it, EVENT_CARD_NAME_ROI)]
+    cards = []
+    for it in items:
+        if not (in_roi(it, EVENT_TIME_ROI) and _DURATION.search(it.text)):
+            continue
+        x, y = center(it)
+        name = next((n for n, (nx, _) in names if nx - x in EVENT_CARD_NAME_DX), "")
+        cards.append((name, (x, y)))
+    return sorted(cards, key=lambda c: c[1][0])
+
+
+def selected_event_episode(items: list[OcrItem]) -> str | None:
+    """活动故事话数选择左侧简介里的标题（选中的那话）。"""
+    names = [it for it in items if in_roi(it, EVENT_NAME_ROI) and not _EPISODE.fullmatch(_compact(it.text))]
+    return _compact(max(names, key=lambda it: it.h).text) if names else None
+
+
+def _same_title(a: str | None, b: str) -> bool:
+    """两处读到的同一个标题：中间的点有时读成「・」有时「·」，只比字母、数字、汉字等。"""
+    return a is not None and re.sub(r"\W", "", a) == re.sub(r"\W", "", b)
+
+
+def event_story_button(items: list[OcrItem]) -> OcrItem | None:
+    """活动页右边的「活动故事」按钮（没有限时活动、活动没有故事时没有）。"""
+    return find(items, "活动故事", EVENT_STORY_ROI, exact=True)
 
 
 def _same_name(a: str | None, b: str) -> bool:
@@ -241,6 +298,10 @@ def _episodes_page(items: list[OcrItem]) -> bool:
     return story_title(items) == EPISODES_TITLE and not find(items, "要下载")
 
 
+def _event_page(items: list[OcrItem]) -> bool:
+    return story_title(items) == EVENT_EPISODES_TITLE and not find(items, "要下载")
+
+
 def _bond_popup_back(items: list[OcrItem]) -> bool:
     return bond_popup(items) and not find(items, "要下载")
 
@@ -251,6 +312,10 @@ def _band_key(items: list[OcrItem]):
 
 def _pov_key(items: list[OcrItem]):
     return selected_pov(items), pov_cards(items)
+
+
+def _event_key(items: list[OcrItem]):
+    return selected_event_episode(items), event_cards(items)
 
 
 class StoryMixin:
@@ -477,21 +542,134 @@ class StoryMixin:
         x, y = name_pos
         return self._badge_near((x + dx for dx in POV_BADGE_DX), y + POV_BADGE_DY)
 
-    def _settle_episodes(self, key: Callable[[list[OcrItem]], object] = _band_key) -> None:
-        """等话数列表滚动停下：连续两帧 ``key``（选中的和卡片位置）一样。"""
+    def _settle_episodes(self, key: Callable[[list[OcrItem]], object] = _band_key, title: str = EPISODES_TITLE) -> None:
+        """等话数列表滚动停下：连续两帧 ``key``（选中的和卡片位置）一样。顺手关掉领取奖励等已知弹窗。"""
         prev = None
         for _ in range(8):
             self._sleep(0.8)
-            self.look()
-            if story_title(self._items) != EPISODES_TITLE:
+            screen, items = self.look()
+            if story_title(items) != title:
+                # 活动故事看完回到话数选择后才弹出领取奖励
+                self._dismiss(screen, items)
                 prev = None
                 continue
             now = key(self._items)
             if now == prev:
                 return
             prev = now
-        if story_title(self._items) != EPISODES_TITLE:
+        if story_title(self._items) != title:
             raise self._fail("不在话数选择页")
+
+    # ------------------------------------------------------------ 活动故事
+
+    def _daily_event(self) -> None:
+        """演出首页 → 活动页 → 活动故事：把活动故事、视角故事两个分页里有红点的话看完。没有限时活动时跳过。"""
+        if not self._open_event_page():
+            return
+        button = event_story_button(self._items)
+        if not self._badge(_offset(center(button), EVENT_STORY_BADGE_OFFSET)):
+            logger.info("活动故事：没有没看过的")
+            return
+        self.tap(center(button), "活动故事")
+        if not self._wait_story(EVENT_EPISODES_TITLE):
+            raise self._fail("没能打开活动故事")
+        watched = 0
+        for tab, badge, name in ((BTN_EPISODE_TAB, EVENT_TAB_BADGE, "活动故事"), (BTN_POV_TAB, POV_TAB_BADGE, "视角故事")):
+            if self._badge(badge):
+                watched += self._event_episodes(tab, badge, name)
+        logger.info("活动故事：看了 %d 话", watched)
+
+    def _open_event_page(self, timeout_s: float = 30.0) -> bool:
+        """主界面 → 演出首页 → 活动页，停在有「活动故事」按钮的活动页。
+        演出首页没有「活动」（现在没有限时活动）、活动页上没有「活动故事」时返回 False。"""
+        self.tap(BTN_HOME_LIVE, "演出")
+        deadline = time.monotonic() + timeout_s
+        tapped = None
+        while time.monotonic() < deadline:
+            self._sleep(1.0)
+            screen, items = self.look()
+            if event_story_button(items) is not None:
+                self._sleep(1.0)  # 等红点出来
+                self.look()
+                return True
+            if self._dismiss(screen, items):
+                continue
+            if screen is Screen.LIVE_TOP and tapped is None:
+                entry = find(items, "活动", EVENT_ENTRY_ROI, exact=True)
+                if entry is None:
+                    logger.info("活动故事：演出首页没有「活动」（现在没有限时活动）")
+                    return False
+                self.tap(center(entry), "活动")
+                tapped = time.monotonic()
+            elif tapped is not None and time.monotonic() - tapped > 15:
+                break
+        logger.info("活动故事：没能打开活动页，或活动页上没有「活动故事」")
+        return False
+
+    def _event_episodes(self, tab: tuple[int, int], badge: tuple[int, int], label: str) -> int:
+        """切到 ``tab`` 分页，把有红点的卡片逐个看完，返回看了几话。看得到的都没红点、分页上还有时往左拖一次。"""
+        self.tap(tab, f"{label}分页")
+        self._settle_episodes(_event_key, EVENT_EPISODES_TITLE)
+        watched: list[str] = []
+        dragged = rechecked = False
+        for _ in range(MAX_EPISODES):
+            unread = [c for c in event_cards(self._items) if self._event_unread(c[1])]
+            if not unread:
+                if dragged or not self._badge(badge):
+                    break
+                if not rechecked:
+                    # 关掉领取奖励后卡片上的红点要过一会儿才出来
+                    rechecked = True
+                    self._sleep(1.5)
+                    self.look()
+                    continue
+                self._drag(*EVENT_DRAG)
+                dragged = True
+                self._settle_episodes(_event_key, EVENT_EPISODES_TITLE)
+                continue
+            name, pos = unread[0]
+            if (name and any(_same_title(w, name) for w in watched if w)) or watched.count("") >= 3:
+                raise self._fail(f"{label}·{name}跳过后还是没看过")
+            if not self._event_selected(pos):
+                self.tap(_offset(pos, EVENT_CARD_OFFSET), name or "没看过的卡片")
+                self._settle_episodes(_event_key, EVENT_EPISODES_TITLE)
+                # 点了以后列表可能滚动，位置会变：选中的卡片在原处、标题一样或有红点都算
+                if not any(
+                    abs(p[0] - pos[0]) < 40 or (name and _same_title(n, name)) or self._event_unread(p)
+                    for n, p in event_cards(self._items)
+                    if self._event_selected(p)
+                ):
+                    raise self._fail(f"没能选中{label}·{name}")
+            title = name or selected_event_episode(self._items) or "（标题没认出）"
+            start = self._button(self._items, "观看故事", BTN_WATCH)
+            popups = self._watch_episode(f"{label}·{title}", start, _event_page)
+            logger.info("%s·%s：已跳过%s", label, title, f"，关掉 {popups} 个奖励 / 解锁弹窗" if popups else "")
+            watched.append(name)
+            self.tap(tab, f"{label}分页")  # 看完回来可能回到别的分页
+            self._settle_episodes(_event_key, EVENT_EPISODES_TITLE)
+            dragged = rechecked = False
+        else:
+            logger.warning("%s：看了 %d 话还没看完，下次再看", label, len(watched))
+        if self._badge(badge):
+            logger.info("%s：分页上还有红点，但列表里找不到没看过的（可能还锁着）", label)
+        return len(watched)
+
+    def _event_unread(self, duration_pos: tuple[int, int]) -> bool:
+        x, y = duration_pos
+        return self._badge_near((x + dx for dx in EVENT_BADGE_DX), y + EVENT_BADGE_DY)
+
+    def _event_selected(self, duration_pos: tuple[int, int]) -> bool:
+        """时长在 ``duration_pos`` 的那张卡片是选中的（四角有亮框）。最左边只露出一半的卡片只看右下角。"""
+        seen = False
+        for offset, ratio in EVENT_SELECTED_CORNERS:
+            x, y = _offset(duration_pos, offset)
+            if x < EVENT_SELECTED_RADIUS:
+                continue
+            seen = True
+            b, g, r = np.moveaxis(self._patch((x, y), EVENT_SELECTED_RADIUS).astype(int), -1, 0)
+            if float(((g > 140) & (b > 140) & (g - r > 50)).mean()) <= ratio:
+                return False
+        return seen
 
     # ------------------------------------------------------------ 羁绊故事
 
