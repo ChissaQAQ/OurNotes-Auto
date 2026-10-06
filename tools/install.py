@@ -175,8 +175,8 @@ def write_interface(out: Path, kind: str, version: str | None, agent_exec: str, 
         data["setting"] = [
             {
                 "name": "global",
-                "label": "所有任务共用",
-                "description": "触控方式等对所有任务生效的设置",
+                "label": "$setting.global",
+                "description": "$setting.global.desc",
                 "option": data["global_option"],
             }
         ]
@@ -209,13 +209,14 @@ def main() -> int:
 
     install_ui(args.ui, out, kind)
     maafw = install_maafw(out, kind)
-    for name in ("resource", "tasks", "docs"):
+    for name in ("resource", "tasks", "docs", "locales"):
         place(ROOT / name, out / name, link=args.dev)
     install_icon(out, kind)
     if args.dev:
         write_interface(out, kind, args.version, str(ROOT / ".venv" / "Scripts" / "python.exe"), [str(ROOT / "agent" / "main.py")])
     else:
-        for name in ("agent", "ournotes_auto", "README.md", "LICENSE", "TERMS_OF_SERVICE.md", "THIRD_PARTY_NOTICES.md", "config.example.yaml"):
+        readmes = [p.name for p in sorted(ROOT.glob("README*.md"))]
+        for name in ("agent", "ournotes_auto", *readmes, "LICENSE", "TERMS_OF_SERVICE.md", "THIRD_PARTY_NOTICES.md", "config.example.yaml"):
             if (ROOT / name).exists():
                 place(ROOT / name, out / name, link=False)
         install_python(args.python, out)

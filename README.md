@@ -9,6 +9,8 @@
 [![Star](https://img.shields.io/github/stars/ChissaQAQ/OurNotes-Auto)](https://github.com/ChissaQAQ/OurNotes-Auto/stargazers)
 [![许可证](https://img.shields.io/github/license/ChissaQAQ/OurNotes-Auto)](LICENSE)
 
+**简体中文** | [繁體中文](README.zh-TW.md) | [English](README.en.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+
 </div>
 
 《BanG Dream! Our Notes》（国际服，包名 `com.bilibili.sirius.official`）自动演奏工具。MuMu 模拟器 + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework)。

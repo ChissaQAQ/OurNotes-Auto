@@ -89,3 +89,9 @@ def test_mfaa_options_cover_real_interface():
     _, tasks, specs = ui_config._load(ROOT)
     story = {o["name"]: o for o in ui_config.mfaa_options(tasks, specs)["领取日常"]}["DailyStory"]
     assert specs["DailyStory"]["cases"][story["index"]]["name"] == "No"
+
+
+def test_welcome_resolves_language_key():
+    # MXU 记的是简体中文欢迎页的哈希，interface 里写的是 $app.welcome
+    iface, _, _ = ui_config._load(ROOT)
+    assert ui_config._welcome_file(ROOT, iface) == ROOT / "docs" / "ui" / "welcome.md"

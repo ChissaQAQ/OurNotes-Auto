@@ -1,22 +1,30 @@
 {
     "interface_version": 2,
+    "languages": {
+        "zh_cn": "locales/zh_cn.json",
+        "zh_tw": "locales/zh_tw.json",
+        "en_us": "locales/en_us.json",
+        "ja_jp": "locales/ja_jp.json",
+        "ko_kr": "locales/ko_kr.json"
+    },
     "name": "OurNotesAuto",
-    "label": "Our Notes 自动打歌",
+    "label": "$app.label",
     "version": "v0.1.3",
-    "description": "《BanG Dream! Our Notes》国际服自动演奏：按谱面发送触控，自动导航自由演出、连续演奏。",
-    "welcome": "docs/ui/welcome.md",
+    "description": "$app.description",
+    "welcome": "$app.welcome",
     "icon": "docs/ui/icon.png",
     "controller": [
         {
             "name": "MuMu",
-            "label": "MuMu 模拟器",
-            "description": "MuMu 模拟器 12，分辨率 1280×720",
+            "label": "$controller.MuMu",
+            "description": "$controller.MuMu.desc",
             "type": "Adb"
         }
     ],
     "resource": [
         {
             "name": "国际服",
+            "label": "$resource.intl",
             "path": [
                 "./resource"
             ]
@@ -31,15 +39,15 @@
     "group": [
         {
             "name": "play",
-            "label": "演奏"
+            "label": "$group.play"
         },
         {
             "name": "daily",
-            "label": "日常"
+            "label": "$group.daily"
         },
         {
             "name": "tools",
-            "label": "工具"
+            "label": "$group.tools"
         }
     ],
     "import": [
