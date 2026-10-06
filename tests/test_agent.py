@@ -342,6 +342,16 @@ def test_worker_args_start():
     assert worker_args("records", {}, {}) == ["records"]  # 不需要设备和选项
 
 
+def test_worker_args_game_language():
+    """游戏语言选한국어时用 ko_kr 识别模型（每个任务都要）；默认和旧版资源没有这一项时不改模型。"""
+    args = worker_args("start", {"touch": "mumu", "game_language": "ko"}, {})
+    assert args == ["--set", "device.touch=mumu", "--set", "loop.ocr_model=ko_kr", "start"]
+    assert "loop.ocr_model=ko_kr" in worker_args("repeat", {**ATTACH, "game_language": "ko"}, {})
+    assert not any("ocr_model" in a for a in worker_args("repeat", {**ATTACH, "game_language": "default"}, {}))
+    with pytest.raises(ParamError, match="game_language"):
+        worker_args("start", {"touch": "mumu", "game_language": "ja"}, {})
+
+
 def test_worker_args_switch_account():
     """切换账号：账号名去掉首尾空白传给 switch-account，没填时报错。"""
     from ournotes_auto.cli import build_parser

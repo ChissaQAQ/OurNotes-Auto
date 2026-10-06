@@ -14,6 +14,7 @@
             "daily_claim": true,
             "daily_claim_time": "22:30",
             "touch": "minitouch",
+            "game_language": "default",
             "watch_combo": false,
             "debug_log": false,
             "check_update": true,

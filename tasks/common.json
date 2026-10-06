@@ -197,6 +197,24 @@
             ],
             "default_case": "No"
         },
+        "GameLanguage": {
+            "type": "select",
+            "label": "游戏语言",
+            "description": "和游戏标题画面右上角菜单「选择语言」里选的一致；한국어要用单独的韩文文字识别模型",
+            "cases": [
+                {
+                    "name": "default",
+                    "label": "简体中文 / 繁體中文 / English",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "game_language": "default" } } }
+                },
+                {
+                    "name": "ko",
+                    "label": "한국어",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "game_language": "ko" } } }
+                }
+            ],
+            "default_case": "default"
+        },
         "DebugLog": {
             "type": "switch",
             "label": "调试日志",

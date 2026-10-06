@@ -238,6 +238,9 @@ def classify(items: list[OcrItem]) -> Screen:
     for text, screen in _DIALOGS.items():
         if it := find(items, text):
             return _setting_dialog(items, it) if screen is Screen.LB_SETTING else screen
+    # 韩文界面的标题「라이브 부스트 회복」有时拆成两项读出来，按左边的分页认
+    if find(items, "道具", LB_TABS_ROI, exact=True) and find(items, "观看广告", LB_TABS_ROI, exact=True):
+        return Screen.LB_RECOVER
     # 登录记录、用户中心叠在标题画面上（底下的 CRIWARE 还读得到），要先认
     if find(items, "bilibili"):
         if find(items, "登录记录", SDK_TITLE_ROI):
@@ -313,7 +316,9 @@ def _challenge_song_select(items: list[OcrItem]) -> bool:
         return False
     if any(find(items, cat, SONG_CATEGORY_ROI) for cat in SONG_CATEGORIES):
         return False
-    return bool(find(items, "确定", SONG_OK_ROI, exact=True) and find(items, "HIGH"))
+    # 韩文界面的「확인」统一换成了 OK
+    ok = find(items, "确定", SONG_OK_ROI, exact=True) or find(items, "OK", SONG_OK_ROI, exact=True)
+    return bool(ok and find(items, "HIGH"))
 
 
 # 维护页上的「2026/10/02（周五）11:00~2026/10/02（周五）16:00」
@@ -402,11 +407,11 @@ LB_HELD_ROI: Rect = (560, 545, 180, 40)
 
 
 def lb_held(items: list[OcrItem]) -> int | None:
-    """消耗设置弹窗上的 LB 持有数量（「24/99」中的 24）。"""
+    """消耗设置弹窗上的 LB 持有数量（「24/99」中的 24）。English 界面上是「2 / 99」，斜杠常读成「1」（「2199」）。"""
     for it in items:
-        m = re.fullmatch(r"(\d+)/\d+", _compact(it.text))
+        m = re.fullmatch(r"(\d+)/\d+|(\d{1,2})1(99)", _compact(it.text))
         if m and in_roi(it, LB_HELD_ROI):
-            return int(m.group(1))
+            return int(m.group(1) or m.group(2))
     return None
 
 
@@ -533,10 +538,12 @@ def same_title(a: str | None, b: str | None) -> bool:
 # 恢复LIVE BOOST 弹窗：左边一列分页「道具」「星钻」「观看广告」，选中的是青绿色、没选中的是深蓝。
 # 「道具」页每行一种饮料：名字下面一排 重置 − 「已选/持有」 + 最大；底部是持有数预览「3 ▶ 14」
 LB_TAB_ITEMS = (85, 146)
+LB_TABS_ROI: Rect = (40, 110, 200, 200)
 LB_TAB_OTHERS = ((72, 217), (72, 285))  # 星钻、观看广告
 LB_PLUS_X = 910
-# 小型LIVE BOOST饮料每瓶恢复 1 个，LIVE BOOST饮料 10 个（LIVE 常读成 LIvE、LVE）
-LB_DRINK_NAME = re.compile(r"(小型)?L[A-Z]{1,3}BOOST饮料")
+# 小型LIVE BOOST饮料每瓶恢复 1 个，LIVE BOOST饮料 10 个（LIVE 常读成 LIvE、LVE）；
+# 韩文是「미니 부스트 드링크」「부스트 드링크」（OCR 常把后一个拆成两项，同一行挨着的拼起来认）
+LB_DRINK_NAME = re.compile(r"(小型|미니)?(L[A-Z]{1,3}BOOST饮料|부스트'?드링크)")
 LB_DRINK_NAME_X = 600  # 名字在左半边
 LB_DRINK_COUNT_X = (720, 860)  # 「已选/持有」的中心 x
 LB_PREVIEW_ROI: Rect = (600, 545, 300, 50)
@@ -552,12 +559,25 @@ class LbDrink:
     y: float  # 这一行按钮（+）的中心 y
 
 
+def _join_rows(items: list[OcrItem], gap: float = 20) -> list[OcrItem]:
+    """同一行、左右挨着（间隔、重叠不超过 ``gap``）的识别项拼成一项。"""
+    out: list[OcrItem] = []
+    for it in sorted(items, key=lambda i: i.x):
+        prev = next((o for o in out if abs(o.cy - it.cy) < 8 and -gap <= it.x - (o.x + o.w) <= gap), None)
+        if prev is None:
+            out.append(it)
+            continue
+        y, bottom = min(prev.y, it.y), max(prev.y + prev.h, it.y + it.h)
+        out[out.index(prev)] = OcrItem(prev.x, y, it.x + it.w - prev.x, bottom - y, prev.text + it.text)
+    return out
+
+
 def lb_drinks(items: list[OcrItem]) -> list[LbDrink]:
     """恢复LIVE BOOST「道具」页上认得的饮料，从上到下（名字认不出、数量没读到的行不要）。"""
     drinks = []
-    for it in items:
+    for it in _join_rows([i for i in items if i.x + i.w / 2 <= LB_DRINK_NAME_X]):
         m = LB_DRINK_NAME.fullmatch(_compact(it.text).upper())
-        if not m or it.x + it.w / 2 > LB_DRINK_NAME_X:
+        if not m:
             continue
         for c in items:
             n = re.fullmatch(r"(\d+)/(\d+)", _digits(c.text))

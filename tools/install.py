@@ -183,7 +183,11 @@ def main() -> int:
     if not args.dev and not args.python:
         p.error("发布模式需要 --python")
     ocr_dir = ROOT / "resource" / "model" / "ocr"
-    ocr_files = ("det.onnx", "rec.onnx", "keys.txt", "LICENSE-MaaCommonAssets.txt", "LICENSE-PaddleOCR.txt")
+    ocr_files = (
+        *(f"{d}{f}" for d in ("", "ko_kr/") for f in ("det.onnx", "rec.onnx", "keys.txt")),
+        "LICENSE-MaaCommonAssets.txt",
+        "LICENSE-PaddleOCR.txt",
+    )
     if not args.dev and not all((ocr_dir / f).is_file() for f in ocr_files):
         sys.exit(f"{ocr_dir} 里没有 OCR 模型，先运行 python tools/fetch_ocr.py")
     kind = ui_kind(args.ui)
