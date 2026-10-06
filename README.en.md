@@ -13,7 +13,7 @@
 
 </div>
 
-An auto-play tool for *BanG Dream! Our Notes* (International server, package name `com.bilibili.sirius.official`). MuMu Emulator + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework).
+An auto-play tool for *BanG Dream! Our Notes* (International server `com.bilibili.sirius.official`, Japanese server `com.bushiroad.sirius`). MuMu Emulator + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework).
 
 - Downloads charts from a chart site and sends touches at the judgment times, aiming for FULL COMBO / ALL PERFECT
 - Tracks the falling path of the first note and extrapolates when it reaches the judgment line to align the whole song (no audio needed)
@@ -48,11 +48,11 @@ This software is free and open source; please read the [Terms of Service](TERMS_
 Before use, make sure of the following:
 
 - MuMu Emulator 12, resolution **1280×720**, frame rate at least 60
-- International server, with the game language set to 简体中文, 繁體中文, English or 한국어 (for 한국어, set "Game Language" to 한국어 in the task settings)
+- International server, with the game language set to 简体中文, 繁體中文, English or 한국어 (for 한국어, set "Game Language" to 한국어 in the task settings); or the Japanese server (set "Game Language" to "日本語 (Japanese server)"; the client must be installed from Google Play)
 - In-game "Notes Speed" at **5.00** (be sure to keep it when "Random GREAT" is on; other speeds shift all presses and turn GREATs into GOODs); MV / background off, or switched to a dark, static background; turning down effect and performance levels is recommended
 - Internet access: charts are downloaded at runtime from the chart site `assets.bdon.moe`
 
-Tasks: Start Game, Switch Account (accounts in the bilibili login history, no password needed), Repeat Play, Use Up LB, AFK Farming (waits for LB to recover after running out, then keeps playing), AP Completion, Challenge LIVE (during events), Claim Dailies, Records Summary. For details on each task and option, see the [Usage Guide](docs/en/usage.md); for command-line usage, see [Command Line](docs/en/cli.md).
+Tasks: Start Game, Switch Account (accounts in the International server's bilibili login history, no password needed), Repeat Play, Use Up LB, AFK Farming (waits for LB to recover after running out, then keeps playing), AP Completion, Challenge LIVE (during events), Claim Dailies, Records Summary. For details on each task and option, see the [Usage Guide](docs/en/usage.md); for command-line usage, see [Command Line](docs/en/cli.md).
 
 ## Measured Results and Known Limitations
 
@@ -74,7 +74,7 @@ Known limitations:
 - Only Free LIVE and Challenge LIVE (during events) are supported. Co-op LIVE and other modes are not
 - Song title OCR occasionally fails; when recognition fails, that round is abandoned and the next song is tried
 - Songs whose first note comes very early (already on screen before the transition ends) may fail to sync; in that case the round is paused and retried
-- So far only verified with MuMu + International server, with effect and performance levels turned down
+- So far mainly verified with MuMu + International server, with effect and performance levels turned down; on the Japanese server only Free LIVE, AP Completion and Claim Dailies have been verified
 
 ## Reporting Issues
 

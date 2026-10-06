@@ -32,7 +32,7 @@ ournotes-auto init-config          # generate a config.yaml containing all defau
 
 You can also copy [config.example.yaml](../../config.example.yaml) (which lists only the common items) to `config.yaml` and edit it. Items not written out use their default values; for all parameters and their descriptions, see `ournotes_auto/config.py`.
 
-At least two items need checking: `device.instance` (the instance number in MuMu Multi-Instance Manager) and `device.mumu_path` (the MuMu install directory).
+At least two items need checking: `device.instance` (the instance number in MuMu Multi-Instance Manager) and `device.mumu_path` (the MuMu install directory). For the Japanese server, also set `device.package` to `com.bushiroad.sirius` (the default is the International server's `com.bilibili.sirius.official`).
 
 ## Usage
 

@@ -46,13 +46,14 @@ BOND_STORY_BADGE = (967, 395)
 # 菜单按钮下方的文字「乐队故事」「羁绊故事」。有「特别故事」时是三个按钮，整排左移，所以按文字的位置点按钮、看红点
 STORY_MENU_ROI: Rect = (450, 480, 620, 50)
 STORY_MENU_BUTTON_OFFSET = (-5, -66)  # 按钮中心相对文字中心
-STORY_MENU_BADGE_OFFSET = (64, -111)  # 红点相对文字中心
+# 红点相对文字中心约 (+64, -111)。日服的文字常读得不全（「バンドスト」），中心偏左，所以横向在一段范围里找
+STORY_MENU_BADGE_DX = range(56, 100, 4)
+STORY_MENU_BADGE_DY = -111
 CHAPTERS_TITLE = "乐队故事章节选择"
 EPISODES_TITLE = "乐队故事话数选择"
 BOND_MEMBERS_TITLE = "羁绊故事"
 BOND_PAIRS_TITLE = "羁绊故事选择"
 BTN_STORY_BACK = (58, 38)  # 左上角返回上一页（右边是主页按钮）
-BTN_HELP_CLOSE = (497, 650)  # 第一次打开时的说明：关闭 / 下一步
 
 # 章节选择：左侧 ALL 下面的乐队分页。点了只列出这个乐队的章节，选中的在中间
 BAND_TABS = (
@@ -327,8 +328,8 @@ class StoryMixin:
     def _daily_story(self) -> None:
         if not self._open_story_menu():
             return
-        band = self._badge(self._menu_point("乐队故事", BAND_STORY_BADGE, STORY_MENU_BADGE_OFFSET))
-        bond = self._badge(self._menu_point("羁绊故事", BOND_STORY_BADGE, STORY_MENU_BADGE_OFFSET))
+        band = self._menu_badge("乐队故事", BAND_STORY_BADGE)
+        bond = self._menu_badge("羁绊故事", BOND_STORY_BADGE)
         if not (band or bond):
             logger.info("故事：没有没看过的")
             self._close_story_menu()
@@ -415,9 +416,17 @@ class StoryMixin:
         self._sleep(1.0)
 
     def _menu_point(self, name: str, default: tuple[int, int], offset: tuple[int, int]) -> tuple[int, int]:
-        """故事菜单上 ``name`` 的按钮 / 红点（按最近一帧上文字的位置，没读到时用 ``default``）。"""
+        """故事菜单上 ``name`` 的按钮（按最近一帧上文字的位置，没读到时用 ``default``）。"""
         it = find(self._items, name, STORY_MENU_ROI)
         return default if it is None else _offset(center(it), offset)
+
+    def _menu_badge(self, name: str, default: tuple[int, int]) -> bool:
+        """故事菜单上 ``name`` 的按钮有没有红点（按最近一帧上文字的位置，没读到时看 ``default``）。"""
+        it = find(self._items, name, STORY_MENU_ROI)
+        if it is None:
+            return self._badge(default)
+        x, y = center(it)
+        return self._badge_near((x + dx for dx in STORY_MENU_BADGE_DX), y + STORY_MENU_BADGE_DY)
 
     def _enter_story(self, button: tuple[int, int], name: str, title: str) -> None:
         self.tap(self._menu_point(name, button, STORY_MENU_BUTTON_OFFSET), name)
@@ -433,12 +442,10 @@ class StoryMixin:
         while time.monotonic() < deadline:
             self._sleep(0.8)
             screen, items = self.look()
-            if find(items, "前往帮助"):
-                # 第一次打开时的说明（来观看故事 / 观看特定的乐队故事就能解锁乐曲！），只点「关闭」
-                self.tap(self._button(items, "关闭", BTN_HELP_CLOSE, BOTTOM_ROI), "关闭说明")
-            elif self._dismiss(screen, items):
+            # 第一次打开时的说明（来观看故事 / 观看特定的乐队故事就能解锁乐曲！）也在这里关掉
+            if self._dismiss(screen, items):
                 continue
-            elif story_title(items) == title:
+            if story_title(items) == title:
                 self._sleep(1.0)
                 self.look()
                 return True

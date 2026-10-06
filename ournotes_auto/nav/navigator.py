@@ -160,6 +160,7 @@ DOWNLOAD_OK_ROI: Rect = (660, 620, 250, 70)
 # 标题画面：TAP TO START（不要点右上角的菜单按钮）
 BTN_TAP_TO_START = (950, 585)
 BTN_NOTIFY_CLOSE = (822, 171)  # 「开启消息通知」弹窗右上角的 ⓧ
+BTN_NOTIFY_DENY = (640, 479)  # 系统通知权限：「不允许」（上面一个是「允许」）
 TAP_LOGIN_BONUS = (640, 650)  # 登录奖励演出：点下方空白处继续
 BTN_REWARD_OK = (640, 659)  # 获得奖励 / GRADE UP 弹窗底部的 OK
 BTN_UNLOCK_CLOSE = (640, 570)  # 乐曲解锁 / 故事解锁：关闭
@@ -499,6 +500,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
             self._on_title(items)
         elif screen is Screen.NOTIFY:
             self.tap(BTN_NOTIFY_CLOSE, "关闭「开启消息通知」")
+        elif screen is Screen.NOTIFY_PERMISSION:
+            self.tap(self._button(items, "不允许", BTN_NOTIFY_DENY), "不允许发送通知")
         elif screen is Screen.TITLE_MENU:
             self.tap(BTN_MENU_CLOSE, "关闭")
         elif screen is Screen.USER_CENTER:

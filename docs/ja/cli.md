@@ -32,7 +32,7 @@ ournotes-auto init-config          # すべてのデフォルト値を含む con
 
 [config.example.yaml](../../config.example.yaml)（よく使う項目だけを記載）を `config.yaml` にコピーして編集してもかまいません。書かれていない項目はデフォルト値になります。すべてのパラメータと説明は `ournotes_auto/config.py` を参照してください。
 
-少なくとも次の 2 項目は確認してください：`device.instance`（MuMu のマルチインスタンス管理ツールでのインスタンス番号）と `device.mumu_path`（MuMu のインストール先）。
+少なくとも次の 2 項目は確認してください：`device.instance`（MuMu のマルチインスタンス管理ツールでのインスタンス番号）と `device.mumu_path`（MuMu のインストール先）。日本版ではさらに `device.package` を `com.bushiroad.sirius` にしてください（既定値は国際版の `com.bilibili.sirius.official`）。
 
 ## 使用方法
 

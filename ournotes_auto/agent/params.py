@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from ..config import parse_daily_time
+from ..config import JP_PACKAGE, parse_daily_time
 from ..device.mumu_ipc import find_dll
 from ..sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
 
@@ -308,23 +308,30 @@ def global_args(attach: Mapping[str, Any]) -> list[str]:
     return ["--json-log", "--stdin-stop", *(["-v"] if flag(attach, "debug_log") else [])]
 
 
-# 界面选项「游戏语言」→ loop.ocr_model（resource/model/ocr 下的子目录，空为默认模型）
-OCR_MODELS = {"default": "", "ko": "ko_kr"}
+# 界面选项「游戏语言」→ (loop.ocr_model, device.package)。识别模型是 resource/model/ocr 下的子目录，空为默认模型；
+# 包名空为不改（国际服）。日服的界面是日文，用默认模型就读得出
+GAME_LANGUAGES = {"default": ("", ""), "ko": ("ko_kr", ""), "ja": ("", JP_PACKAGE)}
 
 
-def _ocr_model(attach: Mapping[str, Any]) -> str:
-    """``game_language``（default / ko）；资源是旧版、attach 里没有这一项时用默认模型。"""
-    return OCR_MODELS[_choice(attach, "game_language", tuple(OCR_MODELS))] if "game_language" in attach else ""
+def _game_language(attach: Mapping[str, Any]) -> dict[str, str]:
+    """``game_language``（default / ko / ja）；资源是旧版、attach 里没有这一项时不改。"""
+    if "game_language" not in attach:
+        return {}
+    model, package = GAME_LANGUAGES[_choice(attach, "game_language", tuple(GAME_LANGUAGES))]
+    return {**({"loop.ocr_model": model} if model else {}), **({"device.package": package} if package else {})}
 
 
 def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str]) -> list[str]:
     """``python -m ournotes_auto`` 之后的参数（不含日志 / 停止相关的全局参数，见 ``global_args``）。"""
     if task == "records":
         return ["records"]
+    language = _game_language(attach)
     if task == "start":
         sets = {**device, "device.touch": _choice(attach, "touch", TOUCH_MODES)}
         tail = ["start"]
     elif task == "switch_account":
+        if "device.package" in language:
+            raise ParamError("日服不能切换账号（只有国际服的 B 站账号能切换）")
         account = str(_get(attach, "account")).strip()
         if not account:
             raise ParamError("切换账号要填写账号名")
@@ -336,8 +343,7 @@ def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str])
     else:
         sets = {**device, **run_settings(task, attach)}
         tail = ["run", *(["--watch-combo"] if _bool(attach, "watch_combo") else [])]
-    if model := _ocr_model(attach):
-        sets["loop.ocr_model"] = model
+    sets.update(language)
     args: list[str] = []
     for key, value in sets.items():
         args += ["--set", f"{key}={value}"]

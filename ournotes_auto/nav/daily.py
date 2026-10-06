@@ -8,9 +8,11 @@
   - 录音室练习的一键领取总是亮的，没有奖励时提示「没有可领取的奖励。」。
 - 领取后依次弹出的「获得奖励」只点 OK（T.G.W CARD 积分的只有「关闭」）；练习等级提升点空白处继续；其他弹窗只点「关闭」「取消」。
   - 认不出的确认框一律不点，报错停下。
+  - 第一次打开时的说明（右上角「前往帮助」）有好几页时，「关闭」到最后一页才亮，之前点「下一步」。
 - T.G.W CARD 在商店里：T.G.W CARD 页领每日积分和每日奖励，专享商品目录里只领价格是「免费」的商品。
   - 免费商品点「购买」直接买下（没有确认框），弹出「购买完成」只点 OK。
   - 领完后面的商品会补到同一格（可能要星钻），所以不按位置点：每次都重新认「免费」，领完核对星钻数没变。
+  - 日服进商店前要先确认年龄（选出生年月），只点「取消」跳过，要用户自己确认一次。
 - 不碰招募、礼包、交换所、通行证高级档和 pt 旁的「+」，不用星钻。
 - 看故事（跳过没看过的乐队故事、视角故事、羁绊故事，限时活动的活动故事、视角故事）在 story.py。
 """
@@ -91,11 +93,12 @@ BTN_PASS_MISSIONS = (1165, 40)
 PASS_MISSIONS_ROI: Rect = (1080, 10, 190, 60)
 # 任务通行证页左侧的通行证列表（活动通行证和赛季通行证可能同时有），每个横幅下面写着截止时间。
 # 选中的横幅放大、右移，截止时间的左边 x≈80~96，没选中的 x≈62；横幅图片在截止时间上方约 55px。
-# 选中的截止时间偶尔被拆成「2026」「0:59」两段，只认得出年份也算
+# 选中的截止时间偶尔被拆成「2026」「0:59」或「2026/10」「/28」「13:59」几段，只认得出年份（年月）也算
 PASS_LIST_ROI: Rect = (0, 80, 300, 640)
 PASS_SELECTED_LEFT = 72
 PASS_BANNER_DY = -55
-_PASS_DATE = re.compile(r"\d{2,4}([/-]\d{1,2}[/-]\d{1,2})|20\d{2}$")  # 韩文界面是「2026-10-08 19:59」；年份开头的「2」偶尔读漏
+# 韩文界面是「2026-10-08 19:59」；年份开头的「2」偶尔读漏
+_PASS_DATE = re.compile(r"\d{2,4}[/-]\d{1,2}(?:[/-]\d{1,2})?|20\d{2}$")
 # 商店左下角的 T.G.W CARD 入口；左侧分页从上到下是星钻、礼包、T.G.W CARD 专享商品目录、交织的乐章通行证
 BTN_TGW = (113, 555)
 TGW_ROI: Rect = (0, 480, 240, 140)
@@ -123,6 +126,15 @@ REWARD_TITLES = ("获得奖励", "领取奖励", "获得通行证")
 REWARD_OK_ROI: Rect = (0, 450, 1280, 270)
 TITLE_BAR_ROI: Rect = (400, 80, 480, 80)  # 居中弹窗的标题栏
 BTN_GIFT_CANCEL = (496, 570)  # 「是否一键领取礼物？」的取消
+# 第一次打开故事、通行证、活动页等时的说明：右上角「前往帮助」，底部左「关闭」右「下一步」。
+# 有好几页时只有最后一页的「关闭」是亮的（底色亮约 210，灰的约 105），在文字左边取样
+HELP_ROI: Rect = (1050, 100, 220, 60)
+BTN_HELP_CLOSE = (497, 650)
+BTN_HELP_NEXT = (780, 652)
+HELP_LIT_DX = -55
+# 日服第一次打开商店时要先填出生年月（「年龄确认」，标题在上方中间）：留给用户自己填，只点取消
+AGE_CHECK_ROI: Rect = (440, 10, 400, 60)
+BTN_AGE_CANCEL = (497, 659)
 # 左上角有主页按钮、可以直接点它回主界面的画面
 HOME_BUTTON_SCREENS = frozenset(
     (
@@ -386,6 +398,11 @@ class DailyMixin:
                 self._sleep(1.0)
                 self.look()
                 return True
+            if find(items, "年龄确认", AGE_CHECK_ROI, exact=True):
+                self.tap(self._button(items, "取消", BTN_AGE_CANCEL, BOTTOM_ROI), "取消")
+                logger.warning("打开「%s」时要先确认年龄（填出生年月）：请自己在游戏里确认一次，这次跳过", title)
+                self._sleep(1.0)
+                return False
             if retap is None:
                 self._dismiss(screen, items)
                 continue
@@ -450,7 +467,9 @@ class DailyMixin:
     def _dismiss(self, screen: Screen, items: list[OcrItem]) -> bool:
         """关掉领取后（或打开页面时）弹出的已知弹窗，做了操作返回 True。"""
         ok = reward_ok(items) or reward_close(items)
-        if ok is not None:
+        if find(items, "前往帮助", HELP_ROI):
+            self._help_step(items)
+        elif ok is not None:
             self.tap(center(ok), ok.text.strip())
         elif practice_level_up(items):
             self.tap(TAP_LEVEL_UP, "LEVEL UP")
@@ -460,6 +479,14 @@ class DailyMixin:
             return False
         self._sleep(1.0)
         return True
+
+    def _help_step(self, items: list[OcrItem]) -> None:
+        """第一次打开某些页面时的说明（右上角「前往帮助」）：有好几页时「关闭」是灰的，点「下一步」翻到最后一页再关。"""
+        close = self._button(items, "关闭", BTN_HELP_CLOSE, BOTTOM_ROI)
+        if find(items, "下一步", BOTTOM_ROI, exact=True) and not self._lit((close[0] + HELP_LIT_DX, close[1])):
+            self.tap(self._button(items, "下一步", BTN_HELP_NEXT, BOTTOM_ROI), "说明·下一步")
+        else:
+            self.tap(close, "关闭说明")
 
     # ------------------------------------------------------------ 领取
 

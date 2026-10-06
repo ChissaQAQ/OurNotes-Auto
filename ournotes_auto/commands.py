@@ -320,8 +320,12 @@ def cmd_start(cfg: Config, args) -> int:
 
 def cmd_switch_account(cfg: Config, args) -> int:
     """在标题画面退出当前账号，从登录记录里选账号名包含 ``args.account`` 的账号登录，然后进入游戏。"""
+    from .config import INTL_PACKAGE
     from .runner import NavigationError
 
+    if cfg.device.package != INTL_PACKAGE:
+        logger.error("只有国际服能切换账号（B 站账号的登录记录），当前游戏是 %s", cfg.device.package)
+        return 2
     _launch_game(cfg)
     with _device(cfg) as (source, touch):
         nav = _game_navigator(cfg, args, source, touch)

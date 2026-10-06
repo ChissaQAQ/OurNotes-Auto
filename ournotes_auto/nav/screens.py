@@ -66,6 +66,8 @@ class Screen(StrEnum):
     STORY_SKIP = "要跳过故事吗"  # 左取消右跳过
     # B 站 SDK 在标题画面上弹出的「开启消息通知」：只点右上角的 ⓧ（「去开启」会跳到系统的通知设置）
     NOTIFY = "开启消息通知"
+    # Android 13 起游戏第一次启动时系统问「要允许…向您发送通知吗」（日服遇到过）：点「不允许」
+    NOTIFY_PERMISSION = "通知权限"
     CONNECT_ERROR = "连接失败"  # 「发生网络连接错误。」只有「返回标题画面」，回到标题重新登录
     # 「服务器正在维护中」：只有「返回标题画面」和「官方Discord」，登录时、对局中途都可能弹出。
     # 任务直接失败；挂机隔一阵回到标题画面重新登录看看开服没有
@@ -111,6 +113,7 @@ _DIALOGS = {
     "检测到新版本": Screen.UPDATE_REQUIRED,
     "下载追加的游戏数据": Screen.DATA_DOWNLOAD,
     "开启消息通知": Screen.NOTIFY,
+    "发送通知": Screen.NOTIFY_PERMISSION,
     "发生网络连接错误": Screen.CONNECT_ERROR,
     "日期已变更": Screen.DATE_CHANGE,
     "前往标题画面": Screen.DATE_CHANGE,
