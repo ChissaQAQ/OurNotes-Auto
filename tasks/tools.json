@@ -2,11 +2,12 @@
     "task": [
         {
             "name": "记录汇总",
+            "label": "$task.Records",
             "entry": "OurNotes_Records",
             "group": [
                 "tools"
             ],
-            "description": "在日志里列出本工具的演奏记录：总局数、FC / AP 数、各难度打出过 AP 的谱面数、打过但还没 AP 的谱面（及最好成绩）、最近 10 局。只统计本工具打的局，游戏里的 AP 状态以游戏为准。不操作模拟器。"
+            "description": "$task.Records.desc"
         }
     ]
 }

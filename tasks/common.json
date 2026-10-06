@@ -2,30 +2,30 @@
     "option": {
         "SongMode": {
             "type": "select",
-            "label": "选曲方式",
+            "label": "$opt.SongMode",
             "cases": [
                 {
                     "name": "current",
-                    "label": "当前曲目",
-                    "description": "一直打选曲页当前选中的曲目",
+                    "label": "$opt.SongMode.current",
+                    "description": "$opt.SongMode.current.desc",
                     "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "current" } } }
                 },
                 {
                     "name": "random",
-                    "label": "随机",
-                    "description": "每局用选曲页的随机按钮换一首",
+                    "label": "$opt.SongMode.random",
+                    "description": "$opt.SongMode.random.desc",
                     "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "random" } } }
                 },
                 {
                     "name": "ap_first",
-                    "label": "优先没 AP 的歌",
-                    "description": "在所选难度里筛选「未ALL PERFECT」随机抽歌（同一首最多打 3 次）；没有要补的歌了就改回不筛选、随机选曲。难度选「优先高难度」时按 EXPERT → HARD → NORMAL → EASY 依次补，都补完了按 EXPERT 随机。结束后把筛选和分类改回原样",
+                    "label": "$opt.SongMode.ap_first",
+                    "description": "$opt.SongMode.ap_first.desc",
                     "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "ap_first" } } }
                 },
                 {
                     "name": "list",
-                    "label": "歌单",
-                    "description": "按歌单依次打，打完一轮从头再来。每局在「全部」分类的列表里找到下一首（边滚边认封面，第一次找可能要二三十秒）；未解锁或找不到的歌跳过。结束后把分类改回原样",
+                    "label": "$opt.SongMode.list",
+                    "description": "$opt.SongMode.list.desc",
                     "option": ["SongList"],
                     "pipeline_override": { "OurNotesParam": { "attach": { "song_mode": "list" } } }
                 }
@@ -34,22 +34,22 @@
         },
         "SongList": {
             "type": "input",
-            "label": "歌单",
+            "label": "$opt.SongList",
             "inputs": [
                 {
                     "name": "songs",
-                    "label": "曲目 ID 或曲名，逗号分隔；可加 @难度，如 100010, 碧天伴走@hard",
+                    "label": "$opt.SongList.songs",
                     "default": "",
                     "pipeline_type": "string",
                     "verify": "\\S",
-                    "pattern_msg": "请填写至少一首歌"
+                    "pattern_msg": "$opt.SongList.songs.msg"
                 }
             ],
             "pipeline_override": { "OurNotesParam": { "attach": { "song_list": "{songs}" } } }
         },
         "Difficulty": {
             "type": "select",
-            "label": "难度",
+            "label": "$opt.Difficulty",
             "cases": [
                 {
                     "name": "expert",
@@ -73,8 +73,8 @@
                 },
                 {
                     "name": "high_first",
-                    "label": "优先高难度",
-                    "description": "选曲方式为「优先没 AP 的歌」时按 EXPERT → HARD → NORMAL → EASY 依次补没 AP 的歌，都补完了按 EXPERT 随机选曲（挑战演出为轮流打）；其他选曲方式按 EXPERT 打",
+                    "label": "$opt.Difficulty.high_first",
+                    "description": "$opt.Difficulty.high_first.desc",
                     "pipeline_override": { "OurNotesParam": { "attach": { "difficulty": "high_first" } } }
                 }
             ],
@@ -82,33 +82,33 @@
         },
         "MaxPlays": {
             "type": "input",
-            "label": "局数",
+            "label": "$opt.MaxPlays",
             "inputs": [
                 {
                     "name": "count",
-                    "label": "最多打几局（0 为不限）",
+                    "label": "$opt.MaxPlays.count",
                     "default": "0",
                     "pipeline_type": "int",
                     "verify": "^\\d+$",
-                    "pattern_msg": "请输入 0 或正整数"
+                    "pattern_msg": "$opt.MaxPlays.count.msg"
                 }
             ],
             "pipeline_override": { "OurNotesParam": { "attach": { "max_plays": "{count}" } } }
         },
         "Touch": {
             "type": "select",
-            "label": "触控方式",
-            "description": "minitouch 直接写模拟器的触摸屏设备，最稳定；启动失败时自动改用 MuMu 接口",
+            "label": "$opt.Touch",
+            "description": "$opt.Touch.desc",
             "cases": [
                 {
                     "name": "minitouch",
-                    "label": "minitouch（推荐）",
+                    "label": "$opt.Touch.minitouch",
                     "pipeline_override": { "OurNotesParam": { "attach": { "touch": "minitouch" } } }
                 },
                 {
                     "name": "mumu",
-                    "label": "MuMu 接口",
-                    "description": "偶尔会丢失或延后同一时刻的一批触控",
+                    "label": "$opt.Touch.mumu",
+                    "description": "$opt.Touch.mumu.desc",
                     "pipeline_override": { "OurNotesParam": { "attach": { "touch": "mumu" } } }
                 }
             ],
@@ -116,27 +116,27 @@
         },
         "HumanGreat": {
             "type": "select",
-            "label": "拟人化：随机 GREAT",
-            "description": "每局故意把一小部分音符打成 GREAT（只挑前后没有别的音符挨着的普通点击，提前或延后 64~69ms），成绩就不是 AP 了。AP补完和选曲方式「优先没 AP 的歌」不受影响",
+            "label": "$opt.HumanGreat",
+            "description": "$opt.HumanGreat.desc",
             "cases": [
                 {
                     "name": "off",
-                    "label": "关闭",
+                    "label": "$opt.HumanGreat.off",
                     "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 0 } } }
                 },
                 {
                     "name": "1",
-                    "label": "约 1%",
+                    "label": "$opt.HumanGreat.1",
                     "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 1 } } }
                 },
                 {
                     "name": "3",
-                    "label": "约 3%",
+                    "label": "$opt.HumanGreat.3",
                     "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 3 } } }
                 },
                 {
                     "name": "5",
-                    "label": "约 5%",
+                    "label": "$opt.HumanGreat.5",
                     "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 5 } } }
                 }
             ],
@@ -144,22 +144,22 @@
         },
         "HumanTiming": {
             "type": "select",
-            "label": "拟人化：时机偏移",
-            "description": "按下的时机随时间慢慢地随机漂移，仍在 PERFECT 范围内，结算的 FAST/SLOW 更分散",
+            "label": "$opt.HumanTiming",
+            "description": "$opt.HumanTiming.desc",
             "cases": [
                 {
                     "name": "off",
-                    "label": "关闭",
+                    "label": "$opt.HumanTiming.off",
                     "pipeline_override": { "OurNotesParam": { "attach": { "human_timing": 0 } } }
                 },
                 {
                     "name": "small",
-                    "label": "小（±8ms）",
+                    "label": "$opt.HumanTiming.small",
                     "pipeline_override": { "OurNotesParam": { "attach": { "human_timing": 8 } } }
                 },
                 {
                     "name": "large",
-                    "label": "大（±16ms）",
+                    "label": "$opt.HumanTiming.large",
                     "pipeline_override": { "OurNotesParam": { "attach": { "human_timing": 16 } } }
                 }
             ],
@@ -167,8 +167,8 @@
         },
         "HumanPosition": {
             "type": "switch",
-            "label": "拟人化：触控位置随机",
-            "description": "在音符范围里随机选按下的位置（两侧各留一点边），不总按正中间",
+            "label": "$opt.HumanPosition",
+            "description": "$opt.HumanPosition.desc",
             "cases": [
                 {
                     "name": "Yes",
@@ -183,8 +183,8 @@
         },
         "WatchCombo": {
             "type": "switch",
-            "label": "连击监视（调试）",
-            "description": "演奏时监视连击数，结束后在日志里列出断连处附近的音符",
+            "label": "$opt.WatchCombo",
+            "description": "$opt.WatchCombo.desc",
             "cases": [
                 {
                     "name": "Yes",
@@ -199,8 +199,8 @@
         },
         "GameLanguage": {
             "type": "select",
-            "label": "游戏语言",
-            "description": "和游戏标题画面右上角菜单「选择语言」里选的一致；한국어要用单独的韩文文字识别模型",
+            "label": "$opt.GameLanguage",
+            "description": "$opt.GameLanguage.desc",
             "cases": [
                 {
                     "name": "default",
@@ -217,8 +217,8 @@
         },
         "DebugLog": {
             "type": "switch",
-            "label": "调试日志",
-            "description": "界面日志里也显示同步、谱面、触控、识图等细节；不开也会完整写进 data/ournotes.log",
+            "label": "$opt.DebugLog",
+            "description": "$opt.DebugLog.desc",
             "cases": [
                 {
                     "name": "Yes",
@@ -233,8 +233,8 @@
         },
         "CheckUpdate": {
             "type": "switch",
-            "label": "检查更新",
-            "description": "运行任务时到 GitHub 查有没有新发布的版本，有就在日志末尾提示（不会自动下载）",
+            "label": "$opt.CheckUpdate",
+            "description": "$opt.CheckUpdate.desc",
             "cases": [
                 {
                     "name": "Yes",

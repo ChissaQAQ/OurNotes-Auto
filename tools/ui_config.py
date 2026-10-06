@@ -214,10 +214,21 @@ def mxu_update(config: dict, iface: dict, tasks: dict[str, str], args) -> dict:
     return config
 
 
+def _welcome_file(ui_dir: Path, iface: dict) -> Path | None:
+    """欢迎页文件。``$键`` 按简体中文的翻译文件解析（下面写的界面语言是 zh-CN）。"""
+    welcome = iface.get("welcome", "")
+    if welcome.startswith("$"):
+        lang_file = ui_dir / iface.get("languages", {}).get("zh_cn", "")
+        if not lang_file.is_file():
+            return None
+        welcome = json.loads(lang_file.read_text(encoding="utf-8")).get(welcome[1:], "")
+    return ui_dir / welcome if welcome else None
+
+
 def mxu(ui_dir: Path, iface: dict, tasks: dict[str, str], args) -> None:
     path = ui_dir / "config" / f"mxu-{iface['name']}.json"
-    welcome = ui_dir / iface.get("welcome", "")
-    welcome_hash = js_hash(welcome.read_text(encoding="utf-8")) if iface.get("welcome") and welcome.is_file() else None
+    welcome = _welcome_file(ui_dir, iface)
+    welcome_hash = js_hash(welcome.read_text(encoding="utf-8")) if welcome and welcome.is_file() else None
     if args.update and path.exists():
         config = mxu_update(json.loads(path.read_text(encoding="utf-8")), iface, tasks, args)
         if welcome_hash:
