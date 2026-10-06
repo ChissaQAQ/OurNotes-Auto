@@ -32,6 +32,7 @@
             "account": "",
             "daily_studio": true,
             "daily_story": false,
+            "daily_event": false,
             "daily_missions": true,
             "daily_pass": true,
             "daily_limited": true,

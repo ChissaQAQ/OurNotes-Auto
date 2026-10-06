@@ -10,6 +10,7 @@
             "option": [
                 "DailyStudio",
                 "DailyStory",
+                "DailyEvent",
                 "DailyMissions",
                 "DailyPass",
                 "DailyLimited",
@@ -70,6 +71,34 @@
                         "OurNotesParam": {
                             "attach": {
                                 "daily_story": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "No"
+        },
+        "DailyEvent": {
+            "type": "switch",
+            "label": "活动故事（跳过）",
+            "description": "限时活动期间，把活动页「活动故事」里没看过的活动故事、视角故事逐话跳过（看完能领奖励）。活动故事看完一话才解锁下一话；还锁着的不看。每话第一次看要下载数据，默认不开。没有限时活动时跳过",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_event": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_event": false
                             }
                         }
                     }

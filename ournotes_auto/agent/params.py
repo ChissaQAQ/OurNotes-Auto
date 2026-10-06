@@ -26,7 +26,8 @@ TASKS = {
 LOCAL_TASKS = {"records"}  # 不需要连接模拟器
 RUN_TASKS = ("repeat", "clear_lb", "idle", "ap", "challenge")  # 连续演奏（``run``）的任务
 # 领取日常的各项（与 ``daily --jobs`` 一致），界面上的开关是 attach 里的 ``daily_<项目>``
-DAILY_JOBS = ("studio", "story", "missions", "pass", "limited", "beginner", "tgw", "gifts")
+DAILY_JOBS = ("studio", "story", "event", "missions", "pass", "limited", "beginner", "tgw", "gifts")
+NEW_DAILY_JOBS = frozenset(("event",))  # 后加的项目：资源是旧版、attach 里没有时不做
 LOOP_SONG_MODES = ("current", "random", "ap_first", "list")  # 重复刷歌 / 清体力 / 挂机可选的选曲方式
 # 重复刷歌 / 清体力 / 挂机的难度：优先高难度（high_first）在「优先没 AP 的歌」时从高到低依次补，其他选曲方式按 EXPERT
 LOOP_DIFFICULTIES = (*DIFFICULTIES, "high_first")
@@ -296,7 +297,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _daily_jobs(attach: Mapping[str, Any]) -> str:
-    jobs = [job for job in DAILY_JOBS if _bool(attach, f"daily_{job}")]
+    jobs = [job for job in DAILY_JOBS if (flag if job in NEW_DAILY_JOBS else _bool)(attach, f"daily_{job}")]
     if not jobs:
         raise ParamError("领取日常至少要选一项")
     return ",".join(jobs)

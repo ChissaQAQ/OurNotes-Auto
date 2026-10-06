@@ -12,7 +12,7 @@
   - 免费商品点「购买」直接买下（没有确认框），弹出「购买完成」只点 OK。
   - 领完后面的商品会补到同一格（可能要星钻），所以不按位置点：每次都重新认「免费」，领完核对星钻数没变。
 - 不碰招募、礼包、交换所、通行证高级档和 pt 旁的「+」，不用星钻。
-- 看故事（跳过没看过的乐队故事、视角故事、羁绊故事）在 story.py。
+- 看故事（跳过没看过的乐队故事、视角故事、羁绊故事，限时活动的活动故事、视角故事）在 story.py。
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 DAILY_JOBS = {
     "studio": "录音室练习",
     "story": "看故事",
+    "event": "活动故事",
     "missions": "任务",
     "pass": "任务通行证",
     "limited": "限定任务",
@@ -42,7 +43,7 @@ DAILY_JOBS = {
     "gifts": "礼物盒",
 }
 # 不指定项目时不做的（要下载数据、比较慢，界面上默认也不勾）
-OPT_IN_JOBS = frozenset(("story",))
+OPT_IN_JOBS = frozenset(("story", "event"))
 
 # 主界面入口
 HOME_ENTRIES = {
