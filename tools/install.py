@@ -12,7 +12,7 @@
 
 界面用的 MaaFramework 动态库取当前 Python 环境里 maafw 包的那一份（MFAA 自带的会被替换），保证界面和 Agent 版本一致。
 发布模式的 pip 依赖用运行本脚本的 Python 安装，它的版本要和嵌入式 Python 一致；依赖版本按 tools/constraints.txt 固定。
-OCR 模型不在仓库里，组装前先运行 tools/fetch_ocr.py。
+OCR 模型不在仓库里，组装前先运行 tools/fetch_ocr.py；韩文等其他语言的模型不打进发布包，用户选了对应的游戏语言时再下载。
 MFAA 与 MXU 的用户配置都放在各自目录的 config/ 下，所以两者分开组装、分开发布。
 """
 
@@ -32,7 +32,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RID = "win-x64"
 PY_DIR = "python"  # 发布包里嵌入式 Python 的目录
-SKIP = shutil.ignore_patterns("__pycache__", "*.pyc")
+sys.path.insert(0, str(ROOT))
+from ournotes_auto.ocr_models import EXTRA  # noqa: E402
+
+_SKIP = shutil.ignore_patterns("__pycache__", "*.pyc")
+
+
+def SKIP(src: str, names: list[str]) -> set[str]:
+    """复制时跳过的文件；resource/model/ocr 下其他语言的模型也跳过（运行时按需下载）。"""
+    skip = _SKIP(src, names)
+    if Path(src).parts[-2:] == ("model", "ocr"):
+        skip |= EXTRA.keys() & set(names)
+    return skip
 # 界面种类：(识别用的可执行文件, MaaFramework 动态库目录, 不复制的顶层文件或目录)
 UIS = {
     "mfaa": ("MFAAvalonia.exe", f"runtimes/{RID}/native", {"runtimes"}),
@@ -184,7 +195,9 @@ def main() -> int:
         p.error("发布模式需要 --python")
     ocr_dir = ROOT / "resource" / "model" / "ocr"
     ocr_files = (
-        *(f"{d}{f}" for d in ("", "ko_kr/") for f in ("det.onnx", "rec.onnx", "keys.txt")),
+        "det.onnx",
+        "rec.onnx",
+        "keys.txt",
         "LICENSE-MaaCommonAssets.txt",
         "LICENSE-PaddleOCR.txt",
     )

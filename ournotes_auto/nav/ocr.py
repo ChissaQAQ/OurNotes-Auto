@@ -12,12 +12,12 @@ from pathlib import Path
 
 import numpy as np
 
+from ..ocr_models import missing as missing_files
 from ..result_reader import OcrItem
 from .lang import HANGUL, localize
 
 logger = logging.getLogger(__name__)
 
-MODEL_FILES = ("det.onnx", "rec.onnx", "keys.txt")
 _NUMBER = re.compile(r"[\d\s/:,.%+-]*\d[\d\s/:,.%+-]*")
 _KANA = re.compile(r"[\u3040-\u30ff]")
 
@@ -106,9 +106,9 @@ class MaaOcr:
         from maa.tasker import Tasker
 
         for m in {"", model}:
-            model_dir = Path(bundle) / "model" / "ocr" / m
-            missing = [f for f in MODEL_FILES if not (model_dir / f).is_file()]
+            missing = missing_files(Path(bundle) / "model" / "ocr", m)
             if missing:
+                model_dir = Path(bundle) / "model" / "ocr" / m
                 raise OcrUnavailable(
                     f"缺少 OCR 模型 {model_dir}/{{{','.join(missing)}}}：请运行 python tools/fetch_ocr.py 下载"
                 )

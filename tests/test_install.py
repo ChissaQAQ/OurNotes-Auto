@@ -34,3 +34,14 @@ def test_icon(tmp_path):
     assert (tmp_path / "mfaa" / "Assets" / "logo.ico").read_bytes() == install.ICON.read_bytes()
     install.install_icon(tmp_path / "mxu", "mxu")
     assert not (tmp_path / "mxu").exists()
+
+
+def test_release_copy_skips_extra_ocr_models(tmp_path):
+    src = tmp_path / "resource"
+    for f in ("model/ocr/det.onnx", "model/ocr/ko_kr/rec.onnx", "pipeline/x.json"):
+        (src / f).parent.mkdir(parents=True, exist_ok=True)
+        (src / f).write_text("x")
+    install.place(src, tmp_path / "out", link=False)
+    assert (tmp_path / "out/model/ocr/det.onnx").is_file()
+    assert (tmp_path / "out/pipeline/x.json").is_file()
+    assert not (tmp_path / "out/model/ocr/ko_kr").exists()

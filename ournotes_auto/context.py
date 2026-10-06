@@ -8,6 +8,7 @@ import threading
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import Config
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from .records import RecordStore
 
 logger = logging.getLogger(__name__)
+OCR_DIR = Path("resource") / "model" / "ocr"
 
 
 class SetupError(RuntimeError):
@@ -86,9 +88,18 @@ def _log_device(cfg: Config, source, touch_name: str) -> None:
 
 def open_ocr(cfg: Config):
     from .nav.ocr import MaaOcr, OcrUnavailable
+    from .ocr_models import EXTRA, FetchError, fetch, missing
 
+    model = cfg.loop.ocr_model
+    # 其他语言的模型不随发布包分发，第一次用到时下载
+    if model in EXTRA and missing(OCR_DIR, model):
+        logger.info("第一次使用该游戏语言，正在下载文字识别模型（约 10 MB）……")
+        try:
+            fetch(OCR_DIR, model, log=logger.debug)
+        except FetchError as e:
+            raise SetupError(f"{e}；可以稍后重试，或运行 python tools/fetch_ocr.py --model {model}") from None
     try:
-        return MaaOcr("resource", cfg.loop.ocr_model)
+        return MaaOcr("resource", model)
     except OcrUnavailable as e:
         raise SetupError(str(e)) from None
 
