@@ -1,14 +1,14 @@
-"""游戏切到其他语言时：OCR 文字换成简中说法后，画面判断照常。夹具是繁體中文、English、한국어界面的实机截图。"""
+"""游戏切到其他语言时：OCR 文字换成简中说法后，画面判断照常。夹具是繁體中文、English、한국어界面和日服的实机截图。"""
 
 import json
 from pathlib import Path
 
 import pytest
 
-from ournotes_auto.nav import daily, story
+from ournotes_auto.nav import daily, song_select, story
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.ocr import _pick
-from ournotes_auto.nav.screens import Screen, band_confirm_song, classify, lb_drinks, lb_held, lb_recover_amount
+from ournotes_auto.nav.screens import Screen, band_confirm_song, classify, find, lb_drinks, lb_held, lb_recover_amount
 from ournotes_auto.result_reader import OcrItem
 
 FIXTURES = Path(__file__).parent / "fixtures" / "screens"
@@ -295,3 +295,140 @@ def test_story_ko():
     items = load("ko_bond_episodes")
     assert story.bond_popup(items)
     assert [t for t, _ in story.bond_episode_rows(items)] == ["第2话", "第1话"]
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("キャンセル", "取消"),
+        ("閉じる", "关闭"),
+        ("ライプTOP", "演出首页"),  # 「ブ」读成「プ」
+        ("ショッ", "商店"),
+        ("一括受け取り", "一键领取"),
+        ("あと1回", "还剩1次"),
+        ("ライブブースト回復", "恢复LIVE BOOST"),
+        ("1日目", "1天"),
+        ("燈視点Ver.", "灯视角Ver."),
+        ("バンドスト", "乐队故事"),  # 字没读全
+        ("ストーリーをスキップしますか？", "要跳过故事吗？"),
+        ("もう一回ライブ", "再次演出"),
+        ("迷星叫", "迷星叫"),  # 曲名只有汉字，照常转简体
+    ],
+)
+def test_localize_ja(text, expected):
+    assert localize(text) == expected
+
+
+@pytest.mark.parametrize(
+    "name, screen",
+    [
+        ("ja_title", Screen.TITLE),
+        ("ja_notify_permission", Screen.NOTIFY_PERMISSION),  # 系统问要不要允许发送通知
+        ("ja_home", Screen.HOME),
+        ("ja_story_menu", Screen.HOME),  # 主界面上展开的故事菜单
+        ("ja_settings", Screen.SETTINGS),
+        ("ja_live_top", Screen.LIVE_TOP),
+        ("ja_song_select", Screen.SONG_SELECT),
+        ("ja_band_confirm", Screen.BAND_CONFIRM),
+        ("ja_lb_setting", Screen.LB_SETTING),
+        ("ja_lb_recover", Screen.LB_RECOVER),
+        ("ja_live_options", Screen.LIVE_OPTIONS),
+        ("ja_pause", Screen.PAUSE),
+        ("ja_abort_confirm", Screen.ABORT_CONFIRM),
+        ("ja_retry_confirm", Screen.RETRY_CONFIRM),
+        ("ja_result_event", Screen.RESULT_EXP),  # 活动结算：「もう一回ライブ」
+        ("ja_story_player_menu", Screen.STORY_MENU),
+        ("ja_story_skip", Screen.STORY_SKIP),
+        ("ja_daily_reward", Screen.REWARD),
+        ("ja_daily_gifts_reward", Screen.REWARD),
+        ("ja_daily_missions_claimed", Screen.REWARD),
+        ("ja_story_reward", Screen.REWARD),
+        ("ja_daily_pass_pt", Screen.OK_POPUP),  # 获得通行证pt
+        ("ja_shop_age_check", Screen.UNKNOWN),  # 年龄确认：不点
+    ],
+)
+def test_classify_ja(name, screen):
+    assert classify(load(name)) is screen
+
+
+def test_band_confirm_song_ja():
+    assert band_confirm_song(load("ja_band_confirm")) == ("迷星叫", "expert")
+
+
+def test_lb_ja():
+    assert lb_drinks(load("ja_lb_recover")) == []  # 没有饮料
+    assert lb_held(load("ja_lb_setting")) == 10
+
+
+def test_song_select_ja():
+    items = load("ja_song_filter")
+    assert song_select.filter_open(items)
+    assert song_select.song_category(items) == "全部"
+    for text in ("EASY", "NORMAL", "HARD", "EXPERT"):
+        assert song_select.filter_option(items, text)
+    items = load("ja_song_filter_status")
+    for text in song_select.STATUS_OPTIONS.values():
+        assert song_select.filter_option(items, text), text
+    assert not song_select.filter_open(load("ja_song_select"))
+    assert song_select.list_empty(load("ja_song_select_empty"))
+    assert find(load("ja_song_select_no_random"), song_select.NO_RANDOM_TEXT)
+    assert song_select.song_locked(load("ja_song_select_locked"))
+    assert not song_select.song_locked(load("ja_song_select"))
+
+
+@pytest.mark.parametrize(
+    "name, title",
+    [
+        ("ja_daily_missions", "任务"),
+        ("ja_daily_missions_regular", "任务"),
+        ("ja_daily_pass", "任务通行证"),
+        ("ja_daily_pass_missions", "通行证任务"),
+        ("ja_daily_beginner", "新手任务"),
+        ("ja_daily_gifts", "礼物盒"),
+    ],
+)
+def test_daily_page_title_ja(name, title):
+    assert daily.page_title(load(name)) == title
+
+
+def test_daily_ja():
+    assert [(d, done) for d, _, done in daily.pass_banners(load("ja_daily_pass"))] == [
+        ("2026/10/08", True),
+        ("2026/10/28", False),
+    ]
+    # 选中第二个时截止时间拆成了「2026/10」「/28」「13:59」
+    assert [(d, done) for d, _, done in daily.pass_banners(load("ja_daily_pass_second"))] == [
+        ("2026/10/08", False),
+        ("2026/10", True),
+    ]
+    assert [t for t, _ in daily.day_tabs(load("ja_daily_beginner"))] == ["1天"]
+    assert daily.reward_ok(load("ja_daily_missions_claimed"))
+    assert daily.reward_ok(load("ja_daily_pass_pt"))
+    assert daily.reward_ok(load("ja_story_reward"))
+    assert daily.gift_confirm(load("ja_daily_gifts_confirm"))
+    assert daily.reward_ok(load("ja_shop_age_check")) is None
+
+
+@pytest.mark.parametrize(
+    "name, title",
+    [
+        ("ja_story_chapters", story.CHAPTERS_TITLE),
+        ("ja_story_episodes", story.EPISODES_TITLE),
+        ("ja_story_pov", story.EPISODES_TITLE),
+        ("ja_bond_members", story.BOND_MEMBERS_TITLE),
+    ],
+)
+def test_story_title_ja(name, title):
+    assert story.story_title(load(name)) == title
+
+
+def test_story_ja():
+    assert story.story_menu_open(load("ja_story_menu"))
+    items = load("ja_story_episodes")
+    assert story.selected_episode(items) == "第1话"
+    assert [t for t, _ in story.episode_cards(items)] == ["第1话", "第2话"]
+    items = load("ja_story_pov")
+    assert story.selected_pov(items) == "灯"
+    assert [t for t, _ in story.pov_cards(items)] == ["灯", "爱音", "楽奈"]
+    assert len(story.member_names(load("ja_bond_members"))) == 5
+    assert story.event_story_button(load("ja_event_page"))

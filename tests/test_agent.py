@@ -349,7 +349,19 @@ def test_worker_args_game_language():
     assert "loop.ocr_model=ko_kr" in worker_args("repeat", {**ATTACH, "game_language": "ko"}, {})
     assert not any("ocr_model" in a for a in worker_args("repeat", {**ATTACH, "game_language": "default"}, {}))
     with pytest.raises(ParamError, match="game_language"):
-        worker_args("start", {"touch": "mumu", "game_language": "ja"}, {})
+        worker_args("start", {"touch": "mumu", "game_language": "zh"}, {})
+
+
+def test_worker_args_jp():
+    """日本語（日服）：换成日服的包名（覆盖控制器给的），识别模型不变；日服不能切换账号。"""
+    args = worker_args("start", {"touch": "mumu", "game_language": "ja"}, {"device.package": "x"})
+    assert args == ["--set", "device.package=com.bushiroad.sirius", "--set", "device.touch=mumu", "start"]
+    args = worker_args("repeat", {**ATTACH, "game_language": "ja"}, {})
+    assert "device.package=com.bushiroad.sirius" in args
+    assert not any("ocr_model" in a for a in args)
+    assert not any("package" in a for a in worker_args("repeat", {**ATTACH, "game_language": "ko"}, {}))
+    with pytest.raises(ParamError, match="日服"):
+        worker_args("switch_account", {"touch": "mumu", "account": "user_12", "game_language": "ja"}, {})
 
 
 def test_worker_args_switch_account():

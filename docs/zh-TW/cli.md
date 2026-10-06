@@ -32,7 +32,7 @@ ournotes-auto init-config          # 產生包含全部預設值的 config.yaml
 
 也可以複製 [config.example.yaml](../../config.example.yaml)（只列出常用項目）為 `config.yaml` 再修改。未寫出的項目使用預設值，全部參數與說明見 `ournotes_auto/config.py`。
 
-至少要確認兩項：`device.instance`（MuMu 多開器裡的實例編號）和 `device.mumu_path`（MuMu 安裝目錄）。
+至少要確認兩項：`device.instance`（MuMu 多開器裡的實例編號）和 `device.mumu_path`（MuMu 安裝目錄）。日服另外把 `device.package` 設成 `com.bushiroad.sirius`（預設是國際服的 `com.bilibili.sirius.official`）。
 
 ## 使用
 
