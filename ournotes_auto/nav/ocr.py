@@ -7,16 +7,33 @@ MaaFramework 的 Tasker 必须绑定控制器才能工作，这里绑定一个�
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import numpy as np
 
 from ..result_reader import OcrItem
-from .lang import localize
+from .lang import HANGUL, localize
 
 logger = logging.getLogger(__name__)
 
 MODEL_FILES = ("det.onnx", "rec.onnx", "keys.txt")
+_NUMBER = re.compile(r"[\d\s/:,.%+-]*\d[\d\s/:,.%+-]*")
+_KANA = re.compile(r"[\u3040-\u30ff]")
+
+
+def _pick(main: str, extra: str, main_score: float = 0.0, extra_score: float = 0.0) -> str:
+    """同一个框两个模型读到的字：默认模型读出假名（日文曲名）就用它，另一个模型读出韩文就用另一个，
+    其余（数字、英文、符号）用默认模型的（韩文模型的字表里没有「/」「:」「,」，「2/10」会读成「210」）。
+    默认模型读出的是数字（「0/5」）、又不比另一个短时也用它，韩文模型会读成「이5」这样（「1회남음」默认模型只读出「1」）。
+    默认模型很有把握、韩文模型没把握时也用默认模型的：B 站登录界面不随游戏语言变，还是简中（「退出登录」1.00 对「原出끔志」0.32）。"""
+    if _KANA.search(main) or not HANGUL.search(extra):
+        return main
+    if main_score >= 0.9 and main_score - extra_score >= 0.15:
+        return main
+    if _NUMBER.fullmatch(main) and len(main.replace(" ", "")) >= len(extra.replace(" ", "")):
+        return main
+    return extra
 
 
 class OcrUnavailable(RuntimeError):
@@ -88,12 +105,14 @@ class MaaOcr:
         from maa.resource import Resource
         from maa.tasker import Tasker
 
-        model_dir = Path(bundle) / "model" / "ocr" / model
-        missing = [f for f in MODEL_FILES if not (model_dir / f).is_file()]
-        if missing:
-            raise OcrUnavailable(
-                f"缺少 OCR 模型 {model_dir}/{{{','.join(missing)}}}：请运行 python tools/fetch_ocr.py 下载"
-            )
+        for m in {"", model}:
+            model_dir = Path(bundle) / "model" / "ocr" / m
+            missing = [f for f in MODEL_FILES if not (model_dir / f).is_file()]
+            if missing:
+                raise OcrUnavailable(
+                    f"缺少 OCR 模型 {model_dir}/{{{','.join(missing)}}}：请运行 python tools/fetch_ocr.py 下载"
+                )
+        # 指定了其他模型（如韩文）时两个模型都识别、逐框挑（见 _pick）；两个模型的检测模型相同，框一致
         self.model = model
         self.design = design
         self._text = (lambda t: t) if raw else localize
@@ -107,11 +126,20 @@ class MaaOcr:
             raise OcrUnavailable("MaaFramework Tasker 初始化失败")
 
     def _run(self, image: np.ndarray, roi: tuple[int, int, int, int] | None, only_rec: bool):
+        results, sx, sy = self._run_model("", image, roi, only_rec)
+        if self.model:
+            extra = {tuple(r.box): r for r in self._run_model(self.model, image, roi, only_rec)[0]}
+            for r in results:
+                if e := extra.get(tuple(r.box)):
+                    r.text = _pick(r.text, e.text, r.score, e.score)
+        return results, sx, sy
+
+    def _run_model(self, model: str, image: np.ndarray, roi: tuple[int, int, int, int] | None, only_rec: bool):
         from maa.pipeline import JOCR, JRecognitionType
 
         h, w = image.shape[:2]
         sx, sy = w / self.design[0], h / self.design[1]
-        param = JOCR(threshold=0.0, model=self.model, only_rec=only_rec)
+        param = JOCR(threshold=0.0, model=model, only_rec=only_rec)
         if roi is not None:
             x, y, rw, rh = roi
             param.roi = (round(x * sx), round(y * sy), round(rw * sx), round(rh * sy))

@@ -94,11 +94,12 @@ PASS_MISSIONS_ROI: Rect = (1080, 10, 190, 60)
 PASS_LIST_ROI: Rect = (0, 80, 300, 640)
 PASS_SELECTED_LEFT = 72
 PASS_BANNER_DY = -55
-_PASS_DATE = re.compile(r"20\d{2}(/\d{1,2}/\d{1,2}|$)")
+_PASS_DATE = re.compile(r"\d{2,4}([/-]\d{1,2}[/-]\d{1,2})|20\d{2}$")  # 韩文界面是「2026-10-08 19:59」；年份开头的「2」偶尔读漏
 # 商店左下角的 T.G.W CARD 入口；左侧分页从上到下是星钻、礼包、T.G.W CARD 专享商品目录、交织的乐章通行证
 BTN_TGW = (113, 555)
 TGW_ROI: Rect = (0, 480, 240, 140)
 BTN_CATALOG_TAB = (113, 268)
+CATALOG_TAB_ROI: Rect = (0, 250, 260, 40)
 SHOP_TAB_ROI: Rect = (0, 90, 260, 300)
 # 选中的分页是青色（G 约 170、R 约 90），没选中的是蓝紫色（G 约 90），在分页左侧取样
 SHOP_TAB_SAMPLE_X = 40
@@ -589,7 +590,8 @@ class DailyMixin:
     def _catalog_items(self) -> list[OcrItem] | None:
         """截一帧，停在商店的专享商品目录分页、没有弹窗时返回识别结果，否则返回 None。"""
         _, items = self.look()
-        tab = find(items, "专享商品目录", SHOP_TAB_ROI, exact=True)
+        # 分页的字是两行「T.G.W CARD」「专享商品目录」；韩文界面第二行只有「상점」（商店）
+        tab = find(items, "专享商品目录", SHOP_TAB_ROI, exact=True) or find(items, "商店", CATALOG_TAB_ROI, exact=True)
         if page_title(items) != "商店" or has_confirm(items) or tab is None:
             return None
         _, g, r = (float(v) for v in self._patch((SHOP_TAB_SAMPLE_X, center(tab)[1]), 3).reshape(-1, 3).mean(axis=0))

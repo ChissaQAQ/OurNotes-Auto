@@ -307,6 +307,15 @@ def global_args(attach: Mapping[str, Any]) -> list[str]:
     return ["--json-log", "--stdin-stop", *(["-v"] if flag(attach, "debug_log") else [])]
 
 
+# 界面选项「游戏语言」→ loop.ocr_model（resource/model/ocr 下的子目录，空为默认模型）
+OCR_MODELS = {"default": "", "ko": "ko_kr"}
+
+
+def _ocr_model(attach: Mapping[str, Any]) -> str:
+    """``game_language``（default / ko）；资源是旧版、attach 里没有这一项时用默认模型。"""
+    return OCR_MODELS[_choice(attach, "game_language", tuple(OCR_MODELS))] if "game_language" in attach else ""
+
+
 def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str]) -> list[str]:
     """``python -m ournotes_auto`` 之后的参数（不含日志 / 停止相关的全局参数，见 ``global_args``）。"""
     if task == "records":
@@ -326,6 +335,8 @@ def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str])
     else:
         sets = {**device, **run_settings(task, attach)}
         tail = ["run", *(["--watch-combo"] if _bool(attach, "watch_combo") else [])]
+    if model := _ocr_model(attach):
+        sets["loop.ocr_model"] = model
     args: list[str] = []
     for key, value in sets.items():
         args += ["--set", f"{key}={value}"]

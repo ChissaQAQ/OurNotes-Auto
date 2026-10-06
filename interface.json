@@ -50,6 +50,7 @@
         "tasks/tools.json"
     ],
     "global_option": [
+        "GameLanguage",
         "Touch",
         "HumanGreat",
         "HumanTiming",

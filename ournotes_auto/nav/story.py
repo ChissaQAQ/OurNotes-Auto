@@ -102,7 +102,9 @@ MEMBER_NAME_ROI: Rect = (200, 565, 1080, 60)
 MEMBER_BADGE_DX = range(80, 101, 4)
 MEMBER_BADGE_DY = -482
 MEMBER_CARD_Y = 400
-_NAME = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]{2,}")  # 假名、汉字
+MEMBER_COLUMN_DX = 60  # 卡片相距约 200
+_NAME = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3]{2,}")  # 假名、汉字、韩文
+_LATIN_NAME = re.compile(r"[A-Za-z\u00c0-\u024f]{2,}( [A-Za-z\u00c0-\u024f]{2,})*")  # English 界面的「Rāna Kaname」
 # 羁绊故事选择：右边一行一个组合「【灯&爱音】」，红点在行的右上角
 PAIR_ROI: Rect = (820, 140, 360, 460)
 PAIR_BADGE_X = range(1172, 1189, 4)
@@ -187,8 +189,19 @@ def _same_name(a: str | None, b: str) -> bool:
 
 
 def member_names(items: list[OcrItem]) -> list[tuple[str, tuple[int, int]]]:
-    """羁绊故事页上成员卡片底部的中文名和位置，从左到右（上面一行的罗马字不算）。"""
+    """羁绊故事页上成员卡片底部的中文名和位置，从左到右（上面一行的罗马字不算）。
+    English 界面上只有罗马字，长的折成两行（「Tomori」「Takamatsu」），同一列的拼起来。"""
     names = [(_compact(it.text), center(it)) for it in items if in_roi(it, MEMBER_NAME_ROI) and _NAME.search(it.text)]
+    if not names:
+        latin = (it for it in items if in_roi(it, MEMBER_NAME_ROI) and _LATIN_NAME.fullmatch(it.text.strip()))
+        for it in sorted(latin, key=lambda it: it.cy):
+            x, y = center(it)
+            for i, (name, pos) in enumerate(names):
+                if abs(pos[0] - x) < MEMBER_COLUMN_DX:
+                    names[i] = (f"{name} {it.text.strip()}", pos)
+                    break
+            else:
+                names.append((it.text.strip(), (x, y)))
     return sorted(names, key=lambda n: n[1][0])
 
 
