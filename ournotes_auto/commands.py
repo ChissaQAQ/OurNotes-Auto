@@ -217,8 +217,8 @@ def drop_great_for_ap(cfg: Config) -> None:
 
 
 def cmd_run(cfg: Config, args) -> int:
-    """全自动循环：从当前画面导航到自由演出（或挑战演出），识别曲目并连续演奏。"""
-    from .runner import Runner
+    """全自动循环：从当前画面导航到自由演出（或挑战演出），识别曲目并连续演奏。游戏没在运行时先启动它。"""
+    from .runner import NavigationError, Runner
     from .sources import make_source
 
     if args.difficulty:
@@ -253,11 +253,21 @@ def cmd_run(cfg: Config, args) -> int:
     check_run_config(cfg)
     drop_great_for_ap(cfg)
     stop = args.stop
+    launched = _launch_game(cfg)
     with open_context(cfg, stop, watch_combo=args.watch_combo, record=args.record) as ctx:
         try:
             source = make_source(cfg, ctx.catalog)
         except ValueError as e:
             raise SetupError(str(e)) from None
+        if launched:
+            try:
+                ctx.nav.ensure_in_game()  # 刚启动：等过标题画面、登录奖励、公告
+            except NavigationError as e:
+                if stop.is_set():
+                    logger.info("已停止")
+                    return 130
+                logger.error("%s", e)
+                return 1
         runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source)
         try:
             stats = runner.run()
@@ -269,13 +279,15 @@ def cmd_run(cfg: Config, args) -> int:
     return 0 if (stats.plays or not stats.failures) and not stats.maintenance else 1
 
 
-def _launch_game(cfg: Config) -> None:
+def _launch_game(cfg: Config) -> bool:
+    """游戏没在运行时启动它，返回是否启动了。"""
     from .device import adb
 
     if adb.start_app(cfg.device):
         time.sleep(3)  # 等游戏窗口出来，截图才会取到游戏的画面
-    else:
-        logger.info("游戏已在运行")
+        return True
+    logger.info("游戏已在运行")
+    return False
 
 
 def _game_navigator(cfg: Config, args, source, touch):
