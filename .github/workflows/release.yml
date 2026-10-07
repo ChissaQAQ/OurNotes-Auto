@@ -58,7 +58,7 @@ jobs:
             esac
             python tools/install.py --ui "$zip" --python downloads/python-embed.zip --version "$VERSION" --out "dist/$ui"
             if [[ ! -f "dist/$ui/LICENSE-$ui" ]]; then cp "downloads/LICENSE-$ui" "dist/$ui/"; fi
-            (cd "dist/$ui" && 7z a -tzip "../ournotes-auto-$VERSION-win-x64-$ui.zip" . > /dev/null)
+            (cd "dist/$ui" && 7z a -tzip "../OurNotes-Auto-$VERSION-win-x64-$ui.zip" . > /dev/null)
           done
           ls -la dist/*.zip
 

@@ -37,8 +37,8 @@ This software is free and open source; please read the [Terms of Service](TERMS_
 
    | Archive | UI | Also requires |
    |---|---|---|
-   | `ournotes-auto-<version>-win-x64-MFAA.zip` | [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia) | .NET 10 Desktop Runtime (the bundled `DependencySetup_依赖库安装_win.bat` installs it in one click) |
-   | `ournotes-auto-<version>-win-x64-MXU.zip` | [MXU](https://github.com/MistEO/MXU) | WebView2 (usually preinstalled on Windows 10/11) |
+   | `OurNotes-Auto-<version>-win-x64-MFAA.zip` | [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia) | .NET 10 Desktop Runtime (the bundled `DependencySetup_依赖库安装_win.bat` installs it in one click) |
+   | `OurNotes-Auto-<version>-win-x64-MXU.zip` | [MXU](https://github.com/MistEO/MXU) | WebView2 (usually preinstalled on Windows 10/11) |
 
    Both require the [VC++ 2015–2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 2. Run `MFAAvalonia.exe` or `mxu.exe`, and read through the instructions shown on first launch.
