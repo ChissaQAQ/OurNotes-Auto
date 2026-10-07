@@ -290,7 +290,7 @@ class Runner:
         except ConnectionError as e:
             # 谱面站一时连不上：算这局失败，下一局再试（连续失败够多才停）
             raise NavigationError(str(e)) from e
-        self.session.learned_offset_ms = self.store.learned_offset_ms
+        self.session.learned_offset_ms = self.store.learned_offset_ms + self._chart_offset(chart)
         lc = self.cfg.loop
         if lc.wait_lb and not self.cfg.game.lb_cost:
             lb_short = "auto"  # 挂机消耗 0：有 LB 就消耗，用完消耗 0 接着打，不等
@@ -308,6 +308,15 @@ class Runner:
             self.stats.all_perfect += bool(result.all_perfect)
         self.nav.leave_result()
         return result
+
+    def _chart_offset(self, chart: Chart) -> float:
+        at = self.cfg.autotune
+        if not (at.enabled and at.per_chart):
+            return 0.0
+        value = self.store.chart_offset_ms(chart.music_id, chart.difficulty, self.cfg.game.note_speed)
+        if value:
+            logger.debug("%s %s 的谱面 offset %+.1fms", chart.title or chart.music_id, chart.difficulty.upper(), value)
+        return value
 
     def _play(self, chart: Chart) -> PlayOutcome | None:
         """演奏一局，返回 None 表示放弃（歌还在放，之后照常等结算）。
@@ -383,7 +392,8 @@ class Runner:
         else:
             why = None
         if why is None:
-            self.store.autotune(result, self.cfg.autotune)
+            label = f"{outcome.chart.title or outcome.chart.music_id} {outcome.chart.difficulty.upper()}"
+            self.store.autotune(result, self.cfg.autotune, self.cfg.game.note_speed, label)
         else:
             self.store.append(result)
             logger.warning("%s，不修正 offset", why)

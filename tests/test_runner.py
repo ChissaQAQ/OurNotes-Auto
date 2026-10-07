@@ -128,6 +128,18 @@ def test_runner_plays_and_autotunes(tmp_path):
     assert hist[0].stalls is None
 
 
+def test_runner_adds_chart_offset(tmp_path):
+    """这张谱面学到了自己的 offset 时，演奏用全局 + 谱面的值；关掉按谱面修正就不加。"""
+    for per_chart, used in ((True, -3.5), (False, -1.0)):
+        runner, _, store = make(tmp_path / str(per_chart))
+        runner.cfg.loop.max_plays = 1
+        runner.cfg.autotune.per_chart = per_chart
+        state = {"learned_offset_ms": -1.0, "chart_offsets": {"100008_expert": {"offset_ms": -2.5, "note_speed": 5.0}}}
+        store._save_state(state)
+        runner.run()
+        assert store.history()[-1].offset_ms == 3.0 + used
+
+
 def test_runner_records_stalls(tmp_path):
     runner, _, store = make(tmp_path, stalls=[(141071.4, 141691.2)])
     runner.run()

@@ -143,7 +143,12 @@ def cmd_records(cfg: Config, args) -> int:
     from .records import RecordStore
     from .report import report_lines
 
-    results = RecordStore("data").history(limit=None)
+    store = RecordStore("data")
+    if args.clear_chart_offsets:
+        count = store.clear_chart_offsets()
+        logger.info("已清除 %d 张谱面的 offset（全局学习值 %+.1fms 不变）", count, store.learned_offset_ms)
+        return 0
+    results = store.history(limit=None)
     try:
         _, catalog = _catalog(cfg)
     except Exception as e:  # 离线又没有缓存：只显示 ID
@@ -154,7 +159,7 @@ def cmd_records(cfg: Config, args) -> int:
         song = catalog.songs.get(mid) if catalog else None
         return song.display_title() if song else str(mid)
 
-    lines = report_lines(results, title, recent=args.recent, not_ap=args.not_ap)
+    lines = report_lines(results, title, recent=args.recent, not_ap=args.not_ap, chart_offsets=store.chart_offsets())
     for line in lines:
         if args.json_log:  # 界面里只看得到日志
             logger.info("%s", line)
@@ -211,7 +216,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("records", help="汇总本地演奏记录（data/records.jsonl）")
     sp.add_argument("--recent", type=int, default=10, help="列出最近几局（默认 10）")
-    sp.add_argument("--not-ap", type=int, default=10, help="「打过但还没 AP」最多列几张谱面（默认 10）")
+    sp.add_argument("--not-ap", type=int, default=10, help="「还没 AP」「按谱面修正的 offset」最多列几张（默认 10）")
+    sp.add_argument("--clear-chart-offsets", action="store_true", help="清除按谱面学到的 offset（全局的不变）")
     sp.set_defaults(func=cmd_records)
 
     from . import commands
