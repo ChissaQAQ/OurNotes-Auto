@@ -9,7 +9,8 @@
 
 - 每局消耗多少由 ``game.challenge_cost`` 决定（默认最少的 200，能多打几局），只在核对过选中的单选按钮后点 OK；
   不改设置时只点「取消」。
-- CP 不够每局消耗时停下（:class:`~ournotes_auto.runner.CpExhausted`）。
+- CP 不够每局消耗时停下（:class:`~ournotes_auto.runner.CpExhausted`）。持有数不够所选的消耗时游戏不让点 OK
+  （提示「挑战pt不足。」），这时点「取消」再停下。
 - 乐队确认页的「跳过 还剩n次」（扫荡券）绝不点。
 - 选中的歌在所选难度有没有 AP 看乐曲选择页右侧面板的 ALL PERFECT 标记（:meth:`ChallengeMixin.challenge_song_ap`）。
 """
@@ -47,6 +48,7 @@ BTN_CP_CANCEL = (498, 572)
 CP_CANCEL_ROI: Rect = (340, 540, 300, 70)
 BTN_CP_OK = (782, 572)
 CP_OK_ROI: Rect = (640, 540, 300, 70)
+CP_SHORT_ROI: Rect = (440, 300, 400, 120)  # 持有数不够所选消耗时点 OK 弹出的「挑战pt不足。」
 # 演出首页连续这么多次没认出「挑战演出」就认为没在开放（刚切到演出首页时可能还没读到）
 CHALLENGE_MISSING_LOOKS = 3
 CHALLENGE_MAX_TAPS = 3
@@ -85,18 +87,23 @@ class ChallengeMixin:
 
     def set_cp_cost(self, cost: int | None, timeout_s: float = 15.0) -> int | None:
         """挑战演出乐队确认页 → CP 设置 → 选中 ``cost``、按像素核对 → OK，回到乐队确认页（游戏会记住设置）。
-        ``cost`` 为 None 时不改，只读出当前选中的消耗后点「取消」。返回弹窗上读到的 CP 持有数。"""
+        ``cost`` 为 None 时不改，只读出当前选中的消耗后点「取消」。返回弹窗上读到的 CP 持有数。
+        持有数不够 ``cost`` 时点「取消」，回到乐队确认页后抛 :class:`CpExhausted`。"""
         self.tap(BTN_CP_COST, "CP 设置")
         opened = time.monotonic()
         deadline = opened + timeout_s
         radio_taps = 0
         closed_at = None
         held = selected = None
+        short = False
         while time.monotonic() < deadline:
             self._sleep(0.5)
             screen, items = self.look()
             if screen is Screen.CHALLENGE_BAND_CONFIRM:
                 if closed_at is not None:
+                    if short:
+                        self._cp_cost = None  # 取消了，游戏里还是原来的设置
+                        raise CpExhausted(f"挑战pt 不够了（持有 {'?' if held is None else held}，每局消耗 {cost}）")
                     self._cp_cost = selected
                     return held
                 if time.monotonic() - opened > 3:  # 点击没生效
@@ -114,7 +121,11 @@ class ChallengeMixin:
                     continue
                 held = cp_held(items)
                 logger.debug("挑战pt消耗为 %s（持有 %s）", selected or "?", "?" if held is None else held)
-                if cost is None:
+                if cost is not None and (
+                    (held is not None and held < cost) or find(items, "挑战pt不足", CP_SHORT_ROI)
+                ):
+                    short = True  # OK 点不动（提示「挑战pt不足。」），取消后停下
+                if cost is None or short:
                     self.tap(self._button(items, "取消", BTN_CP_CANCEL, CP_CANCEL_ROI), "取消")
                 else:
                     self.tap(self._button(items, "OK", BTN_CP_OK, CP_OK_ROI), "OK")
