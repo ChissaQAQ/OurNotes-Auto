@@ -154,6 +154,14 @@ class AutoTuneConfig:
     # 步长大了学习值会跟着噪声来回跳；1ms 时稳态抖动约 1.5ms，约 5 局收敛
     step_ms: float = 1.0
     min_samples: int = 10  # FAST+SLOW 少于该值不修正
+    # 按谱面修正：有的谱面一直偏 FAST 或偏 SLOW（实测 56 张打过 4 局以上的谱面里 22 张平均 |r| ≥ 0.4，
+    # 前后两半的平均值相关系数 0.84），全局 offset 被它们来回拉。某张谱面最近 chart_plays 局的 r 减去全局近况后
+    # 都同号、平均绝对值不小于 chart_threshold 时，偏差算这张谱面的：只修正它自己的 offset（不超过 ±chart_max_ms），
+    # 这一局不修正全局。谱面 offset 按流速分开（换了流速重新学）
+    per_chart: bool = True
+    chart_plays: int = 3
+    chart_threshold: float = 0.4
+    chart_max_ms: float = 10.0
 
 
 @dataclass

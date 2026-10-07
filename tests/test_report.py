@@ -47,6 +47,17 @@ def test_report_best_prefers_fewest_mistakes():
     assert lines[-1] == "  2 EXPERT：3 局，最好 P100 G1 g0 B0 M1"
 
 
+def test_report_chart_offsets():
+    offsets = {
+        "1_expert": {"offset_ms": 1.25, "note_speed": 5.0},
+        "2_hard": {"offset_ms": -3.0, "note_speed": 5.0},
+        "3_expert": {"offset_ms": 0.0, "note_speed": 5.0},
+    }
+    lines = report_lines([play(1)], lambda mid: f"曲{mid}", recent=0, chart_offsets=offsets)
+    i = lines.index("按谱面修正的 offset（2 张，偏得多的在前；正值 = 推迟）：")
+    assert lines[i + 1 : i + 3] == ["  曲2 HARD：-3.0ms（流速 5.0）", "  曲1 EXPERT：+1.2ms（流速 5.0）"]
+
+
 def test_report_empty():
     assert report_lines([], str) == ["还没有演奏记录（data/records.jsonl）"]
 

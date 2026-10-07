@@ -75,8 +75,10 @@ def report_lines(
     title: Callable[[int], str],
     recent: int = 10,
     not_ap: int = 10,
+    chart_offsets: dict[str, dict] | None = None,
 ) -> list[str]:
-    """汇总成几行文字。``title`` 把 musicId 换成曲名。"""
+    """汇总成几行文字。``title`` 把 musicId 换成曲名。``chart_offsets`` 是按谱面学到的 offset
+    （:meth:`~ournotes_auto.records.RecordStore.chart_offsets`），列出偏得最多的几张。"""
     if not results:
         return ["还没有演奏记录（data/records.jsonl）"]
     s = summarize(results)
@@ -97,6 +99,19 @@ def report_lines(
             lines.append(f"  {title(mid)} {diff.upper()}：{c.plays} 局{best}")
         if len(pending) > not_ap:
             lines.append(f"  ……还有 {len(pending) - not_ap} 张")
+
+    learned = sorted(
+        ((k, e) for k, e in (chart_offsets or {}).items() if e.get("offset_ms")),
+        key=lambda ke: -abs(ke[1]["offset_ms"]),
+    )
+    if learned:
+        lines.append(f"按谱面修正的 offset（{len(learned)} 张，偏得多的在前；正值 = 推迟）：")
+        for key, e in learned[:not_ap]:
+            mid, _, diff = key.partition("_")
+            name = title(int(mid)) if mid.isdigit() else mid
+            lines.append(f"  {name} {diff.upper()}：{e['offset_ms']:+.1f}ms（流速 {e.get('note_speed')}）")
+        if len(learned) > not_ap:
+            lines.append(f"  ……还有 {len(learned) - not_ap} 张")
 
     if recent > 0:
         lines.append(f"最近 {min(recent, s.plays)} 局：")
