@@ -60,6 +60,7 @@ ournotes-auto daily --jobs event   # 기간 한정 이벤트에서 보지 않은
 
 # 로컬 연주 기록 요약(총 판 수, AP한 채보, 아직 AP를 못 한 채보, 최근 몇 판)
 ournotes-auto records [--recent 10]
+ournotes-auto records --clear-chart-offsets   # 채보별로 배운 오프셋 지우기(전역 학습값은 그대로)
 
 # 현재 화면 인식(내비게이션 디버그)
 ournotes-auto look [--save] [--ocr]

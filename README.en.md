@@ -43,7 +43,7 @@ This software is free and open source; please read the [Terms of Service](TERMS_
    Both require the [VC++ 2015–2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 2. Run `MFAAvalonia.exe` or `mxu.exe`, and read through the instructions shown on first launch.
 3. In the connection settings, choose "MuMu Emulator" and the instance to use (the adb address of instance n is `127.0.0.1:16384+32n`).
-4. Check the tasks, set the options and start. The game just needs to be on the Home screen or the Free LIVE Select Song screen; with "Start Game" checked, it doesn't even need to be running.
+4. Check the tasks, set the options and start. The game just needs to be on the Home screen or the Free LIVE Select Song screen, and it doesn't even need to be running: every task except "Records Summary" starts it first (if it is already running, that instance is used), then waits through the title screen, login bonus and notices to get into the game.
 
 Before use, make sure of the following:
 
@@ -56,7 +56,7 @@ Tasks: Start Game, Switch Account (accounts in the International server's bilibi
 
 ## Measured Results and Known Limitations
 
-Measured on my machine (MuMu 6.6.4, Android 15 instance with 4 cores, 6GB, 60 fps, i7-14700KF; all records played with release builds and dev builds since 2026-09-30, humanization off):
+Measured (MuMu 6.6.4, Android 15 instance with 4 cores, 6GB, 60 fps; all records played with release builds and dev builds since 2026-09-30, humanization off):
 
 | Difficulty | Rounds | ALL PERFECT | FULL COMBO |
 |---|---|---|---|

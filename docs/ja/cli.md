@@ -60,6 +60,7 @@ ournotes-auto daily --jobs event   # 期間限定イベントの未読のイベ�
 
 # ローカルの演奏記録をまとめる（総プレイ回数、AP した譜面、まだ AP していない譜面、直近の数回）
 ournotes-auto records [--recent 10]
+ournotes-auto records --clear-chart-offsets   # 譜面ごとに学習したオフセットを消す（全体の学習値はそのまま）
 
 # 現在の画面を認識（ナビゲーションのデバッグ）
 ournotes-auto look [--save] [--ocr]

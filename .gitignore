@@ -19,3 +19,6 @@ maa_option.json
 
 # tools/install.py 组装的界面运行目录
 install/
+
+# 本机开发计划（含个人环境信息，仅本地保留）
+docs/开发计划.md

@@ -56,7 +56,7 @@
     "opt.CheckUpdate": "Check for Updates",
     "opt.CheckUpdate.desc": "When running tasks, checks GitHub for a newly released version and, if there is one, notes it at the end of the log (no automatic download)",
     "task.Start": "Start Game",
-    "task.Start.desc": "Launches the game if it isn't running and waits until the Home screen: taps through the title screen, claims login bonuses and closes the News. Put it before other tasks.",
+    "task.Start.desc": "Launches the game if it isn't running and waits until the Home screen: taps through the title screen, claims login bonuses and closes the News. Every other task except Records Summary does this by itself first, so it doesn't need to be checked; checking it alone just gets the game to the Home screen.",
     "task.SwitchAccount": "Switch Account",
     "task.SwitchAccount.desc": "Logs out of the current bilibili account, logs in to the specified account from the game's login history (no password needed), then enters the game; if already in the game, restarts the game first to get back to the title screen. Can only switch to accounts in the login history: log in to a new account manually in the game once first. To rotate between multiple accounts, order the task list as \"Switch Account (A) → other tasks → Switch Account (B) → other tasks\", with each Switch Account set to its own account name.",
     "opt.Account": "Account",
