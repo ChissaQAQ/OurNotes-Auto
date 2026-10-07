@@ -37,8 +37,8 @@
 
    | 圧縮ファイル | UI | 別途必要なもの |
    |---|---|---|
-   | `ournotes-auto-<バージョン>-win-x64-MFAA.zip` | [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia) | .NET 10 デスクトップランタイム（同梱の `DependencySetup_依赖库安装_win.bat` でワンクリックでインストール可能） |
-   | `ournotes-auto-<バージョン>-win-x64-MXU.zip` | [MXU](https://github.com/MistEO/MXU) | WebView2（Windows 10/11 には通常プリインストール済み） |
+   | `OurNotes-Auto-<バージョン>-win-x64-MFAA.zip` | [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia) | .NET 10 デスクトップランタイム（同梱の `DependencySetup_依赖库安装_win.bat` でワンクリックでインストール可能） |
+   | `OurNotes-Auto-<バージョン>-win-x64-MXU.zip` | [MXU](https://github.com/MistEO/MXU) | WebView2（Windows 10/11 には通常プリインストール済み） |
 
    どちらも [VC++ 2015–2022 ランタイム](https://aka.ms/vs/17/release/vc_redist.x64.exe)が必要です。
 2. `MFAAvalonia.exe` または `mxu.exe` を実行し、初回起動時に表示される説明を最後まで読んでください。

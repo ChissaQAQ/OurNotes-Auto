@@ -37,8 +37,8 @@
 
    | 压缩包 | 界面 | 另外需要 |
    |---|---|---|
-   | `ournotes-auto-<版本>-win-x64-MFAA.zip` | [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia) | .NET 10 桌面运行时（包里的 `DependencySetup_依赖库安装_win.bat` 可一键安装） |
-   | `ournotes-auto-<版本>-win-x64-MXU.zip` | [MXU](https://github.com/MistEO/MXU) | WebView2（Windows 10/11 一般自带） |
+   | `OurNotes-Auto-<版本>-win-x64-MFAA.zip` | [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia) | .NET 10 桌面运行时（包里的 `DependencySetup_依赖库安装_win.bat` 可一键安装） |
+   | `OurNotes-Auto-<版本>-win-x64-MXU.zip` | [MXU](https://github.com/MistEO/MXU) | WebView2（Windows 10/11 一般自带） |
 
    两种都需要 [VC++ 2015–2022 运行库](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
 2. 运行 `MFAAvalonia.exe` 或 `mxu.exe`，先读完首次打开时的使用说明。

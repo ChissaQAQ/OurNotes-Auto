@@ -37,8 +37,8 @@
 
    | 압축 파일 | UI | 추가로 필요한 것 |
    |---|---|---|
-   | `ournotes-auto-<버전>-win-x64-MFAA.zip` | [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia) | .NET 10 데스크톱 런타임(패키지의 `DependencySetup_依赖库安装_win.bat`으로 한 번에 설치 가능) |
-   | `ournotes-auto-<버전>-win-x64-MXU.zip` | [MXU](https://github.com/MistEO/MXU) | WebView2(Windows 10/11에는 보통 기본 포함) |
+   | `OurNotes-Auto-<버전>-win-x64-MFAA.zip` | [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia) | .NET 10 데스크톱 런타임(패키지의 `DependencySetup_依赖库安装_win.bat`으로 한 번에 설치 가능) |
+   | `OurNotes-Auto-<버전>-win-x64-MXU.zip` | [MXU](https://github.com/MistEO/MXU) | WebView2(Windows 10/11에는 보통 기본 포함) |
 
    두 UI 모두 [VC++ 2015–2022 런타임](https://aka.ms/vs/17/release/vc_redist.x64.exe)이 필요합니다.
 2. `MFAAvalonia.exe` 또는 `mxu.exe`를 실행하고, 처음 열 때 나오는 사용 안내를 먼저 끝까지 읽으세요.
