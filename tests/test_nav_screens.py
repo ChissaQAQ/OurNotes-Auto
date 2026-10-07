@@ -74,6 +74,7 @@ def load(name: str) -> list[OcrItem]:
         ("challenge_song_select_ap", Screen.CHALLENGE_SONG_SELECT),  # 选中的歌已 AP（右侧有 ALL PERFECT）
         ("challenge_band_confirm", Screen.CHALLENGE_BAND_CONFIRM),  # 右下是「CP 设置」，顶栏是 CP
         ("challenge_cp_setting", Screen.CP_SETTING),
+        ("challenge_cp_setting_short", Screen.CP_SETTING),
         ("home", Screen.HOME),
         ("lb_setting", Screen.LB_SETTING),
         ("lb_setting_event", Screen.LB_SETTING),  # 活动期间每行也写着「活动pt」「挑战pt」
@@ -187,6 +188,7 @@ def test_setting_dialog_title():
 
 def test_cp_held():
     assert cp_held(load("challenge_cp_setting")) == 3708
+    assert cp_held(load("challenge_cp_setting_short")) == 798  # 选了 1600，提示「挑战pt不足。」
     assert cp_bar_held(load("challenge_band_confirm")) == 3708
     assert cp_bar_held(load("band_confirm")) is None  # 自由演出的顶栏是 LB（「14/10」）
     assert cp_held(load("lb_setting")) is None

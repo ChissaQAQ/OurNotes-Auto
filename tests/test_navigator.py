@@ -1344,8 +1344,8 @@ class ChallengeGame(FakeGame):
     乐曲选择页左边是 ``songs``，第 ``sel`` 首选中、总在中间那一行（y=324），点哪一行就选中哪一首；点难度按钮
     改 ``diff``。右侧面板是选中的歌，(曲名, 难度) 在 ``ap`` 里时有 ALL PERFECT 标记；面板在点击后要再过 ``lag``
     次识别才跟上（模拟切换动画）。
-    消耗设置弹窗按选中项画出白色单选按钮，点 OK 才改 ``cost``、点取消还原。顶栏和弹窗上的 CP 持有数按 ``held``
-    改写，``bar`` 指定顶栏的识别结果（模拟读错）。"""
+    消耗设置弹窗按选中项画出白色单选按钮，点 OK 才改 ``cost``、点取消还原；选中的消耗比 ``held`` 多时 OK 点不动，
+    弹出「挑战pt不足。」。顶栏和弹窗上的 CP 持有数按 ``held`` 改写，``bar`` ``popup`` 指定顶栏、弹窗的识别结果（模拟读错）。"""
 
     MOVES = {
         "live_top_challenge": [((870, 637), "challenge_song_select"), ((873, 348), "song_select")],
@@ -1365,6 +1365,7 @@ class ChallengeGame(FakeGame):
         cost=400,
         held=3708,
         bar=None,
+        popup=None,
         songs=("A曲", "B曲", "C曲"),
         sel=0,
         ap=(),
@@ -1374,6 +1375,8 @@ class ChallengeGame(FakeGame):
         self.cost = self.pending = cost
         self.held = held
         self.bar = bar
+        self.popup = popup
+        self.toast = False
         self.songs = list(songs)
         self.sel = sel
         self.diff = "expert"
@@ -1412,9 +1415,11 @@ class ChallengeGame(FakeGame):
             if self.panel[1]:
                 items.append(OcrItem(1064, 210, 120, 24, "ALLPERFECT"))
         held = {"challenge_band_confirm": str(self.held) if self.bar is None else self.bar}
-        held["challenge_cp_setting"] = str(self.held)
+        held["challenge_cp_setting"] = str(self.held) if self.popup is None else self.popup
         if name in held:
             items = [OcrItem(it.x, it.y, it.w, it.h, held[name] if it.text == "3708" else it.text) for it in items]
+        if name == "challenge_cp_setting" and self.toast:
+            items.append(OcrItem(557, 342, 151, 32, "挑战pt不足。"))
         return items
 
     def tap(self, x, y):
@@ -1422,12 +1427,15 @@ class ChallengeGame(FakeGame):
         here = self.state
         if here == "challenge_cp_setting":
             self.pending = next((c for c, q in CP_RADIO.items() if math.dist(p, q) < 20), self.pending)
-            if math.dist(p, CP_OK) < 40:
+            if math.dist(p, CP_OK) < 40 and self.pending > self.held:
+                self.toast = True
+            elif math.dist(p, CP_OK) < 40:
                 self.cost = self.pending
             elif math.dist(p, CP_CANCEL) < 40:
                 self.pending = self.cost
-            if math.dist(p, CP_OK) < 40 or math.dist(p, CP_CANCEL) < 40:
+            if (math.dist(p, CP_OK) < 40 and not self.toast) or math.dist(p, CP_CANCEL) < 40:
                 self.state = "challenge_band_confirm"
+                self.toast = False
             self.taps.append((here, p))
             return
         if here == "challenge_song_select" and abs(p[0] - 420) < 120:
@@ -1500,6 +1508,26 @@ def test_challenge_cp_exhausted(bar):
         nav.start_live()
     assert isinstance(CpExhausted("x"), LbExhausted)  # 和 LB 用完一样结束
     assert game.state == "challenge_band_confirm" and not tapped(game, (1140, 648))
+
+
+def test_challenge_cp_short_for_cost():
+    """每局消耗设成 1600 但只有 798 CP：OK 点不动，点「取消」后停下，不会一直点 OK 直到超时。"""
+    game = ChallengeGame("challenge_band_confirm", cost=400, held=798)
+    nav = challenge_nav(game, cost=1600)
+    with pytest.raises(CpExhausted, match="持有 798，每局消耗 1600"):
+        nav.start_live()
+    assert tapped(game, CP_CANCEL) == ["challenge_cp_setting"] and not tapped(game, CP_OK)
+    assert game.cost == 400 and game.state == "challenge_band_confirm" and not tapped(game, (1140, 648))
+
+
+def test_challenge_cp_short_toast():
+    """弹窗上的持有数没读到时点了 OK，看到「挑战pt不足。」就取消、停下。"""
+    game = ChallengeGame("challenge_band_confirm", cost=400, held=798, popup="")
+    nav = challenge_nav(game, cost=1600)
+    with pytest.raises(CpExhausted, match=r"持有 \?，每局消耗 1600"):
+        nav.start_live()
+    assert len(tapped(game, CP_OK)) == 1 and tapped(game, CP_CANCEL) == ["challenge_cp_setting"]
+    assert game.cost == 400 and game.state == "challenge_band_confirm"
 
 
 def test_challenge_cp_rechecked_when_bar_short():
