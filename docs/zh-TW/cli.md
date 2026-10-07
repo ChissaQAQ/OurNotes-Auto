@@ -60,6 +60,7 @@ ournotes-auto daily --jobs event   # 跳過限時活動沒看過的活動故事 
 
 # 彙總本機演奏紀錄（總局數、AP 過的譜面、還沒 AP 的譜面、最近幾局）
 ournotes-auto records [--recent 10]
+ournotes-auto records --clear-chart-offsets   # 清除按譜面學到的 offset（全域學習值不變）
 
 # 辨識目前畫面（偵錯導航）
 ournotes-auto look [--save] [--ocr]

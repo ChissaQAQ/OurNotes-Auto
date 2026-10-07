@@ -60,6 +60,7 @@ ournotes-auto daily --jobs event   # skip unread Event Story / Another Story epi
 
 # Summarize local play records (total rounds, charts AP'd, charts not yet AP, recent rounds)
 ournotes-auto records [--recent 10]
+ournotes-auto records --clear-chart-offsets   # clear the per-chart learned offsets (the global learned offset stays)
 
 # Recognize the current screen (for debugging navigation)
 ournotes-auto look [--save] [--ocr]
