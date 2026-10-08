@@ -56,7 +56,7 @@ Tasks: Start Game, Switch Account (accounts in the International server's bilibi
 
 ## Measured Results and Known Limitations
 
-Measured on MuMu 6.6.4 with an Android 15 instance (4 cores, 6GB, 60 fps), humanization off. The EXPERT figures come from idle-mode runs from 2026-10-04 to 10-08, grouped by the game frame rate measured during sync in each round:
+Measured on MuMu 6.6.4 with an Android 15 instance (4 cores, 6GB, 60 fps), humanization off. EXPERT rounds are grouped by the game frame rate measured in each round:
 
 | Game frame rate | Rounds | ALL PERFECT | FULL COMBO |
 |---|---|---|---|
@@ -64,7 +64,7 @@ Measured on MuMu 6.6.4 with an Android 15 instance (4 cores, 6GB, 60 fps), human
 | 40–49 fps | 202 | 187 (92.6%) | 190 (94.1%) |
 | Below 40 fps | 126 | 111 (88.1%) | 114 (90.5%) |
 
-All 48 EXPERT charts played while running smoothly have been ALL PERFECT at least once; the non-AP rounds missed only 1–2 judgments on average, usually a single MISS. Low frame rates came from other programs maxing out the CPU, and the lower the frame rate, the lower the AP rate. EASY, NORMAL and HARD add another 154 rounds (since 2026-10-01): 150 ALL PERFECT (97%) and 152 FULL COMBO.
+All 48 EXPERT charts played while running smoothly have been ALL PERFECT at least once; the non-AP rounds missed only 1–2 judgments on average, usually a single MISS. EASY, NORMAL and HARD add another 154 rounds: 150 ALL PERFECT (97%) and 152 FULL COMBO.
 
 Known limitations:
 
