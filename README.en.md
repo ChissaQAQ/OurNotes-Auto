@@ -56,21 +56,19 @@ Tasks: Start Game, Switch Account (accounts in the International server's bilibi
 
 ## Measured Results and Known Limitations
 
-Measured (MuMu 6.6.4, Android 15 instance with 4 cores, 6GB, 60 fps; all records played with release builds and dev builds since 2026-09-30, humanization off):
+Measured on MuMu 6.6.4 with an Android 15 instance (4 cores, 6GB, 60 fps), humanization off. The EXPERT figures come from idle-mode runs from 2026-10-04 to 10-08, grouped by the game frame rate measured during sync in each round:
 
-| Difficulty | Rounds | ALL PERFECT | FULL COMBO |
+| Game frame rate | Rounds | ALL PERFECT | FULL COMBO |
 |---|---|---|---|
-| EASY | 18 | 18 (100%) | 18 |
-| NORMAL | 59 | 56 (95%) | 56 |
-| HARD | 49 | 49 (100%) | 49 |
-| EXPERT | 20 | 19 (95%) | 19 |
-| Total | 146 | 142 (97%) | 142 |
+| 50 fps or more (smooth) | 1075 | 1056 (98.2%) | 1060 (98.6%) |
+| 40–49 fps | 202 | 187 (92.6%) | 190 (94.1%) |
+| Below 40 fps | 126 | 111 (88.1%) | 114 (90.5%) |
 
-146 rounds and 53 charts in total; all 13 EXPERT charts have been ALL PERFECT at least once. The few non-AP rounds were all dropped judgments caused by emulator stutter.
+All 48 EXPERT charts played while running smoothly have been ALL PERFECT at least once; the non-AP rounds missed only 1–2 judgments on average, usually a single MISS. Low frame rates came from other programs maxing out the CPU, and the lower the frame rate, the lower the AP rate. EASY, NORMAL and HARD add another 154 rounds (since 2026-10-01): 150 ALL PERFECT (97%) and 152 FULL COMBO.
 
 Known limitations:
 
-- When the emulator stutters (dropped frames, jittery touch latency), complex songs may lose a few PERFECTs or even break the combo. Both sync and touch rely on the emulator producing frames and receiving touches on time, so any hiccup causes drift; the figures above reflect a host that isn't being preempted. Closing other CPU-hungry programs, giving the emulator enough CPU and memory, and lowering the game's effect and performance levels helps a lot
+- When the emulator stutters (dropped frames, jittery touch latency), complex songs may lose a few PERFECTs or even break the combo. Both sync and touch rely on the emulator producing frames and receiving touches on time, so any hiccup causes drift, and the AP rate drops noticeably at low frame rates (see the table above). Closing other CPU-hungry programs, giving the emulator enough CPU and memory, and lowering the game's effect and performance levels helps a lot
 - Only Free LIVE and Challenge LIVE (during events) are supported. Co-op LIVE and other modes are not
 - Song title OCR occasionally fails; when recognition fails, that round is abandoned and the next song is tried
 - Songs whose first note comes very early (already on screen before the transition ends) may fail to sync; in that case the round is paused and retried
