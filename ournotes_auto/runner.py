@@ -252,7 +252,7 @@ class Runner:
         self.catalog = catalog
         self.store = store
         self.stop = stop or threading.Event()
-        self.source = source or make_source(config, catalog)
+        self.source = source or make_source(config, catalog, store)
         self.stats = RunStats()
         self.clock = time.monotonic  # 定时领取录音室练习用（测试里换成假时钟）
         self.wall_clock = time.time  # 每天定时领取日常用（按电脑的本地时间）

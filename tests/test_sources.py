@@ -5,9 +5,10 @@ import pytest
 from ournotes_auto.charts.catalog import Catalog, Song
 from ournotes_auto.config import Config
 from ournotes_auto.nav.song_select import SongPick
-from ournotes_auto.records import PlayResult
+from ournotes_auto.records import PlayResult, RecordStore
 from ournotes_auto.sources import (
     ApComplete,
+    ApDoneCache,
     ApFirst,
     ChallengeApFirst,
     ChallengeRotate,
@@ -202,6 +203,87 @@ def test_ap_first_close_before_fallback():
     nav.calls.clear()
     src.close(nav)
     assert nav.calls == ["filter:None:any:False"]
+
+
+class CacheNav(ChooseNav):
+    def clear_status_filter(self):
+        self.calls.append("clear_status")
+
+
+def cache_catalog(*mids):
+    return Catalog({m: Song(m, [str(m)], difficulties={"expert": {}, "hard": {}}) for m in mids})
+
+
+def test_ap_first_cache_skips_checked_difficulties(tmp_path):
+    store = RecordStore(tmp_path)
+    now = [1000.0]
+    cache = ApDoneCache(store, "pkg", cache_catalog(1, 2), hours=12, clock=lambda: now[0])
+    # 第一次：EXPERT 只剩未解锁的、HARD 列表为空，都记下
+    nav = CacheNav({"expert": [SongPick(None, locked=True, only=True)]})
+    src = ApFirst(["expert", "hard"], fallback="expert", cache=cache)
+    assert src.advance(nav, True)
+    assert store.ap_done("pkg", "expert") == {"time": 1000.0, "catalog": cache._digest("expert")}
+    assert store.ap_done("pkg", "hard") is not None
+    # 下次运行：两个难度都跳过，不筛选，直接在「全部」里随机
+    now[0] += 3600
+    nav = CacheNav({})
+    src = ApFirst(["expert", "hard"], fallback="expert", cache=cache)
+    assert src.advance(nav, True) and src.difficulty == "expert"
+    assert nav.calls == ["category:全部", "clear_status", "choose:random"]
+    nav.calls.clear()
+    src.close(nav)
+    assert nav.calls == ["category:原创"]
+    # 别的服没有记录
+    other = ApDoneCache(store, "jp", cache_catalog(1, 2), clock=lambda: now[0])
+    assert not other.hit("expert")
+
+
+def test_ap_done_cache_invalidates(tmp_path):
+    store = RecordStore(tmp_path)
+    now = [0.0]
+    cache = ApDoneCache(store, "pkg", cache_catalog(1, 2), hours=12, clock=lambda: now[0])
+    cache.update("expert", True)
+    assert cache.hit("expert")
+    now[0] = 13 * 3600  # 过期
+    assert not cache.hit("expert") and store.ap_done("pkg", "expert") is None
+    cache.update("expert", True)
+    assert not ApDoneCache(store, "pkg", cache_catalog(1, 2, 3), clock=lambda: now[0]).hit("expert")  # 新曲
+    cache.update("expert", True)
+    assert not ApDoneCache(store, "pkg", cache_catalog(1, 2), hours=0, clock=lambda: now[0]).hit("expert")
+    cache.update("hard", True)
+    assert store.clear_ap_done() == 1 and not cache.hit("hard")  # 切换账号
+
+
+def test_ap_cache_not_saved_when_songs_left(tmp_path):
+    store = RecordStore(tmp_path)
+    cache = ApDoneCache(store, "pkg", cache_catalog(4, 5), clock=lambda: 0.0)
+    cache.update("expert", True)
+    cache.update("hard", True)
+    # AP 补完不看记录、实际检查；还有要补的歌就删掉记录
+    nav = PickNav({"expert": [SongPick(5)]})
+    src = ApComplete(["expert"], cache=cache)
+    assert src.advance(nav, True)
+    assert store.ap_done("pkg", "expert") is None
+    # 只剩这次放弃了的歌：不记（下次运行再打）
+    nav = PickNav({"hard": [SongPick(4, only=True)]})
+    src = ApComplete(["hard"], cache=cache)
+    src.skip.add((4, "hard"))
+    assert not src.advance(nav, True)
+    assert store.ap_done("pkg", "hard") is None
+    # 连续抽到不打的歌也不记
+    nav = PickNav({"expert": [SongPick(None, locked=True)] * 3})
+    src = ApComplete(["expert"], max_rerolls=3, cache=cache)
+    assert not src.advance(nav, True)
+    assert store.ap_done("pkg", "expert") is None
+
+
+def test_make_source_cache(tmp_path):
+    cfg = Config()
+    cfg.loop.song_mode = "ap_first"
+    store = RecordStore(tmp_path)
+    src = make_source(cfg, CATALOG, store)
+    assert src.cache.package == cfg.device.package and src.cache.hours == cfg.loop.ap_done_hours
+    assert make_source(cfg).cache is None
 
 
 def test_parse_difficulties():

@@ -226,6 +226,9 @@ class LoopConfig:
     # 留空只补 game.difficulty
     ap_first_difficulties: str = ""
     ap_max_attempts: int = 3  # AP 补完 / ap_first 时同一首歌最多打几次
+    # ap_first 确认过某难度没有要补的歌后，这么多小时内的下次运行跳过这个难度的检查（曲目目录变了、切换账号后
+    # 照样重新检查；这期间新解锁的歌要等过了这么久才补到）。0 为每次都检查
+    ap_done_hours: float = 12.0
     ocr_model: str = ""  # 留空使用 resource/model/ocr 下的默认模型
 
 
