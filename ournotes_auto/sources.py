@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+import time
 from collections import Counter
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 from .nav.screens import same_title
 
 if TYPE_CHECKING:
     from .charts.catalog import Catalog, Song
     from .config import Config
-    from .records import PlayResult
+    from .records import PlayResult, RecordStore
     from .runner import Navigator
 
 logger = logging.getLogger(__name__)
@@ -170,6 +172,64 @@ class ChallengeApFirst(_Source):
                 self.skip.add(key)
 
 
+class ApDoneCache:
+    """记住「某难度已经没有要补的歌」（``data/state.json``）：优先没 AP 的歌（ap_first）下次开始时跳过这个难度的
+    筛选和抽歌（每个难度约 10 秒）。
+
+    - 按服（包名）和难度分开记，同时记下曲目目录里这个难度有哪些歌（摘要）。
+    - 目录里这个难度的歌变了（新曲）、超过 ``hours`` 小时（这期间可能解锁了新的歌）就重新检查；
+      切换账号（``switch-account``）时全部清除。``hours`` 为 0 时每次都检查。
+    - 只在列表为空、或只剩未解锁 / 封面认不出的歌时记下；剩下的是这次放弃了的歌时不记（下次运行还会再打）。
+    - AP 补完（ap）不看记录、每次都实际检查，并更新记录。
+    """
+
+    def __init__(
+        self,
+        store: RecordStore,
+        package: str,
+        catalog: Catalog,
+        hours: float = 12.0,
+        clock: Callable[[], float] = time.time,
+    ):
+        self.store = store
+        self.package = package
+        self.catalog = catalog
+        self.hours = hours
+        self.clock = clock
+
+    def _digest(self, diff: str) -> str:
+        ids = sorted(mid for mid, song in self.catalog.songs.items() if diff in song.difficulties)
+        return hashlib.sha1(",".join(map(str, ids)).encode()).hexdigest()[:12]
+
+    def hit(self, diff: str) -> bool:
+        """上次确认过这个难度没有要补的歌、而且记录还有效。"""
+        entry = self.store.ap_done(self.package, diff)
+        if entry is None:
+            return False
+        age_h = (self.clock() - float(entry.get("time", 0))) / 3600
+        if entry.get("catalog") != self._digest(diff):
+            logger.info("%s：曲目目录变了（有新曲），重新检查有没有要补的歌", diff.upper())
+        elif not 0 <= age_h < self.hours:
+            logger.info("%s：上次确认没有要补的歌是 %.1f 小时前，重新检查", diff.upper(), age_h)
+        else:
+            logger.info(
+                "%s：%.1f 小时前确认过没有要补的歌，跳过（新解锁的歌最晚 %g 小时后补到；运行一次 AP补完会重新检查）",
+                diff.upper(),
+                age_h,
+                self.hours,
+            )
+            return True
+        self.store.set_ap_done(self.package, diff, None)
+        return False
+
+    def update(self, diff: str, done: bool) -> None:
+        """检查完这个难度：``done`` 为 True 时记下没有要补的歌，否则删掉记录。"""
+        if done:
+            self.store.set_ap_done(self.package, diff, {"time": round(self.clock(), 1), "catalog": self._digest(diff)})
+        else:
+            self.store.set_ap_done(self.package, diff, None)
+
+
 class ApComplete(_Source):
     """全曲 AP 补完：按难度依次筛选「未ALL PERFECT」，用随机选曲抽歌。
 
@@ -177,9 +237,18 @@ class ApComplete(_Source):
     - 抽到不打的歌（未解锁、封面认不出、已放弃）就在乐曲选择页重抽。
     - 列表为空、随机选曲提示没有别的歌可抽，或连续 ``max_rerolls`` 次都抽到不打的歌时，换下一个难度。
     - 正常结束时把游玩状况改回「不指定」，分类改回原来的。
+    - 有 ``cache`` 时把各难度的检查结果记下来（见 :class:`ApDoneCache`）。
     """
 
-    def __init__(self, difficulties: list[str], max_attempts: int = 3, max_rerolls: int = 12):
+    use_cache = False  # 有记录的难度直接跳过（ap_first）；AP 补完每次都检查
+
+    def __init__(
+        self,
+        difficulties: list[str],
+        max_attempts: int = 3,
+        max_rerolls: int = 12,
+        cache: ApDoneCache | None = None,
+    ):
         if not difficulties:
             raise ValueError("AP 补完至少要选一个难度")
         for d in difficulties:
@@ -190,6 +259,7 @@ class ApComplete(_Source):
         self.difficulties = list(difficulties)
         self.max_attempts = max_attempts
         self.max_rerolls = max_rerolls
+        self.cache = cache
         self._index = 0
         self._filtered = False  # 当前难度的筛选已经设好
         self._reset = False  # 已经重置过筛选
@@ -206,6 +276,9 @@ class ApComplete(_Source):
         while self._index < len(self.difficulties):
             diff = self.difficulty
             if not self._filtered:
+                if self.use_cache and self.cache is not None and self.cache.hit(diff):
+                    self._index += 1
+                    continue
                 if not self._touched:
                     self._touched = True
                     self._category = nav.set_song_category(AP_CATEGORY)
@@ -213,23 +286,34 @@ class ApComplete(_Source):
                 # 第一次先重置（清掉收藏等别的筛选），之后只换难度
                 nav.set_song_filter(diff, "not_ap", reset=not self._reset)
                 self._reset = self._filtered = True
+            lasting = True  # 抽到的不打的歌都是未解锁、封面认不出（不是这次放弃了的）
             for _ in range(self.max_rerolls):
                 pick = nav.random_song()
                 if pick.empty:
                     logger.info("%s 已经全部 AP（筛选后列表为空）", diff.upper())
+                    self._checked(diff, True)
                     break
                 why = self._reject(pick, diff)
                 if why is None:
+                    self._checked(diff, False)
                     return True
+                if (pick.music_id, diff) in self.skip:
+                    lasting = False
                 if pick.only:
                     logger.info("%s 没有别的歌可抽了（选中的这首：%s）", diff.upper(), why)
+                    self._checked(diff, lasting)
                     break
                 logger.debug("重抽：%s", why)
             else:
                 logger.warning("%s 连续 %d 次抽到不打的歌，换下一个难度", diff.upper(), self.max_rerolls)
+                self._checked(diff, False)
             self._index += 1
             self._filtered = False
         return False
+
+    def _checked(self, diff: str, done: bool) -> None:
+        if self.cache is not None:
+            self.cache.update(diff, done)
 
     def _reject(self, pick, diff: str) -> str | None:
         if pick.locked:
@@ -270,8 +354,16 @@ class ApFirst(ApComplete):
     都没有可打的了（都 AP 了或都放弃了），就把游玩状况改回「不指定」，之后按 ``fallback`` 难度
     （默认第一个难度）随机选曲，直到打够局数或 LB 用完。"""
 
-    def __init__(self, difficulties: list[str], max_attempts: int = 3, fallback: str | None = None):
-        super().__init__(difficulties, max_attempts)
+    use_cache = True
+
+    def __init__(
+        self,
+        difficulties: list[str],
+        max_attempts: int = 3,
+        fallback: str | None = None,
+        cache: ApDoneCache | None = None,
+    ):
+        super().__init__(difficulties, max_attempts, cache=cache)
         fallback = fallback or self.difficulties[0]
         if fallback not in DIFFICULTIES:
             raise ValueError(f"未知的难度：{fallback}")
@@ -288,7 +380,12 @@ class ApFirst(ApComplete):
                 return True
             self._random = True
             logger.info("没有要补的歌了，改为 %s 随机选曲", self.difficulty.upper())
-            nav.set_song_filter(status="any")
+            if self._touched:
+                nav.set_song_filter(status="any")
+            else:  # 各难度都跳过了，没动过筛选：同样在「全部」里抽
+                self._touched = True
+                self._category = nav.set_song_category(AP_CATEGORY)
+                nav.clear_status_filter()
         nav.choose_next_song("random")
         return True
 
@@ -402,15 +499,18 @@ def parse_difficulties(text: str) -> list[str]:
     return out
 
 
-def make_source(cfg: Config, catalog: Catalog | None = None) -> SongSource:
-    """``catalog`` 只有歌单模式（解析曲名）需要。"""
+def make_source(cfg: Config, catalog: Catalog | None = None, store: RecordStore | None = None) -> SongSource:
+    """``catalog`` 歌单模式（解析曲名）需要；有 ``catalog`` 和 ``store`` 时 AP 补完 / ap_first 记下各难度的检查结果。"""
     mode, difficulty = cfg.loop.song_mode, cfg.game.difficulty
+    cache = None
+    if catalog is not None and store is not None:
+        cache = ApDoneCache(store, cfg.device.package, catalog, cfg.loop.ap_done_hours)
     if cfg.loop.challenge and mode not in CHALLENGE_SONG_MODES:
         raise ValueError(f"挑战演出只能用 {'/'.join(CHALLENGE_SONG_MODES)} 选曲模式，而不是 {mode}")
     if mode == "rotate" and not cfg.loop.challenge:
         raise ValueError("rotate 选曲模式只用于挑战演出（loop.challenge）")
     if mode == "ap":
-        return ApComplete(parse_difficulties(cfg.loop.ap_difficulties), cfg.loop.ap_max_attempts)
+        return ApComplete(parse_difficulties(cfg.loop.ap_difficulties), cfg.loop.ap_max_attempts, cache=cache)
     if difficulty not in DIFFICULTIES:
         raise ValueError(f"未知的难度：{difficulty}")
     if mode == "current":
@@ -424,7 +524,7 @@ def make_source(cfg: Config, catalog: Catalog | None = None) -> SongSource:
         return ChallengeApFirst(diffs, cfg.loop.ap_max_attempts, fallback=difficulty)
     if mode == "ap_first":
         diffs = parse_difficulties(cfg.loop.ap_first_difficulties) or [difficulty]
-        return ApFirst(diffs, cfg.loop.ap_max_attempts, fallback=difficulty)
+        return ApFirst(diffs, cfg.loop.ap_max_attempts, fallback=difficulty, cache=cache)
     if mode == "list":
         if catalog is None:
             raise ValueError("歌单模式需要曲目目录")

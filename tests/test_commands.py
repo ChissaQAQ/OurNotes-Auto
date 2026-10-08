@@ -38,7 +38,7 @@ def fake_run(monkeypatch, launched, fail=False):
             return RunStats(plays=1)
 
     monkeypatch.setattr(commands, "open_context", open_context)
-    monkeypatch.setattr(sources, "make_source", lambda cfg, catalog: object())
+    monkeypatch.setattr(sources, "make_source", lambda cfg, catalog, store=None: object())
     monkeypatch.setattr(runner, "Runner", Runner)
     args = build_parser().parse_args(["run"])
     args.stop = threading.Event()

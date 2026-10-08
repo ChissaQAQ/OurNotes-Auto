@@ -51,3 +51,4 @@ loop:
   ap_difficulties: expert,hard,normal,easy  # AP 补完依次处理的难度
   ap_first_difficulties: ""  # ap_first 依次补的难度（如 expert,hard,normal,easy），都补完了按 game.difficulty 随机；留空只补 game.difficulty
   ap_max_attempts: 3         # AP 补完 / ap_first 时同一首歌最多打几次
+  ap_done_hours: 12          # ap_first 确认过某难度没有要补的歌后，这么多小时内跳过它的检查（有新曲、切换账号时照样检查）；0 为每次都检查

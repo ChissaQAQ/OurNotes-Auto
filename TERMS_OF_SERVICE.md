@@ -1,7 +1,7 @@
 # OurNotes-Auto 用户协议
 
-最后更新：2026 年 9 月 30 日  
-协议版本：1.0
+最后更新：2026 年 10 月 8 日  
+协议版本：1.1
 
 本协议参考了 [MAA 用户协议](https://github.com/MaaAssistantArknights/MaaAssistantArknights/blob/dev/terms-of-service.md)。
 
@@ -9,9 +9,9 @@
 
 ## 第 1 条 定义与适用范围
 
-- **本软件**：OurNotes-Auto（界面里显示为「Our Notes 自动打歌」，命令行是 `ournotes-auto`），《BanG Dream! Our Notes》国际服的第三方自动演奏工具。源码公开在 <https://github.com/ChissaQAQ/OurNotes-Auto>
+- **本软件**：OurNotes-Auto（界面里显示为「Our Notes 自动打歌」，命令行是 `ournotes-auto`），《BanG Dream! Our Notes》国际服与日服的第三方自动演奏工具。源码公开在 <https://github.com/ChissaQAQ/OurNotes-Auto>
 - **作者**：上述 GitHub 仓库的所有者 ChissaQAQ
-- **游戏**：《BanG Dream! Our Notes》及其国际服（包名 `com.bilibili.sirius.official`）
+- **游戏**：《BanG Dream! Our Notes》的国际服（包名 `com.bilibili.sirius.official`）与日服（包名 `com.bushiroad.sirius`）
 - **用户**：下载、安装或使用本软件的任何个人或组织
 
 发布包里的第三方组件（界面程序 MFAAvalonia / MXU、MaaFramework、Python 运行时、OCR 模型等）按各自的许可证分发，见 `THIRD_PARTY_NOTICES.md`，不受本协议约束。
@@ -90,7 +90,7 @@
 
 ### 4.2 隐私与数据
 
-本软件**不会**收集或上传你的任何数据。运行时只联网下载公开数据：从谱面站 bdon.moe 下载谱面，从 haneoka.org 获取国际服曲名和封面。全局选项「检查更新」开着时（默认），还会访问 GitHub（github.com）上本软件的发布页，查询最新发布的版本号，这个请求不带你的任何数据。日志、调试截图和演奏记录只保存在本机。
+本软件**不会**收集或上传你的任何数据。运行时只联网下载公开数据：从谱面站 bdon.moe 下载谱面，从 haneoka.org 获取曲名和封面。全局选项「检查更新」开着时（默认），还会访问 GitHub（github.com）上本软件的发布页，查询最新发布的版本号，这个请求不带你的任何数据。日志、调试截图和演奏记录只保存在本机。
 
 调试截图可能拍到玩家名、邀请码等信息，分享前请自行遮挡。界面程序（MFAA、MXU）自身的联网功能（例如检查更新）见它们各自的说明。
 

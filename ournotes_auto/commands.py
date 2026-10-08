@@ -256,7 +256,7 @@ def cmd_run(cfg: Config, args) -> int:
     launched = _launch_game(cfg)
     with open_context(cfg, stop, watch_combo=args.watch_combo, record=args.record) as ctx:
         try:
-            source = make_source(cfg, ctx.catalog)
+            source = make_source(cfg, ctx.catalog, ctx.store)
         except ValueError as e:
             raise SetupError(str(e)) from None
         if launched:
@@ -333,6 +333,7 @@ def cmd_start(cfg: Config, args) -> int:
 def cmd_switch_account(cfg: Config, args) -> int:
     """在标题画面退出当前账号，从登录记录里选账号名包含 ``args.account`` 的账号登录，然后进入游戏。"""
     from .config import INTL_PACKAGE
+    from .records import RecordStore
     from .runner import NavigationError
 
     if cfg.device.package != INTL_PACKAGE:
@@ -343,6 +344,8 @@ def cmd_switch_account(cfg: Config, args) -> int:
         nav = _game_navigator(cfg, args, source, touch)
         try:
             nav.switch_account(args.account, args.timeout)
+            if RecordStore("data").clear_ap_done():
+                logger.info("换了账号，之后优先没 AP 的歌时各难度重新检查")
             screen = nav.ensure_in_game(args.timeout)
         except NavigationError as e:
             if args.stop.is_set():

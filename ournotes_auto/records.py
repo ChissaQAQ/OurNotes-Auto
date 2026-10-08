@@ -126,6 +126,28 @@ class RecordStore:
         self._save_state(state)
         return count
 
+    def ap_done(self, package: str, difficulty: str) -> dict | None:
+        """上次确认这个服的这个难度没有要补的歌时记下的 ``{"time", "catalog"}``（见 :class:`~ournotes_auto.sources.ApDoneCache`）。"""
+        return self._load_state().get("ap_done", {}).get(package, {}).get(difficulty)
+
+    def set_ap_done(self, package: str, difficulty: str, entry: dict | None) -> None:
+        """记下（``entry`` 为 None 时删掉）这个服的这个难度没有要补的歌。"""
+        state = self._load_state()
+        done = state.setdefault("ap_done", {})
+        if entry is not None:
+            done.setdefault(package, {})[difficulty] = entry
+        elif done.get(package, {}).pop(difficulty, None) is None:
+            return
+        self._save_state(state)
+
+    def clear_ap_done(self) -> int:
+        """清除所有「没有要补的歌」的记录（切换账号后、手动刷新时），返回清掉了几条。"""
+        state = self._load_state()
+        count = sum(len(v) for v in state.pop("ap_done", {}).values())
+        if count:
+            self._save_state(state)
+        return count
+
     def append(self, result: PlayResult) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         with self.records_path.open("a", encoding="utf-8") as f:
