@@ -13,7 +13,7 @@
 
 </div>
 
-《BanG Dream! Our Notes》（國際服 `com.bilibili.sirius.official`、日服 `com.bushiroad.sirius`）自動演奏工具。MuMu 模擬器 + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework)。
+《BanG Dream! Our Notes》（國際服 `com.bilibili.sirius.official`（Google Play 版 `com.bilibili.sirius`）、日服 `com.bushiroad.sirius`）自動演奏工具。MuMu 模擬器 + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework)。
 
 - 從譜面站下載譜面，依判定時刻傳送觸控，目標是 FULL COMBO / ALL PERFECT
 - 追蹤第一個音符的下落軌跡，外推它到達判定線的時刻來對齊整首歌（不依賴音訊）

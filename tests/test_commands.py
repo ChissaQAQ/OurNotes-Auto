@@ -2,9 +2,11 @@ import threading
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+import pytest
+
 from ournotes_auto import commands, runner, sources
 from ournotes_auto.cli import build_parser
-from ournotes_auto.config import Config
+from ournotes_auto.config import INTL_PACKAGES, JP_PACKAGE, Config
 from ournotes_auto.runner import NavigationError, RunStats
 
 
@@ -60,4 +62,28 @@ def test_run_launch_cannot_enter_game(monkeypatch, caplog):
     calls, code = fake_run(monkeypatch, launched=True, fail=True)
     assert calls == ["launch", "open", "in_game"] and code == 1
     assert "未能进入游戏" in caplog.text
+
+
+def test_switch_account_intl_packages(monkeypatch, caplog):
+    """切换账号只限国际服，Google Play 版的包名也算（#54）；日服不启动游戏直接报错。"""
+    launched = []
+    monkeypatch.setattr(commands, "_launch_game", lambda cfg: launched.append(cfg.device.package))
+
+    class Opened(Exception):
+        pass
+
+    def open_device(cfg):
+        raise Opened
+
+    monkeypatch.setattr(commands, "_device", open_device)
+    args = build_parser().parse_args(["switch-account", "user_12"])
+    args.stop = threading.Event()
+    cfg = Config()
+    for package in INTL_PACKAGES:
+        cfg.device.package = package
+        with pytest.raises(Opened):
+            commands.cmd_switch_account(cfg, args)
+    cfg.device.package = JP_PACKAGE
+    assert commands.cmd_switch_account(cfg, args) == 2
+    assert launched == list(INTL_PACKAGES) and "只有国际服能切换账号" in caplog.text
 

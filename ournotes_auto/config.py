@@ -17,6 +17,8 @@ from .geometry import GeometryParams
 logger = logging.getLogger(__name__)
 
 INTL_PACKAGE = "com.bilibili.sirius.official"  # 国际服（B 站账号登录）
+INTL_PLAY_PACKAGE = "com.bilibili.sirius"  # 国际服的 Google Play 版：界面、账号和上面的一样，只是包名不同
+INTL_PACKAGES = (INTL_PACKAGE, INTL_PLAY_PACKAGE)
 JP_PACKAGE = "com.bushiroad.sirius"  # 日服（要从 Google Play 安装才能打开）
 
 
@@ -32,7 +34,7 @@ class DeviceConfig:
     instance: int = 0  # MuMu 实例序号（多开器里的编号）
     adb_path: str = ""  # 留空则使用 MuMu 自带 adb 或 MaaFramework 自动发现
     adb_serial: str = ""  # 留空则按 MuMu 实例号推算 127.0.0.1:(16384 + 32 * instance)
-    package: str = INTL_PACKAGE  # 游戏包名，哪个服由它决定
+    package: str = INTL_PACKAGE  # 游戏包名，哪个服由它决定（国际服的两个包名按模拟器里装的自动选，见 adb.resolve_package）
 
 
 @dataclass

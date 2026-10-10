@@ -13,7 +13,7 @@
 
 </div>
 
-An auto-play tool for *BanG Dream! Our Notes* (International server `com.bilibili.sirius.official`, Japanese server `com.bushiroad.sirius`). MuMu Emulator + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework).
+An auto-play tool for *BanG Dream! Our Notes* (International server `com.bilibili.sirius.official` (Google Play version `com.bilibili.sirius`), Japanese server `com.bushiroad.sirius`). MuMu Emulator + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework).
 
 - Downloads charts from a chart site and sends touches at the judgment times, aiming for FULL COMBO / ALL PERFECT
 - Tracks the falling path of the first note and extrapolates when it reaches the judgment line to align the whole song (no audio needed)

@@ -36,8 +36,10 @@ def open_device(cfg: Config):
         raise SetupError(f"暂不支持的设备后端：{cfg.device.backend}")
     if cfg.device.touch not in ("mumu", "minitouch"):
         raise SetupError(f"不支持的触控方式：{cfg.device.touch}")
+    from .device import adb
     from .device.mumu import MuMuFrameSource, MuMuTouch, open_mumu
 
+    adb.resolve_package(cfg.device)  # 截图按包名找游戏的画面，日志里的游戏版本也按它读
     ipc = open_mumu(cfg.device)
     source = MuMuFrameSource(ipc)
     touch = None
