@@ -32,7 +32,7 @@ ournotes-auto init-config          # 모든 기본값이 들어 있는 config.ya
 
 [config.example.yaml](../../config.example.yaml)(자주 쓰는 항목만 나열)을 `config.yaml`로 복사해 수정해도 됩니다. 적지 않은 항목은 기본값을 쓰며, 모든 파라미터와 설명은 `ournotes_auto/config.py`를 참고하세요.
 
-최소한 두 항목은 확인하세요: `device.instance`(MuMu 멀티 인스턴스 관리자의 인스턴스 번호)와 `device.mumu_path`(MuMu 설치 경로). 일본 서버는 `device.package`도 `com.bushiroad.sirius`로 설정하세요(기본값은 국제 서버의 `com.bilibili.sirius.official`).
+최소한 두 항목은 확인하세요: `device.instance`(MuMu 멀티 인스턴스 관리자의 인스턴스 번호)와 `device.mumu_path`(MuMu 설치 경로). 일본 서버는 `device.package`도 `com.bushiroad.sirius`로 설정하세요(기본값은 국제 서버의 `com.bilibili.sirius.official`이며, 에뮬레이터에 국제 서버 Google Play 버전 `com.bilibili.sirius`가 설치되어 있으면 자동으로 그것을 쓰므로 바꿀 필요가 없습니다).
 
 ## 사용
 

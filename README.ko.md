@@ -13,7 +13,7 @@
 
 </div>
 
-《BanG Dream! Our Notes》(국제 서버 `com.bilibili.sirius.official`, 일본 서버 `com.bushiroad.sirius`) 자동 연주 도구입니다. MuMu 에뮬레이터 + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework).
+《BanG Dream! Our Notes》(국제 서버 `com.bilibili.sirius.official`(Google Play 버전 `com.bilibili.sirius`), 일본 서버 `com.bushiroad.sirius`) 자동 연주 도구입니다. MuMu 에뮬레이터 + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework).
 
 - 채보 사이트에서 채보를 다운로드하고, 판정 시각에 맞춰 터치를 보내 FULL COMBO / ALL PERFECT를 노립니다
 - 첫 노트가 떨어지는 궤적을 추적하고, 판정선에 닿는 시각을 외삽해 곡 전체를 맞춥니다(오디오에 의존하지 않음)

@@ -283,6 +283,7 @@ def _launch_game(cfg: Config) -> bool:
     """游戏没在运行时启动它，返回是否启动了。"""
     from .device import adb
 
+    adb.resolve_package(cfg.device)
     if adb.start_app(cfg.device):
         time.sleep(3)  # 等游戏窗口出来，截图才会取到游戏的画面
         return True
@@ -332,11 +333,11 @@ def cmd_start(cfg: Config, args) -> int:
 
 def cmd_switch_account(cfg: Config, args) -> int:
     """在标题画面退出当前账号，从登录记录里选账号名包含 ``args.account`` 的账号登录，然后进入游戏。"""
-    from .config import INTL_PACKAGE
+    from .config import INTL_PACKAGES
     from .records import RecordStore
     from .runner import NavigationError
 
-    if cfg.device.package != INTL_PACKAGE:
+    if cfg.device.package not in INTL_PACKAGES:
         logger.error("只有国际服能切换账号（B 站账号的登录记录），当前游戏是 %s", cfg.device.package)
         return 2
     _launch_game(cfg)

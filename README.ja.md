@@ -13,7 +13,7 @@
 
 </div>
 
-『BanG Dream! Our Notes』（国際版 `com.bilibili.sirius.official`、日本版 `com.bushiroad.sirius`）の自動演奏ツールです。MuMu エミュレーター + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework)。
+『BanG Dream! Our Notes』（国際版 `com.bilibili.sirius.official`（Google Play 版は `com.bilibili.sirius`）、日本版 `com.bushiroad.sirius`）の自動演奏ツールです。MuMu エミュレーター + Python + [MaaFramework](https://github.com/MaaXYZ/MaaFramework)。
 
 - 譜面サイトから譜面をダウンロードし、判定タイミングに合わせてタッチを送ります。目標は FULL COMBO / ALL PERFECT
 - 最初のノーツの落下軌跡を追跡し、判定ラインに届く時刻を外挿して曲全体のタイミングを合わせます（音声には依存しません）
