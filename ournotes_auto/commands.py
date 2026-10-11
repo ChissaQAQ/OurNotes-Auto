@@ -297,8 +297,11 @@ def _game_navigator(cfg: Config, args, source, touch):
     from .nav.navigator import GameNavigator
 
     def restart_app() -> None:
+        # 诊断（#58）：见 context.open_context 里的同名函数。
+        before = source.ipc.display_id
         adb.restart_app(cfg.device)
-        source.ipc.refresh_display_id()
+        after = source.ipc.refresh_display_id()
+        logger.debug("重启游戏后重新解析 display_id：%s → %s", before, after)
 
     source.ipc.refresh_display_id()
     return GameNavigator(

@@ -185,8 +185,12 @@ class MuMuIpc:
         if self.package:
             d = self.dll.nemu_get_display_id(self.handle, self.package.encode("utf-8"), self.app_index)
         if d < 0:
+            # 诊断（#58）：包名查不到时记下取到的是什么，便于判断游戏是不是还没起来
+            logger.debug("按包名 %s 查 display_id 得到 %s，改用 default", self.package, d)
             d = self.dll.nemu_get_display_id(self.handle, b"default", 0)
         self.display_id = d if d >= 0 else 0
+        if d < 0:
+            logger.debug("按 default 查 display_id 也得到 %s，退回 0", d)
         return self.display_id
 
     # ------------------------------------------------------------ 截图

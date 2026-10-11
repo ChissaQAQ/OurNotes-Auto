@@ -166,8 +166,12 @@ def open_context(
         from .device import adb
 
         def restart_app() -> None:
+            # 诊断（#58）：重启后立刻重新解析 display_id，但游戏进程这时可能还没起来。记下前后取到的值，
+            # 出问题时能看出是取到了错的 display（之后一直认不出画面）还是别的原因。
+            before = source.ipc.display_id
             adb.restart_app(cfg.device)
-            source.ipc.refresh_display_id()  # 游戏重启后要重新获取
+            after = source.ipc.refresh_display_id()  # 游戏重启后要重新获取
+            logger.debug("重启游戏后重新解析 display_id：%s → %s", before, after)
 
         nav = GameNavigator(
             cfg,
