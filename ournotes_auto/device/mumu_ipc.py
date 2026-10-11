@@ -14,6 +14,7 @@ import ctypes
 import logging
 import os
 import threading
+import time
 from ctypes import POINTER, byref, c_char_p, c_int, c_ubyte, c_uint, c_wchar_p
 
 import numpy as np
@@ -192,6 +193,39 @@ class MuMuIpc:
         if d < 0:
             logger.debug("按 default 查 display_id 也得到 %s，退回 0", d)
         return self.display_id
+
+    def game_display_id(self) -> int:
+        """按包名查游戏的 display_id；游戏还没起来（查不到）时返回 -1。不写 ``display_id``。"""
+        if not self.package or not self.handle:
+            return -1
+        return self.dll.nemu_get_display_id(self.handle, self.package.encode("utf-8"), self.app_index)
+
+    def wait_for_game_display(self, timeout_s: float = 60.0, stop=None, poll_s: float = 0.5) -> bool:
+        """等游戏的 display_id 能查到（重启游戏之后）。
+
+        **不能**在重启后直接调 :meth:`refresh_display_id`：那时游戏进程还没把新的 display 建起来，
+        包名查不到会退到 "default"，而它可能返回 0（模拟器桌面）这种非负值，于是被当成合法结果一直用，
+        对着桌面 OCR 永远认不出画面（#58：自动重启后卡住）。这里只认按包名查到的值。
+        """
+        deadline = time.monotonic() + timeout_s
+        waited = False
+        while True:
+            d = self.game_display_id()
+            if d >= 0:
+                self.display_id = d
+                if waited:
+                    logger.debug("游戏的 display_id 已就绪：%s", d)
+                return True
+            if stop is not None and stop.is_set():
+                logger.debug("等待游戏的 display_id 时收到停止请求")
+                return False
+            if time.monotonic() >= deadline:
+                logger.warning("等 %.0fs 仍查不到游戏的 display_id，按当前 display %s 继续", timeout_s, self.display_id)
+                return False
+            if not waited:
+                logger.debug("游戏重启后还没建好 display，等它出现…")
+                waited = True
+            time.sleep(poll_s)
 
     # ------------------------------------------------------------ 截图
     def _query_size(self) -> tuple[int, int]:

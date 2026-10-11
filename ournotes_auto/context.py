@@ -166,12 +166,12 @@ def open_context(
         from .device import adb
 
         def restart_app() -> None:
-            # 诊断（#58）：重启后立刻重新解析 display_id，但游戏进程这时可能还没起来。记下前后取到的值，
-            # 出问题时能看出是取到了错的 display（之后一直认不出画面）还是别的原因。
+            # 重启后不能立刻 refresh_display_id()：游戏进程还没建好新的 display 时它会退到
+            # "default"，可能返回 0（模拟器桌面）并被一直用下去，之后对着桌面 OCR 永远认不出画面（#58）。
             before = source.ipc.display_id
             adb.restart_app(cfg.device)
-            after = source.ipc.refresh_display_id()  # 游戏重启后要重新获取
-            logger.debug("重启游戏后重新解析 display_id：%s → %s", before, after)
+            source.ipc.wait_for_game_display(stop=stop)
+            logger.debug("重启游戏后重新解析 display_id：%s → %s", before, source.ipc.display_id)
 
         nav = GameNavigator(
             cfg,

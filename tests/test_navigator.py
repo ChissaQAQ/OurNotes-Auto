@@ -1204,6 +1204,44 @@ def test_slow_loading_checks_process_periodically(monkeypatch):
     assert len(game.checks) == 3 and game.restarts == 1
 
 
+class FakeIpc:
+    """只有 display_id 和 game_display_id()，够测导航的自愈逻辑。"""
+
+    def __init__(self, display_id, game_id):
+        self.display_id = display_id
+        self._game_id = game_id
+
+    def game_display_id(self):
+        return self._game_id
+
+
+def test_heal_display_id_switches_to_game_display():
+    """游戏在跑却认不出画面：按包名查到新的 display_id 时换过去（#58）。"""
+    game = FakeGame("home")
+    nav = make_nav(game, game, game)
+    ipc = FakeIpc(display_id=0, game_id=4)  # 0 = 模拟器桌面，4 = 游戏
+    nav.source = type("S", (), {"ipc": ipc})()
+    nav._heal_display_id()
+    assert ipc.display_id == 4
+
+
+def test_heal_display_id_keeps_value_when_game_gone():
+    """按包名查不到（游戏没起来）时不动 display_id。"""
+    game = FakeGame("home")
+    nav = make_nav(game, game, game)
+    ipc = FakeIpc(display_id=3, game_id=-1)
+    nav.source = type("S", (), {"ipc": ipc})()
+    nav._heal_display_id()
+    assert ipc.display_id == 3
+
+
+def test_heal_display_id_without_ipc_is_noop():
+    """假截图源没有 ipc（大量既有测试就是这种）时不能报错。"""
+    game = FakeGame("home")
+    nav = make_nav(game, game, game)
+    nav._heal_display_id()  # 不抛异常即可
+
+
 def test_crashed_game_without_restart_fails(monkeypatch):
     game = CrashedGame()
     nav = make_nav(game, game, game)
