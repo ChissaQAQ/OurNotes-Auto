@@ -140,10 +140,25 @@ class RecordStore:
             return
         self._save_state(state)
 
+    def ap_give_up(self, package: str) -> dict[str, dict]:
+        """这个服 AP 时反复失败、暂时不再打的谱面：``{"<musicId>_<难度>": {"time"}}``。"""
+        return dict(self._load_state().get("ap_give_up", {}).get(package, {}))
+
+    def set_ap_give_up(self, package: str, key: str, entry: dict | None) -> None:
+        """记下（``entry`` 为 None 时删掉）这个服的这张谱面 AP 时反复失败。"""
+        state = self._load_state()
+        given = state.setdefault("ap_give_up", {})
+        if entry is not None:
+            given.setdefault(package, {})[key] = entry
+        elif given.get(package, {}).pop(key, None) is None:
+            return
+        self._save_state(state)
+
     def clear_ap_done(self) -> int:
-        """清除所有「没有要补的歌」的记录（切换账号后、手动刷新时），返回清掉了几条。"""
+        """清除所有「没有要补的歌」「反复失败暂时不打」的记录（切换账号后、手动刷新时），返回清掉了几条。"""
         state = self._load_state()
         count = sum(len(v) for v in state.pop("ap_done", {}).values())
+        count += sum(len(v) for v in state.pop("ap_give_up", {}).values())
         if count:
             self._save_state(state)
         return count

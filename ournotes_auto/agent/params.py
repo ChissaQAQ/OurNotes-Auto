@@ -251,7 +251,7 @@ def _humanize(attach: Mapping[str, Any]) -> dict[str, str]:
 def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     """任务名 + 界面选项 → ``--set`` 配置项。
 
-    共用 attach 键：``max_plays`` ``touch`` 和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
+    共用 attach 键：``max_plays`` ``touch`` ``restart_low_fps``（关掉时不因游戏变卡重启，旧资源没有这项时开）和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
     重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
     ``song_list``）；重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
     清体力 / 挂机另有 ``clear_lb_cost``（清体力 1~3，挂机 0~3：0 时不等 LB，有就消耗、用完消耗 0 一直打）；AP补完另有 ``ap_expert`` 等
@@ -271,6 +271,8 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.daily_claim_time": _daily_claim(attach) if task == "idle" else "",
         **_humanize(attach),
     }
+    if not flag(attach, "restart_low_fps", True):
+        sets["loop.min_fps"] = "0"
     if task == "ap":
         return {**sets, **_ap_settings(attach)}
     if task == "challenge":

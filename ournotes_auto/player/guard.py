@@ -34,6 +34,9 @@ DESIGN_W, DESIGN_H = 1280, 720
 LIFE_BAR = (1013, 44, 187, 6)
 LIT_LEVEL = 150
 LIFE_EMPTY = 0.02  # 亮着的列不到这个比例算生命值归零（归零后一直是 0，不会再回复）
+# 生命值是一点点掉下去的：变空之前最后一次看到的要已经很低了才算归零。有的歌演出效果会把右上角整块压暗，
+# 条一下子从满的变成「空的」，暂停按钮还认得出（模板匹配不怕变暗），不能当成归零（#60）
+LIFE_LOW = 0.4
 
 
 class PlayInterrupted(RuntimeError):
@@ -92,6 +95,7 @@ class PlayGuard:
         self.abort = threading.Event()
         self.lost = False  # 是因为看不到演奏画面而停止的
         self.life_zero = False  # 是因为生命值归零而停止的
+        self.zero_frame: np.ndarray | None = None  # 判定归零时的画面（存下来排查）
         self._done = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -113,6 +117,7 @@ class PlayGuard:
         checking = True
         seen = now()
         alive = False  # 这一局看到过生命值条亮着
+        last_lit = 1.0  # 最后一次看到亮着时的比例
         empty_at = None  # 生命值条开始变空的时刻
         while not self._done.wait(self.interval_s):
             if stop is not None and stop.is_set():
@@ -138,10 +143,13 @@ class PlayGuard:
                 self.abort.set()
                 return
             # 重试不会恢复生命值：归零后重试，一开始就是 0，这一局看不出来，要先看到条亮着
-            alive = alive or (fill is not None and fill >= LIFE_EMPTY)
-            empty_at = (empty_at or t) if alive and fill is not None and fill < LIFE_EMPTY else None
+            if fill is not None and fill >= LIFE_EMPTY:
+                alive, last_lit = True, fill
+            empty = alive and fill is not None and fill < LIFE_EMPTY and last_lit < LIFE_LOW
+            empty_at = (empty_at or t) if empty else None
             if empty_at is not None and t - empty_at >= self.life_zero_s:
                 logger.error("生命值降到 0，整体对不上了，停止触控")
                 self.life_zero = True
+                self.zero_frame = frame
                 self.abort.set()
                 return

@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 WORKER_LOGGER = "ournotes_auto.worker"  # 子进程里不是 JSON 的输出（未捕获的异常等）记在这个名字下
 _LEVELS = logging.getLevelNamesMapping()
+# requests 按这几个环境变量走代理（小写的优先）。设在 Agent 进程里，检查更新、更新程序和演奏进程都会继承
+PROXY_ENV = ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
+_ORIGINAL_PROXY = {k: os.environ.get(k) for k in PROXY_ENV}
 
 
 @dataclass
@@ -25,6 +28,23 @@ class WorkerResult:
     returncode: int
     stopped: bool  # 是否发出过停止请求
     killed: bool  # 停止请求后没有按时退出、被强制结束
+
+
+def apply_proxy(value: object, environ=None, original: dict[str, str | None] | None = None) -> str:
+    """界面选项「网络代理」（如 ``127.0.0.1:7890``，#64）设到环境变量里；空时恢复成 Agent 启动时的样子
+    （没设过就用系统代理）。返回用的代理地址，空为没设。"""
+    env = os.environ if environ is None else environ
+    original = _ORIGINAL_PROXY if original is None else original
+    proxy = str(value or "").strip()
+    if proxy and "://" not in proxy:
+        proxy = "http://" + proxy
+    for key in PROXY_ENV:
+        new = proxy or original.get(key)
+        if new:
+            env[key] = new
+        else:
+            env.pop(key, None)
+    return proxy
 
 
 def parse_line(raw: bytes) -> tuple[int, str, str] | None:

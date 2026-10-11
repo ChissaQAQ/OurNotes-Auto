@@ -22,7 +22,7 @@ from .. import __version__
 from ..release import EXIT_UPDATE
 from .logs import set_ui_debug, setup_logging
 from .update import UpdateBusyError, UpdateCheck
-from .worker import run_worker
+from .worker import apply_proxy, run_worker
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +62,8 @@ class OurNotesRun(CustomAction):
         attach = (context.get_node_data(PARAM_NODE) or {}).get("attach") or {}
         set_ui_debug(_flag(attach, "debug_log", False))
         logger.debug("任务 %s，参数 %s", task, attach)
+        if apply_proxy(attach.get("proxy")):
+            logger.debug("网络代理：%s", attach.get("proxy"))
         UPDATE.start(check=_flag(attach, "check_update", True), auto=_flag(attach, "auto_update", True))
         payload = {"task": task, "attach": attach, "controller": _controller_info(context)}
         cmd = [sys.executable, "-m", "ournotes_auto", "agent-run", json.dumps(payload, ensure_ascii=False, default=str)]

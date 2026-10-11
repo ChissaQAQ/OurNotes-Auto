@@ -130,6 +130,13 @@ def test_run_settings_repeat():
     assert sets["game.lb_cost"] == "3"
     assert sets["loop.max_plays"] == "20"
     assert sets["game.difficulty"] == "hard"
+    assert "loop.min_fps" not in sets
+
+
+def test_run_settings_restart_low_fps():
+    assert "loop.min_fps" not in run_settings("idle", {**ATTACH, "restart_low_fps": True})
+    for task in ("idle", "ap", "challenge"):
+        assert run_settings(task, {**ATTACH, "restart_low_fps": "No"})["loop.min_fps"] == "0"
 
 
 def test_run_settings_clear_lb():
@@ -893,3 +900,16 @@ def test_stdin_watch_does_not_block_imports(tmp_path):
     assert [text for _, text in lines] == ["imported", "stopped"]
     assert lines[0][0] < 6
     assert (result.returncode, result.killed) == (0, False)
+
+
+def test_apply_proxy():
+    from ournotes_auto.agent.worker import PROXY_ENV, apply_proxy
+
+    env = {"PATH": "x"}
+    assert apply_proxy(" 127.0.0.1:7890 ", env, {}) == "http://127.0.0.1:7890"
+    assert {k: env[k] for k in PROXY_ENV} == dict.fromkeys(PROXY_ENV, "http://127.0.0.1:7890")
+    assert apply_proxy("https://proxy.lan:443", env, {}) == "https://proxy.lan:443"
+    # 清空后恢复成 Agent 启动时的样子：原来有的还原，原来没有的删掉
+    assert apply_proxy("", env, {"HTTPS_PROXY": "http://corp:8080"}) == ""
+    assert env == {"PATH": "x", "HTTPS_PROXY": "http://corp:8080"}
+    assert apply_proxy(None, env, {}) == "" and env == {"PATH": "x"}

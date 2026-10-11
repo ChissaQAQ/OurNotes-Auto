@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from ournotes_auto.config import INTL_PACKAGE, INTL_PLAY_PACKAGE, JP_PACKAGE, DeviceConfig
 from ournotes_auto.device import adb
 
@@ -20,6 +22,10 @@ def fake_adb(monkeypatch, installed=(), running=(), error=None):
                 out = "".join(f"package:{p}\n" for p in installed if cmd[3] in p)
             elif cmd[0] == "pidof":
                 out = "4321\n" if cmd[1] in running else ""
+            elif cmd[0] == "monkey":
+                if cmd[2] not in installed:
+                    raise subprocess.CalledProcessError(adb.MONKEY_NO_APP, args)
+                out = ""
             else:
                 raise AssertionError(cmd)
             return subprocess.CompletedProcess(args, 0, stdout=out.encode(), stderr=b"")
@@ -68,3 +74,13 @@ def test_resolve_package_adb_error(monkeypatch):
     """adb 出错时不改，留给之后启动 / 连接时报错。"""
     for error in (FileNotFoundError("adb.exe"), subprocess.TimeoutExpired("adb", 15)):
         assert resolved(monkeypatch, INTL_PACKAGE, error=error) == INTL_PACKAGE
+
+
+def test_start_app_not_installed(monkeypatch):
+    """游戏没装时说清楚，而不是抛 monkey 的退出码（#62）"""
+    from ournotes_auto.context import SetupError
+
+    fake_adb(monkeypatch, installed=(INTL_PLAY_PACKAGE,))
+    assert adb.start_app(DeviceConfig(package=INTL_PLAY_PACKAGE))
+    with pytest.raises(SetupError, match=f"没装 {INTL_PACKAGE}"):
+        adb.start_app(DeviceConfig(package=INTL_PACKAGE))

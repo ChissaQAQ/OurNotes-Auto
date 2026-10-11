@@ -316,6 +316,31 @@ def test_closes_open_panel_before_other_actions():
     assert nav.set_song_category("原创") == "全部" and game.category == "原创"
 
 
+def test_category_waits_for_list_to_load():
+    """刚进乐曲选择页时列表还在加载、没有分类按钮：等它出来再点，不能白点几下就报错（#59）。"""
+
+    class Loading(SongSelectGame):
+        def __init__(self, frames):
+            super().__init__()
+            self.loading = frames
+
+        def grab(self):
+            frame = super().grab()
+            if self.loading:
+                self.loading -= 1
+                self._items = [it for it in self._items if it.text not in CATEGORIES]
+            return frame
+
+        def tap(self, x, y):
+            assert not self.loading, "列表加载完之前不该点"
+            super().tap(x, y)
+
+    game = Loading(10)
+    nav = make_nav(game)
+    assert nav.set_song_category("全部") == "原创"
+    assert game.category == "全部" and len(game.taps) == 2
+
+
 def test_random_song_reads_pick():
     game = SongSelectGame(songs=[(100055, False), (None, True)])
     nav = make_nav(game)

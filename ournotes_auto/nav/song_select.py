@@ -62,6 +62,8 @@ BTN_DIFFICULTY = {"easy": (807, 555), "normal": (937, 555), "hard": (1068, 555),
 NO_RANDOM_TEXT = "没有可以随机选择"
 BTN_BAND_BACK = (56, 38)  # 乐队确认页左上角「<」：直接回到乐曲选择页
 FILTER_WAIT_S = 3.0  # 点开 / 关闭筛选面板后多久没反应就再点一次
+CATEGORY_WAIT_S = 3.0  # 点分类后多久没变就再点一次
+CATEGORY_LOAD_S = 45.0  # 乐曲列表最多等它加载多久（分类按钮出来之前）
 
 # 列表（缩略图左边缘 x、边长；上面各行缩略图上边缘在 ROW_ABOVE_Y - 102k，下面各行在 ROW_BELOW_Y + 102k）
 LIST_THUMB_X = 213
@@ -296,16 +298,39 @@ class SongSelectMixin:
         """把分类切到 ``name``，返回切换前的分类（没认出来时为 None）。"""
         items = self.ensure_song_select()
         before = current = song_category(items)
-        for _ in range(len(CATEGORIES) + 1):
+        taps = 0
+        tapped_at = None
+        # 第一次进乐曲选择页时列表可能加载很久，只有标题栏、没有分类按钮：这时点分类没用，等它出来（#59）
+        deadline = time.monotonic() + CATEGORY_LOAD_S
+        while True:
             if current == name:
                 if before != name:
                     logger.debug("分类：%s → %s", before or "?", name)
                 return before
-            self.tap(BTN_CATEGORY, "分类")
-            self.list_positions.clear()
-            self._sleep(1.0)
-            _, items = self.look()
-            current = song_category(items)
+            now = time.monotonic()
+            if current is not None and (tapped_at is None or now - tapped_at > CATEGORY_WAIT_S):
+                if taps > len(CATEGORIES):
+                    break
+                self.tap(BTN_CATEGORY, "分类")
+                self.list_positions.clear()
+                taps += 1
+                tapped_at = now
+                deadline = max(deadline, now + CATEGORY_LOAD_S)  # 切分类也会重新加载列表
+            elif now > deadline:
+                break
+            self._sleep(0.5)
+            screen, items = self.look()
+            if screen is not Screen.SONG_SELECT or filter_open(items):
+                items = self.ensure_song_select()
+            seen = song_category(items)
+            if seen is not None:
+                if before is None and taps == 0:
+                    before = seen  # 加载完才认出切换前的分类
+                if seen != current:
+                    tapped_at = None  # 点的生效了：接着点不用等
+                current = seen
+            elif taps == 0:
+                current = None
         raise self._fail(f"切换不到分类「{name}」")
 
     def _open_filter(self) -> None:

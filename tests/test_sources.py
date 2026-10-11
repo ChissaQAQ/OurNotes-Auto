@@ -5,6 +5,7 @@ import pytest
 from ournotes_auto.charts.catalog import Catalog, Song
 from ournotes_auto.config import Config
 from ournotes_auto.nav.song_select import SongPick
+from ournotes_auto import sources
 from ournotes_auto.records import PlayResult, RecordStore
 from ournotes_auto.sources import (
     ApComplete,
@@ -275,6 +276,31 @@ def test_ap_cache_not_saved_when_songs_left(tmp_path):
     src = ApComplete(["expert"], max_rerolls=3, cache=cache)
     assert not src.advance(nav, True)
     assert store.ap_done("pkg", "expert") is None
+
+
+def test_ap_give_up_persists(tmp_path):
+    """一次运行里每次都没打完的谱面记下来，GIVE_UP_DAYS 天内下次运行也不打（#60）；打完了没 AP 的不记。"""
+    store = RecordStore(tmp_path)
+    now = [0.0]
+    cache = ApDoneCache(store, "pkg", cache_catalog(4, 5), clock=lambda: now[0])
+    src = ApComplete(["expert"], max_attempts=2, cache=cache)
+    for _ in range(2):
+        src.done(song(4), "expert", None)
+        src.done(song(5), "expert", result(5, "expert", 3))
+    src.done(song(5), "expert", None)
+    assert set(store.ap_give_up("pkg")) == {"4_expert"}
+    # 下次运行：抽到 4 就重抽
+    nav = PickNav({"expert": [SongPick(4), SongPick(5)]})
+    src = ApFirst(["expert"], cache=cache)
+    assert (4, "expert") in src.skip
+    assert src.advance(nav, True) and nav.calls.count("random") == 2
+    # 过期后再打
+    now[0] = sources.GIVE_UP_DAYS * 86400 + 1
+    assert (4, "expert") not in ApComplete(["expert"], cache=cache).skip
+    assert store.ap_give_up("pkg") == {}
+    # 切换账号时一起清掉
+    cache.give_up(4, "expert")
+    assert store.clear_ap_done() == 1 and store.ap_give_up("pkg") == {}
 
 
 def test_make_source_cache(tmp_path):
