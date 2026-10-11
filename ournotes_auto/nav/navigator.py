@@ -332,6 +332,25 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         self._check_stuck(screen, items, still_ok)
         return screen, items
 
+    def _heal_display_id(self) -> None:
+        """游戏在运行却一直认不出画面时，按包名重新解析一次 display_id（#58）。
+
+        自动重启后如果 display_id 被解析成了模拟器桌面之类的非游戏画面（见 ``wait_for_game_display``），
+        对着那个画面 OCR 永远认不出。这里查一次按包名的值，变了就换过来，让下一帧截到游戏的画面。
+        """
+        ipc = getattr(self.source, "ipc", None)
+        if ipc is None or not hasattr(ipc, "game_display_id"):
+            return
+        try:
+            d = ipc.game_display_id()
+        except Exception as e:  # DLL 偶发异常不该让导航崩掉
+            logger.debug("重新解析 display_id 失败：%s", e)
+            return
+        if d < 0 or d == ipc.display_id:
+            return
+        logger.warning("认不出画面，游戏的 display_id 变成了 %s（当前 %s），改用新的", d, ipc.display_id)
+        ipc.display_id = d
+
     def _check_app(self) -> None:
         """一直认不出画面时确认游戏还在运行，闪退了就重新启动（之后从标题画面重新登录）。"""
         if self.app_running is None:
@@ -348,6 +367,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
             logger.warning("检查游戏进程失败：%s", e)
             return
         if running:
+            self._heal_display_id()
             return
         if self.restart_app is None or self._restarts >= MAX_RESTARTS:
             raise self._fail("游戏没有在运行（可能闪退了）")
@@ -590,9 +610,15 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
 
     # ------------------------------------------------------------ Navigator 接口
 
+    def _display_id(self) -> str:
+        """当前截图用的 MuMu display_id（只用于日志；测试里的假截图源没有它）。"""
+        ipc = getattr(self.source, "ipc", None)
+        return str(getattr(ipc, "display_id", "?"))
+
     def ensure_in_game(self, timeout_s: float = 180.0) -> Screen:
         """等到进入游戏（主界面或演出相关页面）：沿途点开标题画面、领登录奖励、关公告。"""
         deadline = time.monotonic() + timeout_s
+        last_log = time.monotonic()
         while True:
             screen, items = self.look()
             if screen in IN_GAME_SCREENS:
@@ -602,6 +628,17 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
             if time.monotonic() > deadline:
                 raise self._fail(f"{timeout_s:.0f}s 内未能进入游戏")
             acted = self._common_step(screen, items)
+            now = time.monotonic()
+            if not acted and now - last_log >= 10.0:
+                # 诊断（#58）：卡在认不出的画面上时 look() 只在画面变化时记日志，日志里可能只剩
+                # 一行「画面：未知」，看不出等了多久、display_id 是多少。这里定期补一条。
+                last_log = now
+                logger.debug(
+                    "还在等进入游戏：画面 %s，display_id %s，距超时还有 %.0fs",
+                    screen,
+                    self._display_id(),
+                    deadline - now,
+                )
             self._sleep(self.settle_s if acted else 1.0)
 
     def relogin(self, timeout_s: float = 180.0) -> Screen:
