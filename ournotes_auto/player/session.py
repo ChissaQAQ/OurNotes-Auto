@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 from ..charts.model import Chart
@@ -193,6 +194,7 @@ class PlaySession:
         if guard is not None and guard.lost:
             raise PlayInterrupted("演奏中途离开了演奏画面")
         if guard is not None and guard.life_zero:
+            self._save_life_zero(chart, guard.zero_frame)
             if self.cfg.play.sync.record_frames:
                 self._dump(tracker, chart, sync)  # 多半是同步跟错了，和同步失败一样保存
             raise LifeDepleted("演奏中生命值降到 0（整体对不上了）")
@@ -217,6 +219,24 @@ class PlaySession:
                 logger.info("连击数截图已保存到 %s", saved)
             except (OSError, ValueError) as e:
                 logger.warning("保存连击数截图失败：%s", e)
+
+    @staticmethod
+    def _save_life_zero(chart: Chart, frame: np.ndarray | None) -> None:
+        """判定生命值归零时的画面存到 debug/life，方便核对是不是误判（只留最新 20 张）。"""
+        if frame is None:
+            return
+        folder = Path("debug/life")
+        path = folder / f"{chart.key}_{time.strftime('%Y%m%d_%H%M%S')}.png"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            ok, buf = cv2.imencode(".png", frame)  # cv2.imwrite 不支持非 ASCII 路径
+            if ok:
+                buf.tofile(str(path))
+                logger.info("判定生命值归零时的画面已保存到 %s", path)
+            for old in sorted(folder.glob("*.png"), key=lambda p: p.stat().st_mtime)[:-20]:
+                old.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("保存生命值归零的画面失败：%s", e)
 
     @staticmethod
     def _dump(tracker: NoteTracker, chart: Chart, sync: SyncResult | None) -> None:

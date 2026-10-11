@@ -73,6 +73,10 @@ class LbExhausted(Exception):
     """LB 已用完（且不允许改为消耗 0 继续打）。"""
 
 
+class RestartForUpdate(Exception):
+    """挂机收到更新请求，在安全的时机退出（见 :meth:`Runner._check_update`）。"""
+
+
 class CpExhausted(LbExhausted):
     """挑战演出的挑战pt（CP）不够一局的消耗了：和 LB 用完一样结束。"""
 
@@ -195,6 +199,7 @@ class RunStats:
     all_perfect: int = 0
     failures: int = 0
     maintenance: bool = False  # 因服务器维护停止
+    restart: bool = False  # 为换上新版本退出（挂机），Agent 换完后用同样的参数重新启动
 
 
 class FrameRateWatch:
@@ -242,6 +247,7 @@ class Runner:
         store: RecordStore,
         stop: threading.Event | None = None,
         source: SongSource | None = None,
+        update: threading.Event | None = None,
     ):
         from .sources import make_source
 
@@ -252,6 +258,7 @@ class Runner:
         self.catalog = catalog
         self.store = store
         self.stop = stop or threading.Event()
+        self.update = update or threading.Event()  # 新版本已下载（Agent 经标准输入通知）
         self.source = source or make_source(config, catalog, store)
         self.stats = RunStats()
         self.clock = time.monotonic  # 定时领取录音室练习用（测试里换成假时钟）
@@ -528,6 +535,7 @@ class Runner:
         need = self.cfg.game.lb_cost
         last: int | None = -1
         while True:
+            self._check_update()
             self._claim_timed()
             if self.stop.is_set():
                 raise NavigationError("已停止")
@@ -555,6 +563,7 @@ class Runner:
         重新登录遇到别的问题时也返回，交给下一局开头的导航（还在维护会再回到这里）。"""
         logger.warning("%s，每 %.3g 分钟回到标题画面看一次开服没有", e, MAINTENANCE_POLL_S / 60)
         while not self.stop.wait(MAINTENANCE_POLL_S):
+            self._check_update()
             try:
                 self.nav.relogin()
             except ServerMaintenance:
@@ -569,9 +578,18 @@ class Runner:
             logger.info("已开服，继续挂机")
             return
 
+    def _check_update(self) -> None:
+        """挂机（不限局数）收到更新请求时，在两局之间、等 LB、等开服这些安全的时机退出，
+        Agent 换上新代码后用同样的参数重新启动。其他任务总会结束，等它结束再更新。"""
+        if self.update.is_set() and self.cfg.loop.wait_lb and self.cfg.loop.max_plays <= 0:
+            raise RestartForUpdate
+
     def run(self) -> RunStats:
         try:
             self._loop()
+        except RestartForUpdate:
+            logger.info("新版本已下载，暂停挂机换上新版本，换好后自动继续")
+            self.stats.restart = True
         except (ScreenFrozen, ServerMaintenance) as e:
             # 干等画面不会变、维护期间什么都做不了，重试也没用（恢复选曲页的设置同样做不了）
             logger.error("%s，停止", e)
@@ -599,6 +617,7 @@ class Runner:
         first = True
         wait_lb = False  # 上一局因 LB 用完没开始（挂机）：等恢复后接着打这首，不换歌
         while not self.stop.is_set() and (lc.max_plays <= 0 or self.stats.plays < lc.max_plays):
+            self._check_update()
             try:
                 if not wait_lb:
                     self._restart_if_slow()

@@ -1,4 +1,4 @@
-"""界面选项 / 控制器信息 → 演奏子进程的命令行参数。"""
+"""界面选项 / 控制器信息 → 演奏子进程的命令行参数。在演奏进程里运行（``python -m ournotes_auto agent-run``），Agent 不导入。"""
 
 from __future__ import annotations
 
@@ -251,7 +251,7 @@ def _humanize(attach: Mapping[str, Any]) -> dict[str, str]:
 def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     """任务名 + 界面选项 → ``--set`` 配置项。
 
-    共用 attach 键：``max_plays`` ``touch`` 和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
+    共用 attach 键：``max_plays`` ``touch`` ``restart_low_fps``（关掉时不因游戏变卡重启，旧资源没有这项时开）和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
     重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
     ``song_list``）；重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
     清体力 / 挂机另有 ``clear_lb_cost``（清体力 1~3，挂机 0~3：0 时不等 LB，有就消耗、用完消耗 0 一直打）；AP补完另有 ``ap_expert`` 等
@@ -271,6 +271,8 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.daily_claim_time": _daily_claim(attach) if task == "idle" else "",
         **_humanize(attach),
     }
+    if not flag(attach, "restart_low_fps", True):
+        sets["loop.min_fps"] = "0"
     if task == "ap":
         return {**sets, **_ap_settings(attach)}
     if task == "challenge":
@@ -348,3 +350,22 @@ def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str])
     for key, value in sets.items():
         args += ["--set", f"{key}={value}"]
     return args + tail
+
+
+def agent_argv(payload: Any) -> tuple[str, list[str]]:
+    """Agent 交来的任务 ``{"task", "attach", "controller"}``（``controller`` 是界面连接的 ``Controller.info``）
+    → (任务名, ``python -m ournotes_auto`` 之后的完整参数)。
+
+    参数在演奏进程里转换而不是在 Agent 里：Agent 只负责转发，这里的代码改了热更新就能生效。
+    """
+    if not isinstance(payload, Mapping):
+        raise ParamError("任务参数格式不对")
+    task = str(payload.get("task", ""))
+    if task not in TASKS:
+        raise ParamError(f"未知任务：{task}")
+    attach = payload.get("attach") or {}
+    controller = payload.get("controller") or {}
+    if not isinstance(attach, Mapping) or not isinstance(controller, Mapping):
+        raise ParamError("任务参数格式不对")
+    device = {} if task in LOCAL_TASKS else device_from_controller(controller)
+    return task, [*global_args(attach), *worker_args(task, attach, device)]

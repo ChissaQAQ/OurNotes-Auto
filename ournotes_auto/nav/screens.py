@@ -160,7 +160,14 @@ HOME_ENTRIES = ("招募", "商店", "故事", "乐队")
 HOME_ENTRIES_ROI: Rect = (500, 620, 450, 60)
 # 标题菜单的按钮（三个都在才算，别的页面不会同时有）
 TITLE_MENU_MARKS = ("用户中心", "切换服务器", "清除缓存")
-# B 站 SDK 弹窗上方中间 bilibili 标志下面的标题（「用户中心」「登录记录」）
+# B 站 SDK 的弹窗（用户中心、登录记录、开启消息通知）是安卓原生界面，按 dp 排版、在画面正中：分辨率或 DPI
+# 和 1280x720 时不同，整个弹窗以画面中心为原点缩放（2560x1440 下约 0.75 倍），不跟游戏画面按比例放大。
+# 下面这些都是 1280x720 下量的，用之前按 sdk_scale 换算（sdk_point / sdk_rect）；
+# 缩放比按顶部 bilibili 标志离画面中心的高度算，标志中心的高度见 SDK_LOGO_Y / NOTIFY_LOGO_Y
+SDK_LOGO_ROI: Rect = (440, 0, 400, 360)
+SDK_LOGO_Y = 166.0  # 用户中心、登录记录
+NOTIFY_LOGO_Y = 173.0  # 开启消息通知（弹窗矮一些）
+# 标志下面的标题（「用户中心」「登录记录」）
 SDK_TITLE_ROI: Rect = (480, 180, 320, 70)
 # 登录记录：账号名下面一行是「上次登录：n分钟前」。收起时只有选中的一行（名字在 (610,292)），
 # 展开后按最近登录排列，每行约 84px，能看到三行左右
@@ -210,6 +217,28 @@ def center(item: OcrItem) -> tuple[int, int]:
     return round(item.x + item.w / 2), round(item.cy)
 
 
+def sdk_logo(items: list[OcrItem]) -> OcrItem | None:
+    """B 站 SDK 弹窗顶部的 bilibili 标志。取最上面的：登录记录里的账号名也可能带 bilibili（在标志下面）。"""
+    logos = [it for it in items if "bilibili" in _compact(it.text) and in_roi(it, SDK_LOGO_ROI)]
+    return min(logos, key=lambda it: it.cy, default=None)
+
+
+def sdk_scale(items: list[OcrItem], logo_y: float = SDK_LOGO_Y) -> float:
+    """B 站 SDK 弹窗相对 1280x720 时的缩放比（见 SDK_LOGO_ROI 上面的说明）；没认出 bilibili 标志时为 1。"""
+    logo = sdk_logo(items)
+    return (360 - logo.cy) / (360 - logo_y) if logo is not None else 1.0
+
+
+def sdk_point(point: tuple[float, float], scale: float) -> tuple[int, int]:
+    """1280x720 下量的 SDK 弹窗里的点，按缩放比 ``scale`` 换算到当前画面。"""
+    return round(640 + (point[0] - 640) * scale), round(360 + (point[1] - 360) * scale)
+
+
+def sdk_rect(rect: Rect, scale: float) -> Rect:
+    x, y, w, h = rect
+    return 640 + (x - 640) * scale, 360 + (y - 360) * scale, w * scale, h * scale
+
+
 def skip_button(items: list[OcrItem]) -> OcrItem | None:
     """全屏演出右上角的「跳过」/「SKIP」。"""
     return next((it for text in SKIP_TEXTS if (it := find(items, text, SKIP_CORNER_ROI))), None)
@@ -245,10 +274,11 @@ def classify(items: list[OcrItem]) -> Screen:
     if find(items, "道具", LB_TABS_ROI, exact=True) and find(items, "观看广告", LB_TABS_ROI, exact=True):
         return Screen.LB_RECOVER
     # 登录记录、用户中心叠在标题画面上（底下的 CRIWARE 还读得到），要先认
-    if find(items, "bilibili"):
-        if find(items, "登录记录", SDK_TITLE_ROI):
+    if sdk_logo(items):
+        title_roi = sdk_rect(SDK_TITLE_ROI, sdk_scale(items))
+        if find(items, "登录记录", title_roi):
             return Screen.LOGIN_HISTORY
-        if find(items, "用户中心", SDK_TITLE_ROI):
+        if find(items, "用户中心", title_roi):
             return Screen.USER_CENTER
     if all(find(items, text) for text in TITLE_MENU_MARKS):
         return Screen.TITLE_MENU
@@ -339,13 +369,15 @@ def maintenance_period(items: list[OcrItem]) -> str | None:
 
 def login_rows(items: list[OcrItem]) -> list[OcrItem]:
     """登录记录里的账号名（从上到下）：下面紧跟着「上次登录」的那一项。"""
+    s = sdk_scale(items)
+    roi = sdk_rect(LOGIN_ROWS_ROI, s)
     lasts = [it for it in items if LAST_LOGIN in it.text]
     rows = [
         it
         for it in items
         if LAST_LOGIN not in it.text
-        and in_roi(it, LOGIN_ROWS_ROI)
-        and any(abs(last.x - it.x) < 40 and 15 < last.cy - it.cy < 50 for last in lasts)
+        and in_roi(it, roi)
+        and any(abs(last.x - it.x) < 40 * s and 15 * s < last.cy - it.cy < 50 * s for last in lasts)
     ]
     return sorted(rows, key=lambda it: it.cy)
 

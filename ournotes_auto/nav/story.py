@@ -133,6 +133,13 @@ PLAYER_MENU_GAP_S = 3.0  # 菜单展开要一点时间，点了没反应隔这�
 EVENT_ENTRY_ROI: Rect = (1060, 600, 180, 80)
 EVENT_STORY_ROI: Rect = (1030, 360, 230, 70)
 EVENT_STORY_BADGE_OFFSET = (101, -22)
+# 有好几个活动（举办中的和刚结束的）时点「活动」先弹出「活动选择」：横幅下面写着「举办期间 剩余7天」或「已结束。」，
+# 点举办中的那个横幅（#57）
+EVENT_SELECT_TITLE = "活动选择"
+EVENT_SELECT_TITLE_ROI: Rect = (440, 95, 400, 55)
+EVENT_SELECT_ROI: Rect = (357, 157, 562, 336)
+EVENT_SELECT_CARD_DY = -52  # 从横幅下的文字到横幅中间
+EVENT_SELECT_CLOSE = (640, 571)
 EVENT_EPISODES_TITLE = "活动故事话数选择"
 EVENT_TAB_BADGE = (877, 16)  # 「活动故事」分页的红点（视角故事分页的是 POV_TAB_BADGE）
 # 活动故事话数选择：底部卡片右下角是时长「04:46」，左下角是这话的标题，左侧简介里是选中那话的标题。
@@ -240,6 +247,16 @@ def _same_title(a: str | None, b: str) -> bool:
 def event_story_button(items: list[OcrItem]) -> OcrItem | None:
     """活动页右边的「活动故事」按钮（没有限时活动、活动没有故事时没有）。"""
     return find(items, "活动故事", EVENT_STORY_ROI, exact=True)
+
+
+def event_select_open(items: list[OcrItem]) -> bool:
+    return find(items, EVENT_SELECT_TITLE, EVENT_SELECT_TITLE_ROI) is not None
+
+
+def ongoing_event(items: list[OcrItem]) -> OcrItem | None:
+    """「活动选择」里举办中的活动横幅下的文字（「举办期间 剩余7天」），没有时为 None。"""
+    labels = [it for it in items if in_roi(it, EVENT_SELECT_ROI)]
+    return next((it for it in labels if "举办" in it.text or "剩余" in it.text), None)
 
 
 def _same_name(a: str | None, b: str) -> bool:
@@ -599,6 +616,16 @@ class StoryMixin:
                 self._sleep(1.0)  # 等红点出来
                 self.look()
                 return True
+            if event_select_open(items):
+                ongoing = ongoing_event(items)
+                if ongoing is None:
+                    logger.info("活动故事：活动选择里没有举办中的活动")
+                    self.tap(EVENT_SELECT_CLOSE, "关闭")
+                    return False
+                x, y = center(ongoing)
+                self.tap((x, y + EVENT_SELECT_CARD_DY), f"活动·{ongoing.text.strip()}")
+                tapped = time.monotonic()
+                continue
             if self._dismiss(screen, items):
                 continue
             if screen is Screen.LIVE_TOP and tapped is None:

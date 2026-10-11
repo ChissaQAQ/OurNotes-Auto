@@ -24,6 +24,7 @@ from tests.test_story import RED, MENU_BLUE, clock, load_items, near, story_nav 
 TIME_X0, TIME_STEP = 241, 266  # 卡片右下角时长的中心 x
 STORY_BUTTON = (1139, 397)
 TEAL = (230, 230, 80)  # 选中卡片四角的光框（BGR）
+SELECT_CARDS = ((527, 239), (757, 239))  # 「活动选择」里两个活动横幅的中间
 
 
 def test_event_page_helpers():
@@ -77,8 +78,10 @@ class EventGame:
         event=True,
         garbled=False,
         stuck=(),
+        select=None,
     ):
         self.state = "home"
+        self.select = select  # 「活动选择」里横幅下的文字（None：只有一个活动，不弹活动选择）
         self.garbled = garbled  # 简介里的大字标题读得和卡片上不一样（韩文 OCR 常见）
         self.stuck = set(stuck)  # 跳过后红点还在的话
         self.event = event
@@ -142,6 +145,11 @@ class EventGame:
             return items if self.event else [it for it in items if it.text not in ("活动", "EVENT")]
         if self.state == "event_page":
             return load_items("event_page")
+        if self.state == "event_select":
+            items = [OcrItem(585, 106, 110, 30, "活动选择"), OcrItem(620, 558, 40, 26, "关闭")]
+            for (cx, _), text in zip(SELECT_CARDS, self.select):
+                items.append(OcrItem(cx - 9 * len(text), 281, 18 * len(text), 22, text))
+            return items
         if self.state == "episodes":
             items = [
                 OcrItem(226, 26, 175, 22, EVENT_EPISODES_TITLE),
@@ -176,7 +184,14 @@ class EventGame:
         if s == "home" and near(p, (1081, 650)):
             self.state = "live_top"
         elif s == "live_top" and self.event and near(p, (1142, 639)):
-            self.state = "event_page"
+            self.state = "event_page" if self.select is None else "event_select"
+        elif s == "event_select":
+            if near(p, (640, 571)):
+                self.state = "live_top"
+            for c, text in zip(SELECT_CARDS, self.select):
+                if near(p, c, 40):
+                    assert "剩余" in text, "点了已结束的活动"
+                    self.state = "event_page"
         elif s == "event_page" and near(p, STORY_BUTTON):
             self.state = "episodes"
         elif s in ("live_top", "event_page", "episodes") and near(p, (164, 40), 12):
@@ -262,3 +277,21 @@ def test_event_story_stuck_badge(clock):
     nav = story_nav(game, clock)
     assert nav.run_daily(["event"]) == ["活动故事"]
     assert game.watched == ["满满地"]
+
+
+@pytest.mark.parametrize("select", [("已结束。", "举办期间 剩余7天"), ("举办期间 剩余7天", "已结束。")])
+def test_event_story_picks_ongoing_event(clock, select):
+    """有好几个活动时先弹「活动选择」：点举办中的那个（#57）。"""
+    game = EventGame(story_read=("新曲",), pov_read=("上吧",), select=select)
+    nav = story_nav(game, clock)
+    assert nav.run_daily(["event"]) == []
+    assert game.watched == ["慢慢来", "指南针", "满满地"]
+
+
+def test_event_story_select_without_ongoing(clock):
+    """活动选择里的都结束了：关掉，跳过活动故事。"""
+    game = EventGame(select=("已结束。", "已结束。"))
+    nav = story_nav(game, clock)
+    assert nav.run_daily(["event"]) == []
+    assert game.watched == [] and game.state == "home"
+    assert not any(s == "event_page" for s, _ in game.taps)

@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 
 WORKER_LOGGER = "ournotes_auto.worker"  # 子进程里不是 JSON 的输出（未捕获的异常等）记在这个名字下
 _LEVELS = logging.getLevelNamesMapping()
+# requests 按这几个环境变量走代理（小写的优先）。设在 Agent 进程里，检查更新、更新程序和演奏进程都会继承
+PROXY_ENV = ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
+_ORIGINAL_PROXY = {k: os.environ.get(k) for k in PROXY_ENV}
 
 
 @dataclass
@@ -25,6 +28,23 @@ class WorkerResult:
     returncode: int
     stopped: bool  # 是否发出过停止请求
     killed: bool  # 停止请求后没有按时退出、被强制结束
+
+
+def apply_proxy(value: object, environ=None, original: dict[str, str | None] | None = None) -> str:
+    """界面选项「网络代理」（如 ``127.0.0.1:7890``，#64）设到环境变量里；空时恢复成 Agent 启动时的样子
+    （没设过就用系统代理）。返回用的代理地址，空为没设。"""
+    env = os.environ if environ is None else environ
+    original = _ORIGINAL_PROXY if original is None else original
+    proxy = str(value or "").strip()
+    if proxy and "://" not in proxy:
+        proxy = "http://" + proxy
+    for key in PROXY_ENV:
+        new = proxy or original.get(key)
+        if new:
+            env[key] = new
+        else:
+            env.pop(key, None)
+    return proxy
 
 
 def parse_line(raw: bytes) -> tuple[int, str, str] | None:
@@ -60,9 +80,9 @@ def _pump(stream: IO[bytes], q: queue.Queue) -> None:
         q.put(None)
 
 
-def _send_stop(proc: subprocess.Popen) -> None:
+def _send(proc: subprocess.Popen, line: bytes) -> None:
     try:
-        proc.stdin.write(b"stop\n")
+        proc.stdin.write(line)
         proc.stdin.flush()
     except (OSError, ValueError):
         pass  # 子进程已经退出
@@ -73,13 +93,15 @@ def run_worker(
     *,
     cwd: str | Path,
     should_stop: Callable[[], bool],
+    should_update: Callable[[], bool] = lambda: False,
     on_line: Callable[[bytes], None] = relay,
     poll_s: float = 0.2,
     grace_s: float = 20.0,
     exit_drain_s: float = 1.0,
 ) -> WorkerResult:
     """运行子进程直到结束。在调用线程里轮询 ``should_stop``（Agent 的 context 只能在回调线程里用）；
-    返回真时经标准输入发送 stop，``grace_s`` 秒内没退出就强制结束。"""
+    返回真时经标准输入发送 stop，``grace_s`` 秒内没退出就强制结束。``should_update`` 返回真时发送一次 update
+    （新版本已下载，挂机到安全的时机以退出码 ``release.EXIT_UPDATE`` 退出）。"""
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1")
     proc = subprocess.Popen(
         list(cmd),
@@ -95,6 +117,7 @@ def run_worker(
     stop_at: float | None = None
     exited_at: float | None = None
     killed = False
+    update_sent = False
     try:
         while True:
             try:
@@ -115,7 +138,10 @@ def run_worker(
                 if should_stop():
                     logger.info("正在停止…")
                     stop_at = now
-                    _send_stop(proc)
+                    _send(proc, b"stop\n")
+                elif not update_sent and should_update():
+                    update_sent = True
+                    _send(proc, b"update\n")
             elif not killed and now - stop_at > grace_s:
                 logger.warning("演奏进程 %.0f 秒内没有退出，强制结束", grace_s)
                 proc.kill()

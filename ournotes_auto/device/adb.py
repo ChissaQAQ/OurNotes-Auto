@@ -36,8 +36,18 @@ def _runner(cfg: DeviceConfig, timeout_s: float):
     return serial, run
 
 
+MONKEY_NO_APP = 252  # monkey 找不到这个包名能启动的界面（没装）时退出码是 -4
+
+
 def _launch(run, serial: str, package: str) -> None:
-    run("-s", serial, "shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1")
+    try:
+        run("-s", serial, "shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1")
+    except subprocess.CalledProcessError as e:
+        if e.returncode != MONKEY_NO_APP:
+            raise
+        from ..context import SetupError
+
+        raise SetupError(f"模拟器（{serial}）里没装 {package}，启动不了：确认游戏装在这个模拟器里、选的服和装的一致") from e
 
 
 def _running(run, serial: str, package: str) -> bool:

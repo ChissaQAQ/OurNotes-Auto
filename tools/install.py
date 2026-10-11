@@ -14,11 +14,13 @@
 发布模式的 pip 依赖用运行本脚本的 Python 安装，它的版本要和嵌入式 Python 一致；依赖版本按 tools/constraints.txt 固定。
 OCR 模型不在仓库里，组装前先运行 tools/fetch_ocr.py；韩文等其他语言的模型不打进发布包，用户选了对应的游戏语言时再下载。
 MFAA 与 MXU 的用户配置都放在各自目录的 config/ 下，所以两者分开组装、分开发布。
+发布模式另外写 release.json（版本、运行环境指纹、文件清单），自动更新靠它判断要换哪些文件，见 ournotes_auto/release.py。
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -33,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RID = "win-x64"
 PY_DIR = "python"  # 发布包里嵌入式 Python 的目录
 sys.path.insert(0, str(ROOT))
+from ournotes_auto import release  # noqa: E402
 from ournotes_auto.ocr_models import EXTRA  # noqa: E402
 
 _SKIP = shutil.ignore_patterns("__pycache__", "*.pyc")
@@ -60,16 +63,6 @@ def _remove(path: Path) -> None:
         shutil.rmtree(path)
     elif path.exists():
         path.unlink()
-
-
-def _zip_name(info: zipfile.ZipInfo) -> str:
-    """没有打 UTF-8 标记的中文文件名会被 zipfile 按 cp437 解码，这里还原。"""
-    if info.flag_bits & 0x800:
-        return info.filename
-    try:
-        return info.filename.encode("cp437").decode("utf-8")
-    except UnicodeError:
-        return info.filename
 
 
 def ui_kind(src: Path) -> str:
@@ -100,7 +93,7 @@ def install_ui(src: Path, out: Path, kind: str) -> None:
         return
     with zipfile.ZipFile(src) as zf:
         for info in zf.infolist():
-            dst = _target(out, kind, _zip_name(info))
+            dst = _target(out, kind, release.zip_name(info))
             if info.is_dir() or dst is None:
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -165,22 +158,35 @@ def install_python(embed_zip: Path, out: Path) -> None:
 
 def write_interface(out: Path, kind: str, version: str | None, agent_exec: str, agent_args: list[str]) -> None:
     data = json.loads((ROOT / "interface.json").read_text(encoding="utf-8"))
-    if version:
-        data["version"] = version
-    data["agent"]["child_exec"] = agent_exec
-    data["agent"]["child_args"] = agent_args
-    if kind == "mxu":
-        # MXU 只在设置页「任务设置」里编辑 setting 分组列出的全局选项；
-        # MFAA 2.16.2 读到 setting 会在后台线程建界面项而出错，连接卡住，所以只给 MXU 加
-        data["setting"] = [
-            {
-                "name": "global",
-                "label": "$setting.global",
-                "description": "$setting.global.desc",
-                "option": data["global_option"],
-            }
-        ]
-    (out / "interface.json").write_text(json.dumps(data, ensure_ascii=False, indent=4) + "\n", encoding="utf-8")
+    data = release.render_interface(data, kind, version, agent_exec, agent_args)
+    (out / "interface.json").write_text(release.dump_json(data), encoding="utf-8")
+
+
+def runtime_info(out: Path, kind: str) -> dict:
+    """运行环境的指纹：和新版本的不一样时只能整包更新（见 ournotes_auto/release.py）。"""
+    lines = (ROOT / "tools" / "constraints.txt").read_text(encoding="utf-8").splitlines()
+    pins = sorted(x.strip() for x in lines if x.strip() and not x.lstrip().startswith("#"))
+    deps = sorted(tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"])
+    # 主程序相同也可能换了 DLL 或 Python 补丁版本；运行环境按实际文件计算，不能只看 exe 和主次版本号。
+    runtime_files = hashlib.sha256()
+    for path in sorted(p for p in out.rglob("*") if p.is_file()):
+        rel = path.relative_to(out).as_posix()
+        if path.relative_to(out).parts[0] in release.USER_DIRS or rel == release.RELEASE_FILE or release.is_app_file(rel) or rel.startswith(release.MODEL_DIR + "/"):
+            continue
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        runtime_files.update(f"{rel}\0{release.sha256_file(path)}\n".encode("utf-8"))
+    info = {
+        "ui": release.sha256_file(out / UIS[kind][0]),
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "deps": hashlib.sha256("\n".join([*pins, "", *deps]).encode("utf-8")).hexdigest(),
+        "model": release.tree_digest(out, release.MODEL_DIR),
+        "layout": release.LAYOUT,
+        "files": runtime_files.hexdigest(),
+    }
+    if kind == "mfaa":
+        info["icon"] = release.sha256_file(out / "Assets" / "logo.ico")
+    return info
 
 
 def main() -> int:
@@ -220,7 +226,9 @@ def main() -> int:
             if (ROOT / name).exists():
                 place(ROOT / name, out / name, link=False)
         install_python(args.python, out)
-        write_interface(out, kind, args.version, f"./{PY_DIR}/python.exe", ["./agent/main.py"])
+        write_interface(out, kind, args.version, release.AGENT_EXEC, list(release.AGENT_ARGS))
+        # 自动更新按它判断能不能只换文件（tools/make_update.py 读它生成 update.json）
+        release.write_json(out / release.RELEASE_FILE, release.release_info(out, kind, args.version or "", runtime_info(out, kind)))
     print(f"已组装 {kind} 到 {out}（MaaFramework {maafw}，{'开发' if args.dev else '发布'}模式）")
     return 0
 

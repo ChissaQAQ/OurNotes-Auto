@@ -197,6 +197,22 @@
             ],
             "default_case": "No"
         },
+        "RestartLowFps": {
+            "type": "switch",
+            "label": "$opt.RestartLowFps",
+            "description": "$opt.RestartLowFps.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "restart_low_fps": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "restart_low_fps": false } } }
+                }
+            ],
+            "default_case": "Yes"
+        },
         "GameLanguage": {
             "type": "select",
             "label": "$opt.GameLanguage",
@@ -251,6 +267,38 @@
                 }
             ],
             "default_case": "Yes"
+        },
+        "AutoUpdate": {
+            "type": "switch",
+            "label": "$opt.AutoUpdate",
+            "description": "$opt.AutoUpdate.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "auto_update": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "auto_update": false } } }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "Proxy": {
+            "type": "input",
+            "label": "$opt.Proxy",
+            "description": "$opt.Proxy.desc",
+            "inputs": [
+                {
+                    "name": "proxy",
+                    "label": "$opt.Proxy.proxy",
+                    "default": "",
+                    "pipeline_type": "string",
+                    "verify": "^\\S*$",
+                    "pattern_msg": "$opt.Proxy.proxy.msg"
+                }
+            ],
+            "pipeline_override": { "OurNotesParam": { "attach": { "proxy": "{proxy}" } } }
         }
     }
 }

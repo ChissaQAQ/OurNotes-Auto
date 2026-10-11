@@ -10,6 +10,7 @@ from collections import Counter
 from typing import TYPE_CHECKING, Callable, Protocol
 
 from .nav.screens import same_title
+from .records import chart_key
 
 if TYPE_CHECKING:
     from .charts.catalog import Catalog, Song
@@ -26,6 +27,7 @@ CHALLENGE_MAX_SONGS = 30  # 挑战演出转一圈最多看这么多首（防止�
 DIFFICULTIES = ("easy", "normal", "hard", "expert")
 AP_CATEGORY = "全部"  # AP 补完包括翻唱
 LIST_CATEGORY = "全部"  # 歌单里可能有翻唱
+GIVE_UP_DAYS = 3  # AP 时反复失败的谱面多少天内不再打（可能是谱面、游戏更新导致的，过几天再试）
 
 
 class SongSource(Protocol):
@@ -181,6 +183,7 @@ class ApDoneCache:
       切换账号（``switch-account``）时全部清除。``hours`` 为 0 时每次都检查。
     - 只在列表为空、或只剩未解锁 / 封面认不出的歌时记下；剩下的是这次放弃了的歌时不记（下次运行还会再打）。
     - AP 补完（ap）不看记录、每次都实际检查，并更新记录。
+    - 另外记下 AP 时反复失败（一次运行里每次都没打完）的谱面，``GIVE_UP_DAYS`` 天内 AP 补完、ap_first 都不再打（#60）。
     """
 
     def __init__(
@@ -221,6 +224,21 @@ class ApDoneCache:
             return True
         self.store.set_ap_done(self.package, diff, None)
         return False
+
+    def given_up(self) -> set[tuple[int, str]]:
+        """还在有效期内的反复失败的谱面 ``(musicId, 难度)``；过期的顺便删掉。"""
+        out = set()
+        for key, entry in self.store.ap_give_up(self.package).items():
+            mid, _, diff = key.partition("_")
+            age_d = (self.clock() - float(entry.get("time", 0))) / 86400
+            if 0 <= age_d < GIVE_UP_DAYS and mid.isdigit():
+                out.add((int(mid), diff))
+            else:
+                self.store.set_ap_give_up(self.package, key, None)
+        return out
+
+    def give_up(self, music_id: int, diff: str) -> None:
+        self.store.set_ap_give_up(self.package, chart_key(music_id, diff), {"time": round(self.clock(), 1)})
 
     def update(self, diff: str, done: bool) -> None:
         """检查完这个难度：``done`` 为 True 时记下没有要补的歌，否则删掉记录。"""
@@ -266,7 +284,17 @@ class ApComplete(_Source):
         self._touched = False  # 改过游戏里的分类 / 筛选
         self._category: str | None = None  # 开始前的分类
         self.attempts: Counter[tuple[int, str]] = Counter()
+        self.failures: Counter[tuple[int, str]] = Counter()  # 其中没打完（同步失败、生命值归零等）的次数
         self.skip: set[tuple[int, str]] = set()  # 已 AP 或已放弃的 (musicId, 难度)
+        if cache is not None:
+            given = cache.given_up()
+            if given:
+                logger.info(
+                    "AP 时反复失败、%d 天内不再打：%s",
+                    GIVE_UP_DAYS,
+                    "，".join(f"{m} {d.upper()}" for m, d in sorted(given)),
+                )
+            self.skip |= given
 
     @property
     def difficulty(self) -> str:
@@ -334,9 +362,14 @@ class ApComplete(_Source):
             self.skip.add(key)  # 游戏的筛选会去掉它；万一列表没刷新也不再打
             return
         self.attempts[key] += 1
+        if result is None:
+            self.failures[key] += 1
         if self.attempts[key] >= self.max_attempts:
             logger.warning("%s %s 打了 %d 次没有 AP，不再打", song.display_title(), difficulty.upper(), self.attempts[key])
             self.skip.add(key)
+            if self.cache is not None and self.failures[key] >= self.attempts[key]:
+                logger.warning("%s %s 每次都没打完，%d 天内不再打", song.display_title(), difficulty.upper(), GIVE_UP_DAYS)
+                self.cache.give_up(song.music_id, difficulty)
 
     def close(self, nav: Navigator) -> None:
         if not self._touched:

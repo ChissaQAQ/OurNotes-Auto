@@ -117,15 +117,17 @@ def test_life_fill(size):
 
 
 class Lives:
-    """按顺序返回演奏画面：前 ``alive_n`` 次生命值 700，之后归零。"""
+    """按顺序返回演奏画面：前 ``alive_n`` 次生命值依次是 ``lives``（不够的用最后一个），之后归零。"""
 
-    def __init__(self, alive_n: int):
+    def __init__(self, alive_n: int, lives=(700, 300)):
         self.alive_n = alive_n
+        self.lives = lives
         self.grabs = 0
 
     def grab(self):
         self.grabs += 1
-        return life_frame(700 if self.grabs <= self.alive_n else 0), 0.0
+        life = self.lives[min(self.grabs, len(self.lives)) - 1] if self.grabs <= self.alive_n else 0
+        return life_frame(life), 0.0
 
 
 def test_life_zero_sets_abort():
@@ -135,6 +137,27 @@ def test_life_zero_sets_abort():
     assert abort.wait(2.0)
     g.stop()
     assert g.life_zero and not g.lost and src.grabs >= 4
+
+
+def test_life_sudden_empty_is_not_zero():
+    """生命值条从满的一下子变成「空的」不是归零（演出效果把右上角压暗了，#60）。"""
+
+    class Dimmed(Lives):
+        def grab(self):
+            if self.grabs < self.alive_n:
+                return super().grab()
+            self.grabs += 1
+            return (life_frame(1000) * 0.3).astype(np.uint8), 0.0
+
+    assert guard_mod.pause_visible((life_frame(1000) * 0.3).astype(np.uint8), TEMPLATE)
+    assert guard_mod.life_fill((life_frame(1000) * 0.3).astype(np.uint8)) < guard_mod.LIFE_EMPTY
+    for src in (Dimmed(alive_n=2, lives=(1000,)), Lives(alive_n=2, lives=(1000, 700))):
+        g = PlayGuard(src, TEMPLATE, lost_s=0.1, interval_s=0.02, life_zero_s=0.05)
+        abort = g.start()
+        time.sleep(0.3)
+        assert not abort.is_set()
+        g.stop()
+        assert not g.life_zero and not g.lost
 
 
 def test_life_zero_check_off_by_default():

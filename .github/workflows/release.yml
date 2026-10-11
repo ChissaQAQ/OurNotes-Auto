@@ -1,6 +1,7 @@
 name: Release
 
-# 打 v* 标签：测试 → 组装 MFAAvalonia / MXU 两个发布包 → 建立草稿 Release（人工检查后再发布）
+# 打 v* 标签：测试 → 组装 MFAAvalonia / MXU 两个发布包和自动更新文件 → 建立草稿 Release（人工检查后再发布）
+# 发布后用户那边的 Agent 读最新 Release 的 update.json 自动更新，所以 update.json 必须和发布包一起上传
 # 手动运行：只组装并上传构建产物，不建立 Release
 on:
   push:
@@ -56,16 +57,23 @@ jobs:
               MFAA) zip=downloads/MFAAvalonia-$MFAA_VERSION-win-x64.zip ;;
               MXU) zip=downloads/MXU-win-x86_64-$MXU_VERSION.zip ;;
             esac
+            # 单独下载的许可证先放好，install.py 写 release.json 时把它算进包里的文件
+            if [[ -f "downloads/LICENSE-$ui" ]]; then mkdir -p "dist/$ui" && cp "downloads/LICENSE-$ui" "dist/$ui/"; fi
             python tools/install.py --ui "$zip" --python downloads/python-embed.zip --version "$VERSION" --out "dist/$ui"
-            if [[ ! -f "dist/$ui/LICENSE-$ui" ]]; then cp "downloads/LICENSE-$ui" "dist/$ui/"; fi
             (cd "dist/$ui" && 7z a -tzip "../OurNotes-Auto-$VERSION-win-x64-$ui.zip" . > /dev/null)
           done
-          ls -la dist/*.zip
+          # 自动更新用的 app 层压缩包和更新清单；手动运行时版本号不是 vX.Y.Z，不生成
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            python tools/make_update.py dist/OurNotes-Auto-$VERSION-win-x64-*.zip --out dist
+          fi
+          ls -la dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: ournotes-auto
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/update.json
           if-no-files-found: error
 
       - name: 建立草稿 Release
@@ -73,4 +81,4 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.zip --draft --generate-notes --title "$GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" dist/*.zip dist/update.json --draft --generate-notes --title "$GITHUB_REF_NAME"

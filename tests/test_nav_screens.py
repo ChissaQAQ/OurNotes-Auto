@@ -8,6 +8,7 @@ import pytest
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.screens import (
     CP_RADIO,
+    NOTIFY_LOGO_Y,
     RESULT_ROW_Y,
     Screen,
     account_key,
@@ -33,6 +34,9 @@ from ournotes_auto.nav.screens import (
     parse_level,
     result_cells,
     same_title,
+    sdk_point,
+    sdk_rect,
+    sdk_scale,
     select_panel_title,
     title_startable,
 )
@@ -101,6 +105,7 @@ def load(name: str) -> list[OcrItem]:
         ("user_center_scrolled", Screen.USER_CENTER),
         ("login_history", Screen.LOGIN_HISTORY),
         ("login_history_expanded", Screen.LOGIN_HISTORY),
+        ("login_history_1440p", Screen.LOGIN_HISTORY),  # 2560x1440 下 SDK 弹窗约 0.75 倍（#54）
         ("connect_error", Screen.CONNECT_ERROR),  # 点 TAP TO START 后连不上服务器
         ("maintenance", Screen.MAINTENANCE),  # 服务器维护中（登录时、对局中途都会弹出）
         ("data_download", Screen.DATA_DOWNLOAD),  # 游戏更新后登录时下载追加数据
@@ -159,6 +164,36 @@ def test_login_rows():
     assert [it.text for it in login_rows(expanded)] == ["user_98765432100", "user_1234567890"]
     assert login_expanded(expanded)
     assert account_key(" User_１２３ ") == "user_123"
+
+
+def test_login_rows_scaled_sdk():
+    """2560x1440 时 SDK 弹窗比按比例放大的小（#54）：账号名照样认得出。"""
+    items = load("login_history_1440p")
+    assert [it.text for it in login_rows(items)] == ["user_1234567890"]
+    assert not login_expanded(items)
+
+
+def test_sdk_scale():
+    """缩放比按 bilibili 标志算：1280x720 的截图是 1；2560x1440 约 0.75，换算后和截图上量的位置差不多。"""
+    assert sdk_scale(load("login_history")) == pytest.approx(1, abs=0.01)
+    assert sdk_scale(load("user_center")) == pytest.approx(1, abs=0.02)
+    assert sdk_scale(load("title_notify"), NOTIFY_LOGO_Y) == pytest.approx(1, abs=0.01)
+    assert sdk_scale(load("title")) == 1  # 没有标志
+    s = sdk_scale(load("login_history_1440p"))
+    assert s == pytest.approx(0.745, abs=0.005)
+    assert sdk_point((640, 497), s) == pytest.approx((640, 462), abs=2)  # 截图上「登录」在 (639,461)
+    assert sdk_point((798, 305), s) == pytest.approx((759, 317), abs=2)  # ∨ 在 (759,317)
+    assert sdk_rect((500, 265, 270, 310), s) == pytest.approx((535.7, 289.2, 201.1, 230.9), abs=0.1)
+
+
+@pytest.mark.parametrize("name", ["login_history", "login_history_expanded", "login_history_1440p"])
+def test_account_named_bilibili(name):
+    """账号名带 bilibili（在标志下面）：不当成标志。"""
+    items = load(name)
+    renamed = [OcrItem(it.x, it.y, it.w, it.h, it.text.replace("user_", "bilibili_")) for it in items]
+    assert classify(renamed) is Screen.LOGIN_HISTORY
+    assert sdk_scale(renamed) == sdk_scale(items)
+    assert [it.text for it in login_rows(renamed)] == [it.text.replace("user_", "bilibili_") for it in login_rows(items)]
 
 
 def test_maintenance_period():

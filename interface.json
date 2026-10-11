@@ -64,7 +64,10 @@
         "HumanTiming",
         "HumanPosition",
         "WatchCombo",
+        "RestartLowFps",
         "DebugLog",
-        "CheckUpdate"
+        "CheckUpdate",
+        "AutoUpdate",
+        "Proxy"
     ]
 }

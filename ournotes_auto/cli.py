@@ -226,16 +226,21 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _watch_stdin(stop: threading.Event, src) -> None:
+def _watch_stdin(stop: threading.Event, src, update: threading.Event | None = None) -> None:
     for line in src:
-        if line.strip() == "stop":
+        cmd = line.strip()
+        if cmd == "stop":
             break
+        if cmd == "update" and update is not None:
+            logger.debug("收到更新请求")
+            update.set()
     logger.info("收到停止请求")
     stop.set()
 
 
-def start_stdin_watch(stop: threading.Event) -> None:
-    """后台线程读标准输入，读到 stop 或输入关闭时置位 ``stop``。
+def start_stdin_watch(stop: threading.Event, update: threading.Event | None = None) -> None:
+    """后台线程读标准输入，读到 stop 或输入关闭时置位 ``stop``，读到 update 时置位 ``update``（新版本已下载，
+    挂机在安全的时机退出、由 Agent 重新启动来换上新代码）。
 
     读的是标准输入的私有副本，0 号句柄改指向 NUL：Windows 上同步管道有挂起的读时，
     别处查询标准输入句柄也会一起卡住——加载 numpy 等扩展 DLL 时 CRT 初始化就会查询，
@@ -246,13 +251,36 @@ def start_stdin_watch(stop: threading.Event) -> None:
     os.dup2(null, 0)
     os.close(null)
     src = os.fdopen(fd, encoding="utf-8", errors="replace")
-    threading.Thread(target=_watch_stdin, args=(stop, src), name="stdin-stop", daemon=True).start()
+    threading.Thread(target=_watch_stdin, args=(stop, src, update), name="stdin-stop", daemon=True).start()
+
+
+def _agent_run(rest: list[str]) -> int:
+    """``agent-run <JSON>``：Agent 交来的任务（任务名、界面选项、控制器信息）换成命令行参数执行，
+    开始和完成各在界面上显示一行。"""
+    from .agent.params import TASKS, ParamError, agent_argv
+
+    try:
+        task, argv = agent_argv(json.loads(rest[0]) if rest else None)
+    except ValueError as e:
+        _setup_logging(0, json_log=True)
+        logger.error("%s", e if isinstance(e, ParamError) else f"任务参数不是有效的 JSON：{e}")
+        return 2
+    return _main(argv, label=TASKS[task])
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["agent-run"]:
+        return _agent_run(argv[1:])
+    return _main(argv)
+
+
+def _main(argv: list[str], label: str | None = None) -> int:
     args = build_parser().parse_args(argv)
     _setup_logging(args.verbose, json_log=args.json_log)
-    _log_environment(sys.argv[1:] if argv is None else argv)
+    _log_environment(argv)
+    if label:
+        logger.info("开始%s", label)
     cfg = load_config(args.config)
     for item in args.set:
         key, sep, value = item.partition("=")
@@ -264,12 +292,13 @@ def main(argv: list[str] | None = None) -> int:
             logger.error("%s", e)
             return 2
     args.stop = threading.Event()  # 需要中途停止的命令用它；Ctrl+C 另外处理
+    args.update = threading.Event()  # 挂机收到它后在安全的时机退出（退出码 EXIT_UPDATE），换上新版本再继续
     if args.stdin_stop:
-        start_stdin_watch(args.stop)
+        start_stdin_watch(args.stop, args.update)
     from .context import SetupError
 
     try:
-        return int(args.func(cfg, args) or 0)
+        code = int(args.func(cfg, args) or 0)
     except SetupError as e:
         logger.error("%s", e)
         return 2
@@ -279,6 +308,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         logger.exception("意外错误")
         return 1
+    if label and code == 0 and not args.stop.is_set():
+        logger.info("%s完成", label)
+    return code
 
 
 if __name__ == "__main__":
