@@ -60,6 +60,7 @@ from .screens import (
     LB_TAB_ITEMS,
     LB_TAB_OTHERS,
     LEVEL_ROI,
+    NOTIFY_LOGO_Y,
     OK_POPUP_ROI,
     RELOGIN_SCREENS,
     RESULT_COMBO_ROI,
@@ -87,10 +88,12 @@ from .screens import (
     note_speed,
     parse_level,
     result_cells,
+    sdk_point,
+    sdk_scale,
     skip_button,
     title_startable,
 )
-from .account import BTN_LOGIN, BTN_MENU_CLOSE, BTN_USER_CENTER_BACK, AccountMixin
+from .account import BTN_MENU_CLOSE, AccountMixin
 from .challenge import BTN_CP_CANCEL, CHALLENGE_SCREENS, CP_CANCEL_ROI, ChallengeMixin
 from .daily import DailyMixin
 from .song_select import (
@@ -159,8 +162,8 @@ BTN_DOWNLOAD_OK = (782, 655)
 DOWNLOAD_OK_ROI: Rect = (660, 620, 250, 70)
 # 标题画面：TAP TO START（不要点右上角的菜单按钮）
 BTN_TAP_TO_START = (950, 585)
-BTN_NOTIFY_CLOSE = (822, 171)  # 「开启消息通知」弹窗右上角的 ⓧ
-BTN_NOTIFY_DENY = (640, 479)  # 系统通知权限：「不允许」（上面一个是「允许」）
+# 「开启消息通知」弹窗（B 站 SDK）右上角的 ⓧ，1280x720 下量的，点之前按 sdk_point 换算
+BTN_NOTIFY_CLOSE = (822, 171)
 TAP_LOGIN_BONUS = (640, 650)  # 登录奖励演出：点下方空白处继续
 BTN_REWARD_OK = (640, 659)  # 获得奖励 / GRADE UP 弹窗底部的 OK
 BTN_UNLOCK_CLOSE = (640, 570)  # 乐曲解锁 / 故事解锁：关闭
@@ -499,13 +502,16 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         elif screen is Screen.TITLE:
             self._on_title(items)
         elif screen is Screen.NOTIFY:
-            self.tap(BTN_NOTIFY_CLOSE, "关闭「开启消息通知」")
+            self.tap(sdk_point(BTN_NOTIFY_CLOSE, sdk_scale(items, NOTIFY_LOGO_Y)), "关闭「开启消息通知」")
         elif screen is Screen.NOTIFY_PERMISSION:
-            self.tap(self._button(items, "不允许", BTN_NOTIFY_DENY), "不允许发送通知")
+            # 系统弹窗也按 dp 排版，位置随分辨率 / DPI 变，而且紧挨着上面的「允许」：只按认出的文字点
+            if not (it := find(items, "不允许", exact=True)):
+                return False
+            self.tap(center(it), "不允许发送通知")
         elif screen is Screen.TITLE_MENU:
             self.tap(BTN_MENU_CLOSE, "关闭")
         elif screen is Screen.USER_CENTER:
-            self.tap(BTN_USER_CENTER_BACK, "返回")
+            self._user_center_back(items)
         elif screen is Screen.LOGIN_HISTORY:
             # 账号退出了登录（不是切换账号时）：登录上次登录的账号；列表展开着时选第一行（最近登录的）
             if login_expanded(items):
@@ -514,7 +520,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
                 self.tap(center(rows[0]), "选择最近登录的账号")
             else:
                 logger.warning("账号未登录，登录上次登录的账号")
-                self.tap(BTN_LOGIN, "登录")
+                self._login(items)
         elif screen is Screen.CONNECT_ERROR:
             self._connect_errors += 1
             if self._connect_errors > MAX_CONNECT_RETRIES:

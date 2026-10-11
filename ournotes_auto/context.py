@@ -60,6 +60,7 @@ def open_device(cfg: Config):
     if touch is None:
         touch = MuMuTouch(ipc)
     try:
+        check_resolution(*source.size)
         _log_device(cfg, source, "MuMu IPC" if isinstance(touch, MuMuTouch) else "minitouch")
         yield source, touch
     finally:
@@ -67,6 +68,16 @@ def open_device(cfg: Config):
             getattr(touch, "close", touch.release_all)()
         finally:
             ipc.disconnect()
+
+
+def check_resolution(w: int, h: int) -> None:
+    """坐标都是在 1280x720 下量的，按比例换算到其他 16:9 分辨率；不是 16:9 时界面排布不同，没法换算。
+    游戏还没打开时截到的可能是竖着的桌面，所以不管方向。"""
+    long, short = max(w, h), min(w, h)
+    if not short or abs(long / short - 16 / 9) > 0.01:
+        raise SetupError(f"模拟器分辨率是 {w}x{h}，不是 16:9，请在模拟器设置里改成 1280x720")
+    if (long, short) != (1280, 720):
+        logger.info("模拟器分辨率是 %dx%d，按比例换算坐标（推荐 1280x720，其他分辨率测试得少，点不准时请反馈）", w, h)
 
 
 def _log_device(cfg: Config, source, touch_name: str) -> None:

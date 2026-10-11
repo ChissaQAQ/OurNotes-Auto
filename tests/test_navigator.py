@@ -1005,6 +1005,18 @@ def test_ensure_in_game_closes_notify_prompt(monkeypatch):
     assert [s for s, _ in game.taps] == ["title_notify", "title", "login_bonus", "reward", "notice"]
 
 
+def test_notify_permission_taps_only_recognized_deny():
+    """系统问要不要允许发送通知：点认出的「不允许」；没认出时不点（「允许」就在上面）。"""
+    game = FakeGame("ja_notify_permission")
+    nav = make_nav(game, game, game)
+    items = load_items("ja_notify_permission")
+    assert nav._common_step(navigator.Screen.NOTIFY_PERMISSION, items)
+    assert tapped(game, (638, 479), radius=2) == ["ja_notify_permission"]
+    game.taps.clear()
+    assert not nav._common_step(navigator.Screen.NOTIFY_PERMISSION, [it for it in items if it.text != "不允许"])
+    assert game.taps == []
+
+
 def test_title_without_tap_to_start_fails(monkeypatch):
     """标题画面一直没出现 TAP TO START（被认不出的弹窗挡住）：报错，不再一直等。"""
     game = FakeGame("title_loading")

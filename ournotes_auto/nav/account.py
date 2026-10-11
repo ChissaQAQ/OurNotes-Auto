@@ -18,15 +18,28 @@ import logging
 import time
 
 from ..result_reader import OcrItem
-from .screens import Screen, account_key, center, find, login_expanded, login_rows, title_startable
+from .screens import (
+    Screen,
+    account_key,
+    center,
+    find,
+    login_expanded,
+    login_rows,
+    sdk_point,
+    sdk_rect,
+    sdk_scale,
+    title_startable,
+)
 
 logger = logging.getLogger(__name__)
 
 BTN_TITLE_MENU = (1232, 46)  # 标题画面右上角 ☰
 BTN_MENU_USER_CENTER = (502, 298)
 BTN_MENU_CLOSE = (640, 573)
+# 下面这几个在 B 站 SDK 弹窗里，是 1280x720 下量的，点之前按 sdk_point 换算
 BTN_USER_CENTER_BACK = (452, 168)  # 用户中心左上角 <
-BTN_LOGIN = (640, 497)  # 登录记录：登录
+BTN_LOGIN = (640, 497)  # 登录记录：登录（认不出这两个字时点这里）
+LOGIN_ROI = (440, 460, 400, 70)
 BTN_LOGIN_EXPAND = (798, 305)  # 登录记录：选中账号右边的 ∨（展开账号列表）
 # 展开的账号列表认不全时往上拖（从账号名那一列拖，离每行右边的 ⓧ 远一点）
 LIST_DRAG = ((600, 520), (600, 340))
@@ -90,7 +103,7 @@ class AccountMixin:
                     self.tap(center(it), "退出登录")
                     logout_at = now
                 else:
-                    self.tap(BTN_USER_CENTER_BACK, "返回")
+                    self._user_center_back(items)
                 self._sleep(self.settle_s)
                 continue
             elif screen is Screen.LOGIN_HISTORY:
@@ -104,7 +117,8 @@ class AccountMixin:
                             raise self._fail(f"登录记录里没有账号 {name}（请先在游戏里手动登录一次这个账号）")
                         seen_rows = rows
                         drags += 1
-                        self._drag(*LIST_DRAG)
+                        s = sdk_scale(items)
+                        self._drag(*(sdk_point(p, s) for p in LIST_DRAG))
                 self._sleep(self.settle_s)
                 continue
             elif screen in IN_GAME_SCREENS and logout_at is None:
@@ -127,9 +141,9 @@ class AccountMixin:
             if rows and match_rows(rows[:1], name):
                 if login_at is not None and time.monotonic() - login_at < LOGIN_RETAP_S:
                     return False
-                self.tap(BTN_LOGIN, "登录")
+                self._login(items)
                 return True
-            self.tap(BTN_LOGIN_EXPAND, "展开登录记录")
+            self.tap(sdk_point(BTN_LOGIN_EXPAND, sdk_scale(items)), "展开登录记录")
             return False
         matches = match_rows(rows, name)
         if len(matches) > 1:
@@ -137,3 +151,11 @@ class AccountMixin:
         if matches:
             self.tap(center(matches[0]), "选择账号")
         return False
+
+    def _login(self, items: list[OcrItem]) -> None:
+        """登录记录（收起时）：点「登录」。"""
+        s = sdk_scale(items)
+        self.tap(self._button(items, "登录", sdk_point(BTN_LOGIN, s), sdk_rect(LOGIN_ROI, s)), "登录")
+
+    def _user_center_back(self, items: list[OcrItem]) -> None:
+        self.tap(sdk_point(BTN_USER_CENTER_BACK, sdk_scale(items)), "返回")
