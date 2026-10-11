@@ -251,6 +251,22 @@
                 }
             ],
             "default_case": "Yes"
+        },
+        "AutoUpdate": {
+            "type": "switch",
+            "label": "$opt.AutoUpdate",
+            "description": "$opt.AutoUpdate.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "auto_update": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "auto_update": false } } }
+                }
+            ],
+            "default_case": "Yes"
         }
     }
 }

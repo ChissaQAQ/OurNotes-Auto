@@ -892,3 +892,86 @@ def test_idle_maintenance_wait_ends(tmp_path, error):
         assert stats.plays == 0 and stats.failures == 1
     else:
         assert stats.plays == 2 and stats.failures == 0 and nav.calls.count("relogin") == 1
+
+
+@pytest.mark.parametrize("plays", [0, 1])
+def test_idle_restarts_for_update(tmp_path, plays):
+    """挂机收到更新请求：在下一局开头退出，不多打、不恢复选曲页的设置（Agent 换完用同样的参数重新启动）。"""
+    runner, nav, starts, _ = idle(tmp_path, [], exhausted_at=())
+    runner.cfg.loop.max_plays = 0
+    runner.source = src = ApSource(songs=5)
+    if plays:
+        leave = nav.leave_result
+
+        def leave_result():
+            leave()
+            runner.update.set()  # 第一局打完时收到
+
+        nav.leave_result = leave_result
+    else:
+        runner.update.set()  # 开始前就收到了
+    stats = runner.run()
+    assert stats.restart and stats.plays == plays and stats.failures == 0
+    assert len(starts) == plays
+    assert [e[0] for e in src.log] == ["advance", "done"] * plays  # 没再换歌，也没有 close
+    if not plays:
+        assert nav.calls == []
+
+
+@pytest.mark.parametrize("where", ["lb", "maintenance"])
+def test_update_while_idle_waiting(tmp_path, where):
+    """等 LB 恢复、等开服时收到更新请求：醒来就退出，不再进乐队确认页、不重新登录，不算失败。"""
+    from ournotes_auto.runner import LB_POLL_MARGIN_S, MAINTENANCE_POLL_S, ServerMaintenance
+
+    if where == "lb":
+        runner, nav, starts, statuses = idle(tmp_path, [(0, 120)])  # 醒来再读 LB 会因读完了出错
+    else:
+        runner, nav, starts, statuses = idle(tmp_path, [], exhausted_at=())
+        starts_live = nav.start_live
+
+        def start_live(lb_short="zero"):
+            starts_live(lb_short)
+            if len(starts) == 2:
+                raise ServerMaintenance("服务器维护中")
+
+        nav.start_live = start_live
+        nav.relogin = lambda: pytest.fail("收到更新请求后不该再重新登录")
+    runner.cfg.loop.max_plays = 0
+    wait = runner.stop.wait
+
+    def waiting(timeout=None):
+        runner.update.set()  # 睡着的时候收到
+        return wait(timeout)
+
+    runner.stop.wait = waiting
+    stats = runner.run()
+    assert stats.restart and stats.plays == 1 and stats.failures == 0 and not stats.maintenance
+    assert len(starts) == 2
+    if where == "lb":
+        assert runner.stop.waits == [120 + LB_POLL_MARGIN_S] and not statuses
+        assert nav.calls[-2:] == ["ensure:expert", "lb"]
+    else:
+        assert runner.stop.waits == [MAINTENANCE_POLL_S]
+        assert nav.calls[-1] == "start"
+
+
+@pytest.mark.parametrize("case", ["max_plays", "no_wait_lb"])
+def test_update_ignored_unless_idle_forever(tmp_path, case):
+    """限了局数、不是挂机的任务总会结束：收到更新请求照常打完，等任务结束再更新。"""
+    if case == "max_plays":
+        runner, nav, starts, statuses = idle(tmp_path, [(0, 120), (3, None), (3, None)])  # 打 3 局，中间等一次 LB
+        runner.update.set()
+        stats = runner.run()
+        assert stats.plays == 3 and len(starts) == 4 and not statuses
+    else:
+        runner, nav, store = make(tmp_path)
+        runner.cfg.loop.max_plays = 0
+        src = ApSource(songs=2)
+        update = threading.Event()
+        update.set()
+        # 和 cmd_run 一样按位置传第 9 个参数
+        runner = Runner(runner.cfg, nav, runner.session, runner.client, runner.catalog, store, None, src, update)
+        assert runner.update is update
+        stats = runner.run()
+        assert stats.plays == 2 and src.log[-1] == ("close",)
+    assert not stats.restart and stats.failures == 0

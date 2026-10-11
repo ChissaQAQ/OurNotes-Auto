@@ -65,6 +65,7 @@
         "HumanPosition",
         "WatchCombo",
         "DebugLog",
-        "CheckUpdate"
+        "CheckUpdate",
+        "AutoUpdate"
     ]
 }

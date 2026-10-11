@@ -7,6 +7,7 @@ import pytest
 from ournotes_auto import commands, runner, sources
 from ournotes_auto.cli import build_parser
 from ournotes_auto.config import INTL_PACKAGES, JP_PACKAGE, Config
+from ournotes_auto.release import EXIT_UPDATE
 from ournotes_auto.runner import NavigationError, RunStats
 
 
@@ -21,8 +22,9 @@ class Nav:
             raise NavigationError("180s 内未能进入游戏")
 
 
-def fake_run(monkeypatch, launched, fail=False):
-    """把 ``run`` 命令用到的设备、导航、循环都换成假的，返回调用顺序。"""
+def fake_run(monkeypatch, launched, fail=False, stats=None, **attrs):
+    """把 ``run`` 命令用到的设备、导航、循环都换成假的，返回调用顺序。``stats`` 是循环的结果，
+    ``attrs`` 设到命令参数上；传给 Runner 的参数记在 ``runner.Runner.args``。"""
     calls = []
     monkeypatch.setattr(commands, "_launch_game", lambda cfg: calls.append("launch") or launched)
 
@@ -33,17 +35,20 @@ def fake_run(monkeypatch, launched, fail=False):
 
     class Runner:
         def __init__(self, *args):
+            Runner.args = args
             self.stats = RunStats()
 
         def run(self):
             calls.append("run")
-            return RunStats(plays=1)
+            return stats or RunStats(plays=1)
 
     monkeypatch.setattr(commands, "open_context", open_context)
     monkeypatch.setattr(sources, "make_source", lambda cfg, catalog, store=None: object())
     monkeypatch.setattr(runner, "Runner", Runner)
     args = build_parser().parse_args(["run"])
     args.stop = threading.Event()
+    for key, value in attrs.items():
+        setattr(args, key, value)
     return calls, commands.cmd_run(Config(), args)
 
 
@@ -62,6 +67,22 @@ def test_run_launch_cannot_enter_game(monkeypatch, caplog):
     calls, code = fake_run(monkeypatch, launched=True, fail=True)
     assert calls == ["launch", "open", "in_game"] and code == 1
     assert "未能进入游戏" in caplog.text
+
+
+def test_run_restart_for_update(monkeypatch):
+    """挂机为换上新版本退出时返回 EXIT_UPDATE，Agent 看到后换完再用同样的参数重启它。"""
+    calls, code = fake_run(monkeypatch, launched=False, stats=RunStats(restart=True))
+    assert calls == ["launch", "open", "run"] and code == EXIT_UPDATE == 75
+
+
+def test_run_passes_update_event(monkeypatch):
+    """args.update 作为第 9 个参数传给 Runner；没有它时（不是从命令行入口来的）传 None。"""
+    update = threading.Event()
+    fake_run(monkeypatch, launched=False, update=update)
+    assert len(runner.Runner.args) == 9 and runner.Runner.args[8] is update
+    assert not hasattr(build_parser().parse_args(["run"]), "update")
+    fake_run(monkeypatch, launched=False)
+    assert len(runner.Runner.args) == 9 and runner.Runner.args[8] is None
 
 
 def test_switch_account_intl_packages(monkeypatch, caplog):

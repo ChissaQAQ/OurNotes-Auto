@@ -1,15 +1,17 @@
 """Agent：界面参数、控制器信息 → 演奏子进程参数；子进程日志转发与停止。"""
 
+import io
 import json
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
 from ournotes_auto.agent.logs import UiFormatter, set_ui_debug, setup_logging
-from ournotes_auto.agent.params import ParamError, device_from_controller, flag, global_args, run_settings, worker_args
+from ournotes_auto.agent.params import ParamError, agent_argv, device_from_controller, flag, global_args, run_settings, worker_args
 from ournotes_auto.agent.worker import WORKER_LOGGER, parse_line, run_worker
 
 ATTACH = {
@@ -28,6 +30,7 @@ ATTACH = {
     "watch_combo": False,
     "debug_log": False,
     "check_update": True,
+    "auto_update": True,
     "ap_expert": True,
     "ap_hard": True,
     "ap_normal": True,
@@ -408,6 +411,49 @@ def test_global_args():
     assert flag({}, "check_update", default=True) and not flag({"check_update": "No"}, "check_update", default=True)
 
 
+def test_agent_argv(mumu_root):
+    """Agent 交来的 {task, attach, controller} → 全局参数 + 任务参数，控制器换成 device.* 配置。"""
+    from ournotes_auto.cli import build_parser
+
+    controller = adb_info("127.0.0.1:16416", str(mumu_root / "nx_main" / "adb.exe"))
+    device = device_from_controller(controller)
+    for task, attach in (("idle", ATTACH), ("start", {"touch": "mumu", "debug_log": True})):
+        payload = {"task": task, "attach": attach, "controller": controller}
+        assert agent_argv(payload) == (task, [*global_args(attach), *worker_args(task, attach, device)])
+    task, argv = agent_argv({"task": "start", "attach": {"touch": "mumu"}, "controller": controller})
+    args = build_parser().parse_args(argv)
+    assert (args.command, args.json_log, args.stdin_stop) == ("start", True, True)
+    assert "device.instance=1" in args.set
+    # 本地任务不需要控制器：没连模拟器、连的不是 ADB 控制器都照样执行
+    assert agent_argv({"task": "records"}) == ("records", ["--json-log", "--stdin-stop", "records"])
+    assert agent_argv({"task": "records", "attach": {"debug_log": "Yes"}, "controller": {"type": "win32"}}) == (
+        "records", ["--json-log", "--stdin-stop", "-v", "records"],
+    )
+    with pytest.raises(ParamError, match="difficulty"):  # 界面选项照样校验
+        agent_argv({"task": "repeat", "attach": {**ATTACH, "difficulty": "master"}, "controller": controller})
+
+
+@pytest.mark.parametrize(
+    "payload, msg",
+    [
+        (None, "格式不对"),
+        ([{"task": "records"}], "格式不对"),
+        ("records", "格式不对"),
+        ({}, "未知任务"),
+        ({"task": "sweep"}, "未知任务"),
+        ({"task": "records", "attach": ["debug_log"]}, "格式不对"),
+        ({"task": "records", "attach": "{}"}, "格式不对"),
+        ({"task": "records", "controller": "adb"}, "格式不对"),
+        ({"task": "records", "controller": [1]}, "格式不对"),
+        ({"task": "start", "attach": {"touch": "mumu"}}, "ADB"),  # 要连模拟器的任务没有控制器
+        ({"task": "repeat", "attach": ATTACH, "controller": adb_info()}, "没有识别到 MuMu"),
+    ],
+)
+def test_agent_argv_errors(payload, msg):
+    with pytest.raises(ParamError, match=msg):
+        agent_argv(payload)
+
+
 def test_worker_args_parse_back():
     """生成的 --set 能被命令行原样解析、应用。"""
     from ournotes_auto.cli import build_parser
@@ -573,6 +619,105 @@ def test_parse_line():
     assert parse_line(b"  \n") is None
 
 
+# ---------------------------------------------------------------- agent-run
+
+
+@pytest.fixture
+def cli_main(tmp_path, monkeypatch):
+    """在临时目录里调 cli.main：不读仓库的 config.yaml，日志文件写到临时目录；不接管本进程的标准输入
+    （记下 start_stdin_watch 收到的事件），跑完撤掉加上的日志处理器。"""
+    from ournotes_auto import cli
+
+    monkeypatch.chdir(tmp_path)
+    watches = []
+    monkeypatch.setattr(cli, "start_stdin_watch", lambda stop, update=None: watches.append((stop, update)))
+    root, added = logging.getLogger(), []
+    level, setup = root.level, cli._setup_logging
+
+    def setup_logging(*args, **kw):
+        before = list(root.handlers)
+        setup(*args, **kw)
+        added.extend(h for h in root.handlers if h not in before)
+
+    monkeypatch.setattr(cli, "_setup_logging", setup_logging)
+    yield cli.main, watches
+    for handler in added:
+        root.removeHandler(handler)
+        handler.close()
+    root.setLevel(level)
+
+
+def _ui_lines(capsys, level=None):
+    """演奏进程输出到标准输出的 JSON 日志（Agent 转发到界面的内容）→ [(级别, 消息)]；给了 level 时只留这一级的消息。"""
+    lines = [x for x in map(parse_line, capsys.readouterr().out.encode().splitlines()) if x is not None]
+    return [(lv, msg) for lv, _, msg in lines] if level is None else [msg for lv, _, msg in lines if lv == level]
+
+
+def test_agent_run_bad_payload(cli_main, capsys):
+    """agent-run：参数不是有效的 JSON、任务名不认识、要连模拟器却没有控制器时返回 2，错误显示在界面上。"""
+    main, watches = cli_main
+    assert main(["agent-run", "{task"]) == 2
+    [(level, msg)] = _ui_lines(capsys)
+    assert level == logging.ERROR and msg.startswith("任务参数不是有效的 JSON：")
+    # 每次调用都加一个输出处理器，后面的同一行会重复，只看最后一行
+    assert main(["agent-run", json.dumps({"task": "sweep"})]) == 2
+    assert _ui_lines(capsys)[-1] == (logging.ERROR, "未知任务：sweep")
+    assert main(["agent-run"]) == 2
+    assert _ui_lines(capsys)[-1] == (logging.ERROR, "任务参数格式不对")
+    assert main(["agent-run", json.dumps({"task": "start", "attach": {"touch": "mumu"}})]) == 2
+    assert _ui_lines(capsys)[-1] == (logging.ERROR, "只支持模拟器（ADB 控制器）")
+    assert watches == []  # 都没有开始执行
+
+
+def test_agent_run_local_task(cli_main, capsys, monkeypatch):
+    """本地任务（记录汇总）不需要控制器；开始、完成各在界面上显示一行，命令拿到停止 / 更新两个事件。"""
+    from ournotes_auto import cli
+
+    main, watches = cli_main
+    seen = []
+    monkeypatch.setattr(cli, "cmd_records", lambda cfg, args: seen.append(args) or 0)
+    assert main(["agent-run", json.dumps({"task": "records", "attach": {}, "controller": {}})]) == 0
+    [args] = seen
+    assert (args.command, args.json_log, args.stdin_stop, args.verbose) == ("records", True, True, 0)
+    assert watches == [(args.stop, args.update)]
+    assert not args.stop.is_set() and not args.update.is_set()
+    msgs = _ui_lines(capsys, logging.INFO)
+    assert msgs[0] == "开始记录汇总" and msgs[-1] == "记录汇总完成"
+
+
+def test_agent_run_device_task(cli_main, capsys, monkeypatch, mumu_root):
+    """要连模拟器的任务：控制器信息换成 device.* 配置交给命令；停止后结束的、为了更新退出的都不显示「完成」。"""
+    from ournotes_auto import commands
+    from ournotes_auto.release import EXIT_UPDATE
+
+    main, watches = cli_main
+    controller = adb_info("127.0.0.1:16416", str(mumu_root / "nx_main" / "adb.exe"))
+    payload = json.dumps({"task": "start", "attach": {"touch": "mumu", "debug_log": True}, "controller": controller})
+    seen = []
+    monkeypatch.setattr(commands, "cmd_start", lambda cfg, args: seen.append((cfg, args)) or 0)
+    assert main(["agent-run", payload]) == 0
+    [(cfg, args)] = seen
+    assert (args.command, args.verbose) == ("start", 1)
+    assert (cfg.device.backend, cfg.device.mumu_path, cfg.device.instance) == ("mumu", str(mumu_root), 1)
+    assert (cfg.device.adb_serial, cfg.device.touch) == ("127.0.0.1:16416", "mumu")
+    assert watches == [(args.stop, args.update)]
+    msgs = _ui_lines(capsys, logging.INFO)
+    assert msgs[0] == "开始启动游戏" and msgs[-1] == "启动游戏完成"
+
+    def stopped(cfg, args):
+        args.stop.set()
+        return 0
+
+    monkeypatch.setattr(commands, "cmd_start", stopped)
+    assert main(["agent-run", payload]) == 0
+    msgs = _ui_lines(capsys, logging.INFO)
+    assert "开始启动游戏" in msgs and "启动游戏完成" not in msgs
+    monkeypatch.setattr(commands, "cmd_start", lambda cfg, args: EXIT_UPDATE)
+    assert main(["agent-run", payload]) == EXIT_UPDATE
+    msgs = _ui_lines(capsys, logging.INFO)
+    assert "开始启动游戏" in msgs and "启动游戏完成" not in msgs
+
+
 # ---------------------------------------------------------------- 子进程
 
 CHILD = r"""
@@ -582,6 +727,12 @@ print("not json", flush=True)
 if "wait" in sys.argv:
     line = sys.stdin.readline()
     print(json.dumps({"level": "INFO", "name": "child", "msg": "got " + line.strip()}), flush=True)
+if "lines" in sys.argv:  # 每行都回显，读到 stop 或输入结束为止；带 quit 时读到 update 也退出
+    for line in iter(sys.stdin.readline, ""):
+        cmd = line.strip()
+        print(json.dumps({"level": "INFO", "name": "child", "msg": "got " + cmd}), flush=True)
+        if cmd == "stop" or (cmd == "update" and "quit" in sys.argv):
+            break
 if "hang" in sys.argv:
     time.sleep(60)
 sys.exit(int(sys.argv[1]))
@@ -621,6 +772,95 @@ def test_run_worker_kill_after_grace(tmp_path):
     result, _ = _run(tmp_path, "0", "hang", should_stop=lambda: True, grace_s=0.3)
     assert result.stopped and result.killed and result.returncode != 0
     assert time.monotonic() - t0 < 20
+
+
+def test_run_worker_update_once(tmp_path):
+    """should_update 返回真后只发一次 update，之后不再问；停止照常发。"""
+    calls, t0 = [], time.monotonic()
+    result, lines = _run(
+        tmp_path, "0", "lines",
+        should_stop=lambda: len(calls) >= 3 and time.monotonic() - t0 > 0.5,
+        should_update=lambda: calls.append(1) or len(calls) >= 3,
+    )
+    assert (result.returncode, result.stopped, result.killed) == (0, True, False)
+    assert [msg for _, name, msg in lines if name == "child"] == ["开始", "got update", "got stop"]
+    assert len(calls) == 3
+
+
+def test_run_worker_update_exit(tmp_path):
+    """演奏进程收到 update 后以 EXIT_UPDATE 退出：不算停止，退出码原样返回给 Agent。"""
+    from ournotes_auto.release import EXIT_UPDATE
+
+    result, lines = _run(tmp_path, str(EXIT_UPDATE), "lines", "quit", should_update=lambda: True)
+    assert (result.returncode, result.stopped, result.killed) == (EXIT_UPDATE, False, False)
+    assert lines[-1] == (logging.INFO, "child", "got update")
+
+
+def test_run_worker_stop_before_update(tmp_path):
+    """已经在停止了就不再发 update。"""
+    calls = []
+    result, lines = _run(
+        tmp_path, "0", "lines", should_stop=lambda: True, should_update=lambda: calls.append(1) or True
+    )
+    assert (result.returncode, result.stopped, result.killed) == (0, True, False)
+    assert [msg for _, name, msg in lines if name == "child"] == ["开始", "got stop"]
+    assert calls == []
+
+
+# ---------------------------------------------------------------- 标准输入
+
+
+def _feed(stop, update, *lines):
+    """依次给出 lines，每给出一行之后记下 (update, stop) 是否置位。"""
+    seen = []
+
+    def src():
+        for line in lines:
+            yield line
+            seen.append((update is not None and update.is_set(), stop.is_set()))
+
+    return src(), seen
+
+
+def test_watch_stdin_update():
+    """读到 update 只置位 update，不停止；读到 stop 才停止，后面的行不再读。"""
+    from ournotes_auto.cli import _watch_stdin
+
+    stop, update = threading.Event(), threading.Event()
+    src, seen = _feed(stop, update, "hello\n", " update\r\n", "update\n", "stop\n", "more\n")
+    _watch_stdin(stop, src, update)
+    assert seen == [(False, False), (True, False), (True, False)]
+    assert stop.is_set() and update.is_set()
+
+
+def test_watch_stdin_eof():
+    """输入结束也停止；没收到 update 时不置位。"""
+    from ournotes_auto.cli import _watch_stdin
+
+    stop, update = threading.Event(), threading.Event()
+    src, seen = _feed(stop, update, "update\n")
+    _watch_stdin(stop, src, update)
+    assert seen == [(True, False)] and stop.is_set()
+    stop, update = threading.Event(), threading.Event()
+    _watch_stdin(stop, io.StringIO(" stop \n"), update)
+    assert stop.is_set() and not update.is_set()
+    stop = threading.Event()
+    _watch_stdin(stop, io.StringIO(""), update)
+    assert stop.is_set() and not update.is_set()
+
+
+def test_watch_stdin_without_update():
+    """不接收更新（update 为 None）时 update 行当普通行忽略，不会停止。"""
+    from ournotes_auto.cli import _watch_stdin
+
+    stop = threading.Event()
+    src, seen = _feed(stop, None, "update\n", "update\n")
+    _watch_stdin(stop, src)
+    assert seen == [(False, False), (False, False)] and stop.is_set()
+    stop = threading.Event()
+    src, seen = _feed(stop, None, "update\n", "stop\n", "update\n")
+    _watch_stdin(stop, src, None)
+    assert seen == [(False, False)] and stop.is_set()
 
 
 WATCH_CHILD = r"""

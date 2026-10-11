@@ -9,7 +9,7 @@ Detailed notes beyond the [README](../../README.en.md): task details, in-game se
 - Game: International server (package name `com.bilibili.sirius.official`; the Google Play version is `com.bilibili.sirius` and is detected automatically), with the game language set to 简体中文, 繁體中文, English or 한국어; or the Japanese server (package name `com.bushiroad.sirius`). Navigation relies on OCR of on-screen text, so buttons on other servers can't be recognized. For 한국어, set "Game Language" to 한국어: the Korean text recognition model (about 10 MB) is downloaded automatically on the first run and additionally loaded every time after that (both models recognize together, so each recognition is a bit slower); if 한국어 isn't selected, it's neither downloaded nor loaded
 - Japanese server: set "Game Language" to "日本語 (Japanese server)", and Start Game and the other tasks operate the Japanese client (no extra recognition model is downloaded). The Japanese client must be installed from Google Play; an APK installed directly won't open. Switch Account only works on the International server. T.G.W CARD and the shop need a one-time age verification done by yourself in the game; until then, Claim Dailies skips T.G.W CARD. On the Japanese server only Free LIVE, AP Completion and Claim Dailies have been verified; Challenge LIVE hasn't been tried there yet
 - For in-game settings, see [In-Game Settings](#in-game-settings)
-- Access to the chart site `assets.bdon.moe` and the song title API `haneoka.org` (update checks additionally access `github.com`, which can be turned off)
+- Access to the chart site `assets.bdon.moe` and the song title API `haneoka.org` (update checks and auto update additionally access `github.com`, which can be turned off)
 - Release package: both UIs need the [VC++ 2015–2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) (required by MaaFramework); MFAA additionally needs the .NET 10 Desktop Runtime (the bundled `DependencySetup_依赖库安装_win.bat` installs it and the VC++ runtime in one click), and MXU needs WebView2 (usually preinstalled on Windows 10/11). The package bundles the Python runtime, MaaFramework and the OCR model; charts are downloaded from the chart site at runtime. For the licenses of each component, see [THIRD_PARTY_NOTICES.md](../../THIRD_PARTY_NOTICES.md)
 - Running from source: Python ≥ 3.11, see [Command Line](cli.md)
 
@@ -43,7 +43,12 @@ The sub-option "Max Refill" is the maximum amount of LB refilled in this run; 0 
 
 - To adjust parameters beyond the defaults (such as the timing offset), copy [config.example.yaml](../../config.example.yaml) to `config.yaml` in the extracted folder and edit it. Options in the UI take precedence over it.
 - By default, the UI log only shows progress and results. With the global option "Debug Log" on, sync, chart, touch and other details are shown too; the full log is always written to `data/ournotes.log`.
-- The global option "Check for Updates" is on by default: whenever a task finishes, if there's a newly released version on GitHub, the log shows the download link. It doesn't download automatically; to update, download the new archive manually.
+- The global options "Check for Updates" and "Auto Update" are on by default: when a task starts, it checks GitHub for a newly released version and, if there is one, downloads it in the background; progress and results show up in the log when the task finishes.
+  - If only the playing part changed, the new version is switched in whenever no task is running, and the next task uses it; AFK Farming with no play limit pauses briefly between songs, switches over, and continues automatically.
+  - If something the UI reads changed (tasks, options, UI text), the UI has to restart: once no task is running and the UI has been idle for 2 minutes, it closes the UI, switches over and reopens it (without starting tasks). If the UI is set to start tasks as soon as it opens (MXU's "Also auto-execute on manual launch", or an MFAA startup mode that includes "Startup script"), it doesn't restart the UI for you; the update is applied after you close the UI.
+  - If the UI program, Python, dependencies or the text recognition model changed, the whole archive is downloaded and replaced, with the same timing. `config/`, `data/`, `cache/`, `debug/` and the UI's own settings are left alone.
+  - The replaced files are backed up in `cache/update/backup/`; if the new version fails to start, the original version is restored automatically, the log says so, and that version isn't auto-updated to again. If restoration also fails, the backup is kept and tasks and automatic updates stop. Follow the log to restore it manually, or extract a release package into a new folder before running again.
+  - With "Auto Update" off, you're only told about new versions and need to download the new archive manually. Older versions without the "Auto Update" option need one manual download.
 
 ## In-Game Settings
 
@@ -105,10 +110,11 @@ so this margin is tightest at 10.00.
 |---|---|
 | `data/ournotes.log` | Detailed log (including debug level, with version, PC and emulator info). When over 5MB, it's renamed to `ournotes.old.log` at the next start |
 | `data/agent.log` | GUI Agent log: task parameters, launched commands, update checks |
+| `data/update.log` | Auto update log: downloads, file replacement, UI restarts, restores |
 | `data/records.jsonl` | Result of each round (judgment counts, FAST/SLOW, offset, sync error) |
 | `data/state.json` | Offset learned by auto-correction |
 | `cache/charts/` | Chart and song index cache |
-| `cache/update.json` | Update check result (cached for 6 hours) |
+| `cache/update/` | Auto update: check result (cached for 6 hours), downloaded new version, replaced old version |
 | `debug/nav/` | Screenshots from navigation errors and contradictory result readings |
 | `debug/sync/` | First-note tracking frames saved by `play --record` |
 | `debug/combo/` | Combo count screenshots saved by `--watch-combo --record`; when a combo break is detected, they're saved automatically to `breaks/` (only the latest 20 are kept) |

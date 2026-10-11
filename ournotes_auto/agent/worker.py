@@ -60,9 +60,9 @@ def _pump(stream: IO[bytes], q: queue.Queue) -> None:
         q.put(None)
 
 
-def _send_stop(proc: subprocess.Popen) -> None:
+def _send(proc: subprocess.Popen, line: bytes) -> None:
     try:
-        proc.stdin.write(b"stop\n")
+        proc.stdin.write(line)
         proc.stdin.flush()
     except (OSError, ValueError):
         pass  # 子进程已经退出
@@ -73,13 +73,15 @@ def run_worker(
     *,
     cwd: str | Path,
     should_stop: Callable[[], bool],
+    should_update: Callable[[], bool] = lambda: False,
     on_line: Callable[[bytes], None] = relay,
     poll_s: float = 0.2,
     grace_s: float = 20.0,
     exit_drain_s: float = 1.0,
 ) -> WorkerResult:
     """运行子进程直到结束。在调用线程里轮询 ``should_stop``（Agent 的 context 只能在回调线程里用）；
-    返回真时经标准输入发送 stop，``grace_s`` 秒内没退出就强制结束。"""
+    返回真时经标准输入发送 stop，``grace_s`` 秒内没退出就强制结束。``should_update`` 返回真时发送一次 update
+    （新版本已下载，挂机到安全的时机以退出码 ``release.EXIT_UPDATE`` 退出）。"""
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1")
     proc = subprocess.Popen(
         list(cmd),
@@ -95,6 +97,7 @@ def run_worker(
     stop_at: float | None = None
     exited_at: float | None = None
     killed = False
+    update_sent = False
     try:
         while True:
             try:
@@ -115,7 +118,10 @@ def run_worker(
                 if should_stop():
                     logger.info("正在停止…")
                     stop_at = now
-                    _send_stop(proc)
+                    _send(proc, b"stop\n")
+                elif not update_sent and should_update():
+                    update_sent = True
+                    _send(proc, b"update\n")
             elif not killed and now - stop_at > grace_s:
                 logger.warning("演奏进程 %.0f 秒内没有退出，强制结束", grace_s)
                 proc.kill()

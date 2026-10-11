@@ -10,6 +10,7 @@ from .config import Config, parse_daily_time
 from .context import SetupError, open_context
 from .context import open_device as _device
 from .context import open_ocr as _ocr
+from .release import EXIT_UPDATE
 
 logger = logging.getLogger("ournotes_auto")
 
@@ -268,13 +269,15 @@ def cmd_run(cfg: Config, args) -> int:
                     return 130
                 logger.error("%s", e)
                 return 1
-        runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source)
+        runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source, getattr(args, "update", None))
         try:
             stats = runner.run()
         except KeyboardInterrupt:
             stop.set()
             logger.info("已中断（共演奏 %d 局）", runner.stats.plays)
             return 130
+    if stats.restart:
+        return EXIT_UPDATE
     # 服务器维护时任务算失败（打过几局也一样，没打完）
     return 0 if (stats.plays or not stats.failures) and not stats.maintenance else 1
 
