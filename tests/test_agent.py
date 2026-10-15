@@ -119,9 +119,11 @@ def test_run_settings_repeat():
         "loop.max_plays": "0",
         "loop.challenge": "false",
         "game.lb_cost": "null",
+        "game.lb_auto": "false",
         "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
+        "loop.use_skip": "false",
         "loop.studio_claim_hours": "0",
         "loop.daily_claim_time": "",
         **HUMAN_OFF,
@@ -167,10 +169,28 @@ def test_run_settings_idle():
     # 挂机可以每局消耗 0：用不完 LB，一直打（清体力不行）
     sets = run_settings("idle", {**ATTACH, "clear_lb_cost": 0})
     assert sets["game.lb_cost"] == "0" and sets["loop.until_lb_empty"] == "false" and sets["loop.wait_lb"] == "true"
-    with pytest.raises(ParamError, match="1~3"):  # 消耗 0 用不着补充
+    with pytest.raises(ParamError, match="1~5"):  # 消耗 0 用不着补充
         run_settings("idle", {**ATTACH, "clear_lb_cost": 0, "lb_refill": True})
     with pytest.raises(ParamError, match="clear_lb_cost"):
-        run_settings("idle", {**ATTACH, "clear_lb_cost": 4})
+        run_settings("idle", {**ATTACH, "clear_lb_cost": 6})
+
+
+def test_run_settings_lb_auto_and_skip():
+    """每局消耗 LB 选「自动」：按持有数选；4、5 也能选。「使用跳过」只有清体力、挂机有。"""
+    for task in ("repeat", "clear_lb", "idle", "ap"):
+        key = "lb_cost" if task in ("repeat", "ap") else "clear_lb_cost"
+        sets = run_settings(task, {**ATTACH, key: "auto", "lb_refill": True})
+        assert sets["game.lb_auto"] == "true" and sets["game.lb_cost"] == "null", task
+        assert sets["game.lb_refill"] == "true", task
+        assert run_settings(task, {**ATTACH, key: 5})["game.lb_cost"] == "5", task
+    assert run_settings("clear_lb", {**ATTACH, "clear_lb_cost": "auto"})["loop.until_lb_empty"] == "true"
+    sets = run_settings("idle", {**ATTACH, "clear_lb_cost": "auto"})
+    assert sets["loop.until_lb_empty"] == "true" and sets["loop.wait_lb"] == "true"
+    for task in ("clear_lb", "idle"):
+        assert run_settings(task, {**ATTACH, "use_skip": "Yes"})["loop.use_skip"] == "true", task
+        assert run_settings(task, ATTACH)["loop.use_skip"] == "false", task
+    for task in ("repeat", "ap", "challenge"):
+        assert run_settings(task, {**ATTACH, "use_skip": True})["loop.use_skip"] == "false", task
 
 
 def test_run_settings_daily_claim():
@@ -217,9 +237,11 @@ def test_run_settings_ap():
         "loop.ap_difficulties": "expert,hard,normal,easy",
         "loop.ap_max_attempts": "3",
         "game.lb_cost": "null",
+        "game.lb_auto": "false",
         "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
+        "loop.use_skip": "false",
         "loop.studio_claim_hours": "0",
         "loop.daily_claim_time": "",
         **HUMAN_OFF,
@@ -243,6 +265,7 @@ def test_run_settings_challenge():
         "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
+        "loop.use_skip": "false",
         "loop.studio_claim_hours": "0",
         "loop.daily_claim_time": "",
         **HUMAN_OFF,
@@ -263,7 +286,7 @@ def test_run_settings_challenge():
 
 
 def test_run_settings_lb_refill():
-    """四个演奏任务都能开「LB 不足时用道具补充」；需要每局消耗 1~3，旧资源没有这两项时不补充。"""
+    """四个演奏任务都能开「LB 不足时用道具补充」；需要每局消耗 1~5 或自动，旧资源没有这两项时不补充。"""
     on = {**ATTACH, "lb_refill": "Yes", "lb_refill_count": "5", "lb_cost": 2}
     for task in ("repeat", "clear_lb", "idle", "ap"):
         sets = run_settings(task, on)
@@ -273,7 +296,7 @@ def test_run_settings_lb_refill():
     assert run_settings("repeat", old)["game.lb_refill"] == "false"
     for task in ("repeat", "ap"):
         for cost in ("keep", 0):
-            with pytest.raises(ParamError, match="1~3"):
+            with pytest.raises(ParamError, match="1~5"):
                 run_settings(task, {**on, "lb_cost": cost})
     with pytest.raises(ParamError, match="lb_refill_count"):
         run_settings("clear_lb", {**on, "lb_refill_count": -1})
@@ -305,7 +328,8 @@ def test_run_settings_humanize():
         ("repeat", {"max_plays": -1}, "max_plays"),
         ("repeat", {"max_plays": "{count}"}, "max_plays"),
         ("repeat", {"max_plays": True}, "max_plays"),
-        ("repeat", {"lb_cost": 4}, "lb_cost"),
+        ("repeat", {"lb_cost": 6}, "lb_cost"),
+        ("clear_lb", {"clear_lb_cost": "keep"}, "clear_lb_cost"),
         ("clear_lb", {"clear_lb_cost": 0}, "clear_lb_cost"),
         ("idle", {"clear_lb_cost": -1}, "clear_lb_cost"),
         ("repeat", {"human_great": 30}, "human_great"),

@@ -20,11 +20,13 @@ from ournotes_auto.nav.screens import (
     cp_bar_held,
     cp_held,
     lb_bar_held,
+    lb_all_used,
     lb_bar_timer,
     lb_drinks,
     lb_held,
     lb_preview,
     lb_recover_amount,
+    lb_rows,
     loading,
     login_expanded,
     login_rows,
@@ -38,6 +40,7 @@ from ournotes_auto.nav.screens import (
     sdk_rect,
     sdk_scale,
     select_panel_title,
+    skip_left,
     title_startable,
 )
 from ournotes_auto.result_reader import OcrItem, classify_label
@@ -82,6 +85,11 @@ def load(name: str) -> list[OcrItem]:
         ("home", Screen.HOME),
         ("lb_setting", Screen.LB_SETTING),
         ("lb_setting_event", Screen.LB_SETTING),  # 活动期间每行也写着「活动pt」「挑战pt」
+        ("lb_setting_4", Screen.LB_SETTING),  # 能选到 4：列表露出 1~4
+        ("band_confirm_skip", Screen.BAND_CONFIRM),  # 还能跳过 2 次
+        ("skip_confirm", Screen.SKIP_CONFIRM),  # 乐队确认页「跳过」打开的确认弹窗（选 LB 消耗）
+        ("skip_result", Screen.SKIP_RESULT),
+        ("skip_event_pt", Screen.SKIP_RESULT),  # 活动期间：右下角是「OK」
         ("lb_recover", Screen.LB_RECOVER),
         ("lb_recover_drinks", Screen.LB_RECOVER),  # 两种 LIVE BOOST饮料都在的「道具」页
         ("lb_recover_held1", Screen.LB_RECOVER),  # 持有 1、选了 2 瓶小型
@@ -299,7 +307,39 @@ def test_note_speed():
 def test_lb_held():
     assert lb_held(load("lb_setting")) == 14
     assert lb_held(load("lb_setting_event")) == 8
+    assert lb_held(load("lb_setting_4")) == 4
+    assert lb_held(load("skip_confirm")) == 1
     assert lb_held(load("lb_recover")) is None
+
+
+@pytest.mark.parametrize(
+    "name, x, rows",
+    [
+        ("lb_setting", 317, {0: 292, 1: 236, 2: 180, 3: 124}),
+        ("lb_setting_event", 317, {0: 292, 1: 236, 2: 180, 3: 124}),
+        ("lb_setting_4", 315, {1: 292, 2: 236, 3: 180, 4: 124}),  # 拖过的列表：「1」很小，读偏了也按其他几行推
+        ("skip_confirm", 311, {0: 292, 1: 236, 2: 180, 3: 124}),  # 跳过确认弹窗靠左一点
+    ],
+)
+def test_lb_rows(name, x, rows):
+    got = lb_rows(load(name))
+    assert abs(got.x - x) <= 2 and got.y == rows
+
+
+def test_lb_rows_missing():
+    assert lb_rows(load("lb_recover")) is None
+    # 漏读一行照样推得出整列
+    items = [it for it in load("lb_setting") if it.text != "2"]
+    assert lb_rows(items).y == {0: 292, 1: 236, 2: 180, 3: 124}
+
+
+def test_lb_all_used_and_skip_left():
+    assert lb_all_used(load("lb_setting")) and lb_all_used(load("lb_setting_4"))
+    assert not lb_all_used(load("lb_setting_event")) and not lb_all_used(load("skip_confirm"))
+    assert skip_left(load("band_confirm_skip")) == 2
+    assert skip_left(load("skip_confirm")) == 2
+    assert skip_left(load("band_confirm")) == 0
+    assert skip_left(load("lb_setting")) is None
 
 
 def test_lb_drinks():

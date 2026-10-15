@@ -70,8 +70,8 @@ def test_check_run_config():
     cfg.loop.ap_first_difficulties = ""
     check_run_config(cfg)
     cfg = Config()
-    cfg.game.lb_cost = 4
-    with pytest.raises(SetupError, match="0~3"):
+    cfg.game.lb_cost = 6
+    with pytest.raises(SetupError, match="0~5"):
         check_run_config(cfg)
     cfg = Config()
     cfg.loop.until_lb_empty = True
@@ -80,12 +80,18 @@ def test_check_run_config():
     cfg.game.lb_cost = 0
     with pytest.raises(SetupError, match="LB 用完"):
         check_run_config(cfg)
+    cfg.game.lb_auto = True  # 自动选消耗：不看 lb_cost
+    check_run_config(cfg)
+    cfg.game.lb_auto = False
     cfg.game.lb_cost = 3
     check_run_config(cfg)
     cfg = Config()
     cfg.loop.wait_lb = True
     with pytest.raises(SetupError, match="挂机"):
         check_run_config(cfg)
+    cfg.game.lb_auto = True
+    check_run_config(cfg)
+    cfg.game.lb_auto = False
     cfg.game.lb_cost = 0  # 挂机消耗 0：一直打
     check_run_config(cfg)
     cfg.game.lb_cost = 1

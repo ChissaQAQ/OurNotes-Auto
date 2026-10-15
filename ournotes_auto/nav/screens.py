@@ -7,6 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import StrEnum
+from statistics import median
 
 from ..result_reader import OcrItem, _norm, classify_label, find_labels
 
@@ -29,6 +30,10 @@ class Screen(StrEnum):
     LB_RECOVER = "恢复LIVE BOOST"
     LB_RECOVER_CONFIRM = "恢复LB确认"  # 恢复LIVE BOOST 点 OK 后的「将恢复n点LIVE BOOST。确定要恢复吗？」
     LB_RECOVERED = "LB已恢复"  # 「已恢复LIVE BOOST。」只有「OK」
+    # 乐队确认页「跳过」（开了 loop.use_skip 才点）打开的「确认跳过」：和消耗设置弹窗一样选消耗，左「关闭」右「跳过」
+    SKIP_CONFIRM = "确认跳过"
+    # 跳过之后的结果页（玩家、成员经验，右下「下一步」）和活动pt页（右下「OK」），之后回到乐队确认页
+    SKIP_RESULT = "跳过结果"
     SETTINGS = "设置"
     PAUSE = "暂停"
     ABORT_CONFIRM = "终止确认"  # 暂停弹窗点「终止」后的二次确认
@@ -125,6 +130,7 @@ _DIALOGS = {
     # 标题「恢复LIVE BOOST」（LIVE 的大小写常读错）；消耗设置弹窗里的「恢复」按钮后面没有字母
     "恢复L": Screen.LB_RECOVER,
     "消耗设置": Screen.LB_SETTING,
+    "确认跳过": Screen.SKIP_CONFIRM,
     "要终止演出": Screen.ABORT_CONFIRM,
     "要重试并从头开始": Screen.RETRY_CONFIRM,
     "演出已暂停": Screen.PAUSE,
@@ -182,6 +188,9 @@ SKIP_ROI: Rect = (1150, 20, 110, 40)
 # 其他全屏演出右上角的「跳过」（挑战演出乐队确认页底部的「跳过 还剩n次」不在这里，绝不能点）
 SKIP_CORNER_ROI: Rect = (1050, 0, 230, 90)
 SKIP_TEXTS = ("跳过", "SKIP")
+# 乐队确认页底部的「跳过」，上面一行是剩余次数「还剩2次」（跳过确认弹窗右下的「跳过」也在这两个范围里）
+SKIP_BTN_ROI: Rect = (720, 640, 120, 50)
+SKIP_LEFT_ROI: Rect = (680, 590, 160, 45)
 PLAYER_MENU_ROI: Rect = (1150, 140, 100, 60)  # 故事播放菜单里的 SKIP
 # 加载、下载中的画面认不出，但可能持续很久（下载数据、故事），不算卡住
 LOADING_TEXTS = ("LOADING", "下载", "%")
@@ -239,9 +248,16 @@ def sdk_rect(rect: Rect, scale: float) -> Rect:
     return 640 + (x - 640) * scale, 360 + (y - 360) * scale, w * scale, h * scale
 
 
-def skip_button(items: list[OcrItem]) -> OcrItem | None:
-    """全屏演出右上角的「跳过」/「SKIP」。"""
-    return next((it for text in SKIP_TEXTS if (it := find(items, text, SKIP_CORNER_ROI))), None)
+def skip_button(items: list[OcrItem], roi: Rect = SKIP_CORNER_ROI) -> OcrItem | None:
+    """全屏演出右上角（或 ``roi`` 里）的「跳过」/「SKIP」。"""
+    return next((it for text in SKIP_TEXTS if (it := find(items, text, roi))), None)
+
+
+def skip_left(items: list[OcrItem]) -> int | None:
+    """乐队确认页、跳过确认弹窗上还能跳过几次（「还剩2次」，English 的「x2」「Left」读成两项），读不到为 None。"""
+    text = "".join(_compact(it.text) for it in sorted(items, key=lambda i: i.x) if in_roi(it, SKIP_LEFT_ROI))
+    m = re.search(r"\d+", text)
+    return int(m[0]) if m else None
 
 
 def next_button(items: list[OcrItem]) -> OcrItem | None:
@@ -270,6 +286,13 @@ def classify(items: list[OcrItem]) -> Screen:
     for text, screen in _DIALOGS.items():
         if it := find(items, text):
             return _setting_dialog(items, it) if screen is Screen.LB_SETTING else screen
+    # 跳过确认的标题别的语言没见过：左下「关闭」、右下「跳过」，中间有「全部消耗」
+    if (
+        find(items, "全部消耗", exact=True)
+        and find(items, "关闭", BOTTOM_LEFT_ROI, exact=True)
+        and skip_button(items, SKIP_BTN_ROI)
+    ):
+        return Screen.SKIP_CONFIRM
     # 韩文界面的标题「라이브 부스트 회복」有时拆成两项读出来，按左边的分页认
     if find(items, "道具", LB_TABS_ROI, exact=True) and find(items, "观看广告", LB_TABS_ROI, exact=True):
         return Screen.LB_RECOVER
@@ -309,6 +332,8 @@ def classify(items: list[OcrItem]) -> Screen:
         return Screen.TITLE
     if find(items, "SKIP", SKIP_ROI, exact=True):
         return Screen.LOGIN_BONUS
+    if find(items, "跳过结果", TITLE_ROI):
+        return Screen.SKIP_RESULT
     if find(items, "结算", TITLE_ROI):
         if find(items, "再次演出"):
             return Screen.RESULT_EXP
@@ -434,11 +459,51 @@ def note_speed(items: list[OcrItem]) -> float | None:
     return None
 
 
-# LIVE BOOST消耗设置弹窗：左侧一列单选按钮（消耗 3/2/1/0），选中的圆心是白色、未选中是暗红；
-# 下方「全部消耗」复选框同理。持有数量「24/99」在弹窗底部中间
-LB_RADIO = {3: (317, 126), 2: (317, 181), 1: (317, 237), 0: (317, 293)}
+# LIVE BOOST消耗设置弹窗（乐队确认页「跳过」打开的跳过确认弹窗也一样）：左侧一列消耗数和单选按钮，从上到下
+# 最大消耗 … 1、0，每行 56px，同时只露出 4 行（T.G.W CARD 10 级解锁 4、14 级解锁 5，这时要上下拖才看得全）。
+# 单选按钮在消耗数左边 LB_RADIO_DX（两种弹窗、几种布局的位置不同，按读到的消耗数算），选中的圆心是白色、
+# 未选中是暗红；下方「全部消耗」复选框同理（每天一次，消耗持有的全部，最多 10）。持有数量「24/99」在弹窗底部中间
+LB_MAX_COST = 5
+LB_ROW_STEP = 56
+LB_ROW_X = (415, 460)  # 消耗数中心 x 的范围（右边是奖励倍数，下面「全部消耗」那行的数字在 LB_ROWS_Y 外面）
+LB_ROWS_Y = (110, 306)  # 完整露出的行中心 y 的范围
+LB_RADIO_DX = -123
 LB_ALL_CHECK = (317, 439)
+SKIP_ALL_CHECK = (316, 434)  # 跳过确认弹窗的「全部消耗」
+# 上下拖消耗数列表：从上往下拖露出更大的消耗数，反过来露出 0
+LB_LIST_DRAG = ((640, 150), (640, 290))
 LB_HELD_ROI: Rect = (560, 545, 180, 40)
+
+
+@dataclass(frozen=True)
+class LbRows:
+    x: int  # 单选按钮中心 x
+    y: dict[int, int]  # 消耗数 → 这一行单选按钮中心 y（只有完整露出的行）
+
+
+def lb_rows(items: list[OcrItem]) -> LbRows | None:
+    """消耗设置 / 跳过确认弹窗里露出的各行。消耗数是单个数字，很小的「1」偶尔读偏、整个漏掉：按读到的几个数字
+    推出整列的位置（离大多数差太远的不要），漏读的行也能算出来。一个都没读到时为 None。"""
+    digits = []
+    for it in items:
+        t, cx = _digits(it.text), it.x + it.w / 2
+        if (
+            re.fullmatch(f"[0-{LB_MAX_COST}]", t)
+            and LB_ROW_X[0] <= cx <= LB_ROW_X[1]
+            and LB_ROWS_Y[0] - 15 <= it.cy <= LB_ROWS_Y[1] + 15
+        ):
+            digits.append((int(t), cx, it.cy))
+    if not digits:
+        return None
+    base = median(cy + LB_ROW_STEP * v for v, _, cy in digits)  # 消耗 0 那一行的 y
+    x = median(cx for v, cx, cy in digits if abs(cy + LB_ROW_STEP * v - base) <= 12)
+    rows = {v: round(base - LB_ROW_STEP * v) for v in range(LB_MAX_COST + 1)}
+    return LbRows(round(x) + LB_RADIO_DX, {v: y for v, y in rows.items() if LB_ROWS_Y[0] <= y <= LB_ROWS_Y[1]})
+
+
+def lb_all_used(items: list[OcrItem]) -> bool:
+    """「全部消耗」下面写着今天的次数已用完（「今日次数已用完。」，别的语言没见过，认不出时由勾选不上兜底）。"""
+    return find(items, "已用完") is not None
 
 
 def lb_held(items: list[OcrItem]) -> int | None:

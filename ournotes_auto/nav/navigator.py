@@ -28,6 +28,10 @@
 
 挑战演出（``loop.challenge``，部分活动期间开放）从演出首页的「挑战演出」进，乐曲选择、乐队确认页换成挑战演出的，
 消耗 CP 而不是 LB（见 :mod:`.challenge`）；之后的演奏、结算和自由演出一样。
+
+开了 ``loop.use_skip`` 时，自由演出先用乐队确认页的「跳过」（每天有次数）消耗 LB::
+
+    乐队确认 -[跳过]-> 确认跳过（和消耗设置一样选消耗）-[跳过]-> 跳过结果 -[下一步]-> 跳过结果（活动pt）-[OK]-> 乐队确认
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from concurrent.futures import Future
 from pathlib import Path
 
@@ -47,39 +52,48 @@ import numpy as np
 from ..config import Config
 from ..device.base import FrameSource
 from ..player.guard import load_template, pause_visible
+from ..records import RecordStore, game_day
 from ..result_reader import OcrItem, ResultCounts, merge, parse_int, parse_totals
 from ..runner import GameUpdateRequired, LbExhausted, NavigationError, ScreenFrozen, ServerMaintenance, SongLabel
 from .jacket import JacketMatcher, crop_jacket
 from .ocr import MaaOcr
 from .screens import (
+    BOTTOM_LEFT_ROI,
     CLOSE_ROI,
     CP_RADIO,
     LB_ALL_CHECK,
+    LB_LIST_DRAG,
+    LB_MAX_COST,
     LB_PLUS_X,
-    LB_RADIO,
     LB_TAB_ITEMS,
     LB_TAB_OTHERS,
     LEVEL_ROI,
+    NEXT_ROI,
     NOTIFY_LOGO_Y,
     OK_POPUP_ROI,
     RELOGIN_SCREENS,
     RESULT_COMBO_ROI,
     RESULT_SCORE_ROI,
     RESULT_TOTAL_VARIANTS,
+    SKIP_ALL_CHECK,
+    SKIP_BTN_ROI,
     UNLOCK_CLOSE_ROI,
     LbDrink,
+    LbRows,
     Rect,
     Screen,
     band_confirm_song,
     center,
     classify,
     find,
+    lb_all_used,
     lb_bar_held,
     lb_bar_timer,
     lb_drinks,
     lb_held,
     lb_preview,
     lb_recover_amount,
+    lb_rows,
     loading,
     login_expanded,
     login_rows,
@@ -91,6 +105,7 @@ from .screens import (
     sdk_point,
     sdk_scale,
     skip_button,
+    skip_left,
     title_startable,
 )
 from .account import BTN_MENU_CLOSE, AccountMixin
@@ -193,6 +208,16 @@ STUCK_SCREENS = (Screen.UNKNOWN, Screen.RESULT_OTHER, Screen.STORY_PLAYER)
 LB_EMPTY_RETRY_S = 30 * 60
 # start_live("auto")（挂机不等 LB）：持有 LB 时每局消耗这么多，没有时消耗 0
 LB_AUTO_COST = 1
+# 不用解锁就能选的最大消耗（T.G.W CARD 10 级解锁 4、14 级解锁 5）
+LB_BASE_COST = 3
+# 「全部消耗」（每天一次）一次最多消耗这么多；持有这么多以上，或者比一局局消耗能省这么多局以上时用（game.lb_auto）
+LB_ALL_MAX = 10
+LB_ALL_SAVE = 2
+# 乐队确认页「跳过」：确认跳过弹窗左「关闭」右「跳过」；跳过结果页右下「下一步」，活动pt页右下「OK」
+BTN_SKIP_LIVE = (780, 664)
+BTN_SKIP_CLOSE = (497, 657)
+BTN_SKIP_LIVE_CONFIRM = (781, 657)
+BTN_SKIP_RESULT_OK = (1126, 659)
 # 结算页出现约 1s 后可能叠上来的弹窗（首次达成奖励、评级提升及其奖励等），读数前先关掉
 RESULT_POPUPS = (Screen.ACHIEVEMENT, Screen.POPUP, Screen.GRADE_UP, Screen.REWARD, Screen.OK_POPUP)
 # 已经进入游戏、可以开始任务的画面（启动游戏时等到这些之一）
@@ -216,6 +241,25 @@ def plan_refill(drinks: list[LbDrink], need: int, budget: int | None) -> list[in
     return plan
 
 
+def lb_auto_cost(held: int, top: int, all_ok: bool) -> tuple[int, bool]:
+    """自动选消耗（game.lb_auto）：持有 ``held`` 个、最大能选 ``top`` 时这一局消耗几个、要不要勾「全部消耗」。
+
+    平时选 ``min(held, top)``（持有不够就全部消耗掉）。「全部消耗」今天还能用（``all_ok``）时，持有 :data:`LB_ALL_MAX`
+    个以上（它最多就消耗这么多），或者一局局消耗完要多打 :data:`LB_ALL_SAVE` 局以上，就勾上。
+    """
+    cost = min(held, top)
+    use_all = all_ok and (held >= LB_ALL_MAX or math.ceil(held / max(top, 1)) - 1 >= LB_ALL_SAVE)
+    return cost, use_all
+
+
+@dataclass
+class _LbPick:
+    """在一个 LB 消耗弹窗里选消耗时的尝试次数。"""
+
+    taps: int = 0  # 点单选按钮、拖列表
+    all_taps: int = 0  # 点「全部消耗」
+    dragged: bool = False  # 找最大消耗时拖过列表
+
 class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, AccountMixin):
     def __init__(
         self,
@@ -228,6 +272,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         jackets: JacketMatcher | Future | None = None,
         restart_app: Callable[[], None] | None = None,
         app_running: Callable[[], bool] | None = None,
+        store: RecordStore | None = None,
     ):
         self.cfg = config
         self.source = source
@@ -236,6 +281,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         self.stop = stop or threading.Event()
         self.settle_s = settle_s
         self._jackets = jackets
+        self.store = store  # 记「全部消耗」今天用过没有
         self._rows_matcher: JacketMatcher | None = None  # 认列表缩略图用（第一次按曲目选歌时建）
         self.list_positions = ListPositions()
         self._filter_status: str | None = None  # 本次运行设好的「游玩状况」筛选（STATUS_OPTIONS 的键），不确定时为 None
@@ -247,9 +293,13 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         self._items: list[OcrItem] = []
         self._ok_popup_seen: str | None = None  # 上一个点掉的没见过的弹窗的文字（同一个只存一张截图）
         lb = config.game.lb_cost
-        if lb is not None and lb not in LB_RADIO:
-            raise ValueError(f"game.lb_cost 应为 0~3 或 null，而不是 {lb!r}")
+        if lb is not None and lb not in range(LB_MAX_COST + 1):
+            raise ValueError(f"game.lb_cost 应为 0~{LB_MAX_COST} 或 null，而不是 {lb!r}")
         self._lb_cost: int | None = None  # 本次运行已在游戏里设置并核对过的 LB 消耗
+        self._lb_all = False  # 上面设置时勾了「全部消耗」（开始演出后记下今天用过了）
+        self._lb_all_out = False  # 本次运行「全部消耗」勾不上（今天用过了）
+        self._lb_top: int | None = None  # 消耗设置里最大能选几个（看过之后）
+        self._lb_capped = False  # 已经提示过 game.lb_cost 超过了能选的最大值
         # 挑战演出：要去的乐曲选择、乐队确认页换成挑战演出的，另一种（自由演出的）就退回演出首页
         self.challenge = config.loop.challenge
         self.song_screen = Screen.CHALLENGE_SONG_SELECT if self.challenge else Screen.SONG_SELECT
@@ -759,6 +809,145 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
                     logger.info("LB 用完了：消耗 0 接着打，恢复后再消耗")
         return self._lb_cost
 
+    def _lb_auto_pick(self, lb_short: str) -> int:
+        """``game.lb_auto``：按持有数自动选这一局的消耗（:func:`lb_auto_cost`），返回消耗。持有 0 个时 ``lb_short``
+        为 ``stop`` 就抛 :class:`LbExhausted`，否则消耗 0。
+
+        顶栏读到的持有数算出来的选择和现在的设置一样时不打开消耗设置弹窗；顶栏没读出来、读到 0（顶栏的字很小，
+        用完前用弹窗核对）、还不知道最大能选几个、要用道具补充时打开弹窗，在弹窗上按持有数选。
+        """
+        screen, items = self.look()
+        bar = lb_bar_held(items) if screen is Screen.BAND_CONFIRM else None
+        top = self._lb_top
+        if (
+            not bar
+            or top is None
+            or self._lb_cost is None
+            or (self._can_refill() and bar < top)
+            or lb_auto_cost(bar, top, self._lb_all_ok()) != (self._lb_cost, self._lb_all)
+        ):
+            before = (self._lb_cost, self._lb_all)
+            held = self.set_lb_cost(None, refill=self._can_refill())
+            if (self._lb_cost, self._lb_all) != before:
+                if self._lb_all:
+                    logger.info("LB 持有 %s 个：这局用「全部消耗」", "?" if held is None else held)
+                elif self._lb_cost:
+                    logger.info("LB 持有 %s 个：每局消耗 %d 个", "?" if held is None else held, self._lb_cost)
+                elif lb_short != "stop":
+                    logger.info("LB 用完了：消耗 0 接着打，恢复后再消耗")
+        if self._lb_cost == 0 and lb_short == "stop":
+            raise LbExhausted("LB 已用完")
+        return self._lb_cost
+
+    def _lb_all_ok(self) -> bool:
+        """「全部消耗」（每天一次）今天还能用：本次运行没发现勾不上，也没记下今天用过。"""
+        if self._lb_all_out:
+            return False
+        return self.store is None or self.store.lb_all_used(self.cfg.device.package) != game_day()
+
+    def _lb_all_used(self) -> None:
+        """记下今天用过了「全部消耗」（之后不再尝试，到游戏日期变更为止）。"""
+        self._lb_all_out = True
+        if self.store is not None and self.store.lb_all_used(self.cfg.device.package) != game_day():
+            self.store.set_lb_all_used(self.cfg.device.package, game_day())
+
+    def _lb_started(self) -> None:
+        """演出开始了：勾了「全部消耗」的话记下今天用过了，下一局重新核对消耗设置。"""
+        if self._lb_all:
+            logger.info("今天的「全部消耗」用掉了")
+            self._lb_all = False
+            self._lb_cost = None
+            self._lb_all_used()
+
+    def skip_live(self, lb_short: str = "zero", timeout_s: float = 30.0) -> bool:
+        """自由演出乐队确认页的「跳过」（``loop.use_skip``）跳过一次，回到乐队确认页，返回是否跳过了。
+
+        还有跳过次数、这局会消耗 LB 时才跳过（消耗按 ``game.lb_cost`` / ``game.lb_auto`` 选，``lb_short`` 为 ``auto``
+        时消耗 :data:`LB_AUTO_COST` 个；持有 0 个时点「关闭」不跳过，跳过也要用掉次数）。开了 ``game.lb_refill`` 时
+        先在消耗设置里补充。弹出恢复LIVE BOOST 时点取消，不跳过。挑战演出的「跳过」不点。
+        """
+        if self.challenge:
+            return False
+        screen, items = self.look()
+        left = skip_left(items) if screen is Screen.BAND_CONFIRM else None
+        btn = skip_button(items, SKIP_BTN_ROI) if left else None
+        if btn is None or (lb_bar_held(items) == 0 and not self._can_refill()):  # 顶栏读到持有 0 就不打开确认弹窗了
+            return False
+        if self.cfg.game.lb_auto and lb_short != "auto":
+            want = None
+        else:
+            want = LB_AUTO_COST if lb_short == "auto" else self._lb_want()
+            if not want:
+                return False
+        if self._can_refill():
+            self._refill_if_short(want if want is not None else self._lb_top or LB_MAX_COST)
+        self.tap(center(btn), "跳过")
+        tapped_at = time.monotonic()
+        deadline = tapped_at + timeout_s
+        pick = _LbPick()
+        chosen: tuple[int, bool] | None = None
+        confirmed_at = closed_at = None
+        tapped: dict[Screen, float] = {}
+        while time.monotonic() < deadline:
+            self._sleep(0.5)
+            screen, items = self.look()
+            t = time.monotonic()
+            if screen is Screen.BAND_CONFIRM:
+                if closed_at is not None:
+                    return False
+                if confirmed_at is not None:
+                    if t - confirmed_at < 3:
+                        continue  # 弹窗正在关闭
+                    self._skipped(chosen, left)
+                    return True
+                if t - tapped_at > 3:  # 点击没生效
+                    self.tap(self._button_at(skip_button(items, SKIP_BTN_ROI), BTN_SKIP_LIVE), "跳过")
+                    tapped_at = t
+            elif screen is Screen.SKIP_CONFIRM:
+                if t - (confirmed_at or closed_at or -math.inf) < 3:
+                    continue  # 弹窗正在关闭
+                held = lb_held(items)
+                if held == 0 or (want is None and held is None and pick.taps >= 3):
+                    logger.info("LB 用完了，不跳过")
+                    self.tap(self._button(items, "关闭", BTN_SKIP_CLOSE, BOTTOM_LEFT_ROI), "关闭")
+                    closed_at = t
+                    continue
+                if not self._lb_find_top(items, want, pick):
+                    continue
+                picked = self._lb_pick_step(items, want, held, SKIP_ALL_CHECK, pick)
+                if picked is None:
+                    continue
+                chosen = picked
+                logger.debug("跳过：消耗 %d%s（持有 %s）", picked[0], "（全部消耗）" if picked[1] else "", held)
+                self.tap(self._button_at(skip_button(items, SKIP_BTN_ROI), BTN_SKIP_LIVE_CONFIRM), "确认跳过")
+                confirmed_at = t
+            elif screen is Screen.SKIP_RESULT:
+                if t - tapped.get(screen, -math.inf) < 2:
+                    continue
+                it = next_button(items) or find(items, "OK", NEXT_ROI, exact=True)
+                self.tap(self._button_at(it, BTN_SKIP_RESULT_OK), it.text if it else "OK")
+                tapped[screen] = t
+            elif screen is Screen.LB_RECOVER:
+                self._cancel_lb_recover(items)
+                closed_at = t
+            elif screen is Screen.UNKNOWN:
+                continue  # 弹窗淡入淡出、结果页的动画
+            elif not self._common_step(screen, items):  # 跳过后的升级等弹窗
+                raise self._fail("跳过时出现意外画面")
+        raise self._fail("跳过没有完成")
+
+    def _button_at(self, it: OcrItem | None, default: tuple[int, int]) -> tuple[int, int]:
+        return center(it) if it is not None else default
+
+    def _skipped(self, chosen: tuple[int, bool] | None, left: int) -> None:
+        cost, use_all = chosen or (None, False)
+        logger.info(
+            "跳过了一次（消耗 %s，还剩 %d 次）", "全部" if use_all else "?" if cost is None else f"{cost} 个", left - 1
+        )
+        self._lb_cost = None  # 跳过时选的消耗可能改了游戏里的设置，下一局演奏前重新核对
+        if use_all:
+            self._lb_all_used()
+
     def start_live(self, lb_short: str = "zero") -> None:
         """（按配置设好 LB 消耗后）点击 LIVE START，处理演出前选项设置弹窗后立即返回（弹窗关闭后才开始加载）。
 
@@ -767,14 +956,18 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         （能用道具补充的话再从消耗设置进去补）。``lb_short`` 为 ``zero`` 时本局改为消耗 0；为 ``stop`` 时
         点 LIVE START 前先核对持有数，用完了（或弹出了恢复窗口）就留在乐队确认页并抛出 :class:`LbExhausted`；
         为 ``auto`` 时不看 ``game.lb_cost``，每局前按持有数选消耗（:meth:`_lb_auto`），弹出恢复窗口同 ``zero``。
+        开了 ``game.lb_auto`` 时（``auto`` 除外）每局前按持有数自动选消耗（:meth:`_lb_auto_pick`）。
         """
         if lb_short not in ("zero", "stop", "auto"):
             raise ValueError(f"未知的 LB 不足处理方式：{lb_short}")
+        auto_pick = self.cfg.game.lb_auto and lb_short != "auto"
         if self.challenge:
             self._check_cp()
             want = None
         elif lb_short == "auto":
             want = self._lb_auto()
+        elif auto_pick:
+            want = self._lb_auto_pick(lb_short)
         else:
             want = self._lb_want()
             held = self._refill_if_short(want) if want and self._can_refill() else None
@@ -790,12 +983,14 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         started = time.monotonic()
         retapped = False
         unknown_since = None
+        recovers = 0  # 弹出过几次恢复LIVE BOOST
         while time.monotonic() - started < 10:
             self._sleep(0.3)
             screen, items = self.look()
             if screen is Screen.LIVE_OPTIONS:
                 self._check_speed(items)
                 self.tap(self._button(items, "演出", BTN_OPTIONS_START), "演出")
+                self._lb_started()
                 return
             if screen is Screen.LB_RECOVER and not self.challenge:
                 # LB 用完时要求先恢复：取消，能用道具补充就补，否则本局改为消耗 0（一段时间后或玩家升级后再按配置设置）
@@ -803,7 +998,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
                     raise self._fail("LB 消耗为 0 仍弹出恢复 LIVE BOOST")
                 self._cancel_lb_recover(items)
                 self._wait_for(Screen.BAND_CONFIRM)
-                if not (want and self._can_refill() and self.set_lb_cost(want, refill=True)):
+                recovers += 1
+                refilled = want and self._can_refill() and self.set_lb_cost(None if auto_pick else want, refill=True)
+                if not refilled or recovers > 1:
                     if lb_short == "stop":
                         raise LbExhausted("LB 已用完")
                     self._lb_empty_at = time.monotonic()
@@ -821,6 +1018,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
                 # 弹窗淡入时也可能识别不出；持续一段时间才认为已直接进入加载（勾选过「下次不再显示」）
                 unknown_since = unknown_since or time.monotonic()
                 if time.monotonic() - unknown_since > 2.0:
+                    self._lb_started()
                     return
             else:
                 raise self._fail("点击 LIVE START 后出现意外画面")
@@ -898,15 +1096,17 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         raise self._fail("暂停后重试没有生效")
 
     def set_lb_cost(
-        self, cost: int, timeout_s: float = 15.0, refill: bool = False, zero_if_empty: bool = False
+        self, cost: int | None, timeout_s: float = 15.0, refill: bool = False, zero_if_empty: bool = False
     ) -> int | None:
-        """乐队确认页 → 消耗LB → 选中 ``cost``、按像素核对 → OK，回到乐队确认页（游戏会记住设置）。
-        返回弹窗上读到的 LB 持有数。``refill`` 时持有数少于 ``cost`` 就点弹窗里的「恢复」用道具补充一次
-        （:meth:`_refill`），否则绝不点「恢复」。``zero_if_empty`` 时弹窗上读到持有 0 就改选 0。"""
+        """乐队确认页 → 消耗LB → 选中 ``cost``（None 为按持有数自动选，见 :func:`lb_auto_cost`）、按像素核对 → OK，
+        回到乐队确认页（游戏会记住设置）。返回弹窗上读到的 LB 持有数。``refill`` 时持有数少于 ``cost``（自动选时为
+        最大能选的消耗）就点弹窗里的「恢复」用道具补充一次（:meth:`_refill`），否则绝不点「恢复」。
+        ``zero_if_empty`` 时弹窗上读到持有 0 就改选 0。"""
         self.tap(BTN_LB_COST, "消耗LB")
         opened = time.monotonic()
         deadline = opened + timeout_s
-        radio_taps = 0
+        pick = _LbPick()
+        chosen = (cost, False)
         ok_at = recover_at = None
         refilled = False
         held = None
@@ -915,7 +1115,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
             screen, items = self.look()
             if screen is Screen.BAND_CONFIRM:
                 if ok_at is not None:
-                    self._lb_cost = cost
+                    self._lb_cost, self._lb_all = chosen
                     return held
                 if time.monotonic() - opened > 3:  # 点击没生效
                     self.tap(BTN_LB_COST, "消耗LB")
@@ -928,45 +1128,125 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
                         continue  # 恢复LIVE BOOST 正在打开
                     logger.warning("点「恢复」没有打开恢复LIVE BOOST，这次不补充")
                     refilled = True
-                if zero_if_empty and lb_held(items) == 0:
-                    cost = 0
-                selected = self._lb_selected()
-                if selected != cost:
-                    if radio_taps >= 3:
-                        raise self._fail(f"LB 消耗选不中 {cost}（当前 {selected}）")
-                    self.tap(LB_RADIO[cost], f"消耗 {cost}")
-                    radio_taps += 1
-                    continue
-                if self._lit(LB_ALL_CHECK):
-                    logger.warning("LB 消耗设置勾选了「全部消耗」，每局将消耗持有的全部 LB")
                 held = lb_held(items)
-                if refill and recover_at is None and held is not None and held < cost and self._can_refill():
-                    logger.info("LB 持有 %d 个，少于每局消耗 %d 个，用道具补充", held, cost)
+                want = 0 if zero_if_empty and held == 0 else cost
+                if not self._lb_find_top(items, want, pick):
+                    continue
+                need = self._lb_top if want is None else want
+                if refill and recover_at is None and held is not None and need and held < need and self._can_refill():
+                    logger.info("LB 持有 %d 个，少于每局消耗 %d 个，用道具补充", held, need)
                     self.tap(self._button(items, "恢复", BTN_LB_RECOVER, LB_RECOVER_ROI), "恢复")
                     recover_at = time.monotonic()
                     continue
-                logger.debug("LB 消耗设置为 %d（持有 %s）", cost, "?" if held is None else held)
+                picked = self._lb_pick_step(items, want, held, LB_ALL_CHECK, pick)
+                if picked is None:
+                    continue
+                chosen = picked
+                logger.debug(
+                    "LB 消耗设置为 %d%s（持有 %s）", picked[0], "（全部消耗）" if picked[1] else "", "?" if held is None else held
+                )
                 self.tap(self._button(items, "OK", BTN_LB_OK), "OK")
                 ok_at = time.monotonic()
             elif screen is Screen.LB_RECOVER and recover_at is not None and not refilled:
-                self._refill(items, held, cost - held)
+                self._refill(items, held, need - held)
                 refilled = True
                 deadline = time.monotonic() + timeout_s
             elif screen is not Screen.UNKNOWN:  # UNKNOWN：弹窗淡入淡出
                 raise self._fail("设置 LB 消耗时出现意外画面")
         raise self._fail("未能设置 LB 消耗")
 
+    def _lb_find_top(self, items: list[OcrItem], want: int | None, pick: _LbPick) -> bool:
+        """消耗设置 / 确认跳过弹窗：自动选、或者要选的超过 :data:`LB_BASE_COST` 时先看最大能选几个（列表只放得下 4 行，
+        没看到 :data:`LB_MAX_COST` 就往下拖一次，露出上面更大的），记在 ``_lb_top``。做了操作（或没读出来）返回 False。"""
+        if self._lb_top is not None or (want is not None and want <= LB_BASE_COST):
+            return True
+        rows = lb_rows(items)
+        if rows is None:
+            self._lb_pick_retry(pick, "没读到 LB 消耗的选项")
+            return False
+        if max(rows.y) < LB_MAX_COST and not pick.dragged:
+            self._drag(*LB_LIST_DRAG)
+            pick.dragged = True
+            return False
+        self._lb_top = max(rows.y)
+        logger.info("LB 消耗最大能选 %d 个", self._lb_top)
+        return True
+
+    def _lb_pick_step(
+        self, items: list[OcrItem], want: int | None, held: int | None, check: tuple[int, int], pick: _LbPick
+    ) -> tuple[int, bool] | None:
+        """消耗设置 / 确认跳过弹窗（「全部消耗」复选框在 ``check``）：选中 ``want``（None 为按持有数 ``held`` 自动选）、
+        勾上或取消「全部消耗」。还要操作时做一步、返回 None，都选好了返回 (消耗, 是否全部消耗)。"""
+        if lb_all_used(items):
+            self._lb_all_used()
+        top = self._lb_top
+        if want is None:
+            if held is None:
+                self._lb_pick_retry(pick, "没读到 LB 持有数")
+                return None
+            cost, use_all = lb_auto_cost(held, top, self._lb_all_ok())
+        else:
+            cost, use_all = want, False
+            if top is not None and want > top:
+                if not self._lb_capped:
+                    logger.warning("LB 消耗最大只能选 %d 个（设置的是 %d 个），按 %d 个消耗", top, want, top)
+                    self._lb_capped = True
+                cost = top
+        if self._lit(check):
+            if use_all:
+                return cost, True
+            if pick.all_taps >= 3:
+                raise self._fail("取消不了「全部消耗」")
+            self.tap(check, "取消全部消耗")
+            pick.all_taps += 1
+            return None
+        rows = lb_rows(items)
+        selected = None if rows is None else self._lb_selected(rows)
+        if selected != cost:
+            if pick.taps >= 6:
+                if cost > LB_BASE_COST and want is None:
+                    # 选不中：多半是看到的更大的消耗还没解锁，按小一个的选
+                    logger.warning("LB 消耗选不中 %d（当前 %s），最大按 %d 个算", cost, selected, cost - 1)
+                    self._lb_top = cost - 1
+                    pick.taps = 0
+                    return None
+                raise self._fail(f"LB 消耗选不中 {cost}（当前 {selected}）")
+            pick.taps += 1
+            if rows is None:
+                return None  # 没读到选项，下一帧再看
+            if cost in rows.y:
+                self.tap((rows.x, rows.y[cost]), f"消耗 {cost}")
+            elif cost > max(rows.y):
+                self._drag(*LB_LIST_DRAG)  # 往下拖，露出上面更大的
+            else:
+                self._drag(LB_LIST_DRAG[1], LB_LIST_DRAG[0])
+            return None
+        if use_all:
+            if pick.all_taps >= 2:
+                logger.info("「全部消耗」勾不上（今天用过了？），这局消耗 %d 个", cost)
+                self._lb_all_out = True
+                return cost, False
+            self.tap(check, "全部消耗")
+            pick.all_taps += 1
+            return None
+        return cost, False
+
+    def _lb_pick_retry(self, pick: _LbPick, why: str) -> None:
+        pick.taps += 1
+        if pick.taps > 6:
+            raise self._fail(why)
+
     def _can_refill(self) -> bool:
-        return bool(self.cfg.game.lb_refill and self.cfg.game.lb_cost) and not self._refill_out
+        return bool(self.cfg.game.lb_refill and self.cfg.game.lb_spends) and not self._refill_out
 
     def _refill_if_short(self, want: int) -> int | None:
-        """乐队确认页顶栏的 LB 持有数少于 ``want``（或没读到）时打开消耗设置弹窗核对，确实不够就用道具补充。
-        返回持有数（读不到为 None）。"""
+        """乐队确认页顶栏的 LB 持有数少于 ``want``（或没读到）时打开消耗设置弹窗核对，确实不够就用道具补充
+        （``game.lb_auto`` 时顺便按持有数选好消耗）。返回持有数（读不到为 None）。"""
         screen, items = self.look()
         held = lb_bar_held(items) if screen is Screen.BAND_CONFIRM else None
         if held is not None and held >= want:
             return held
-        return self.set_lb_cost(want, refill=True)
+        return self.set_lb_cost(None if self.cfg.game.lb_auto else want, refill=True)
 
     def _tab_selected(self, point: tuple[int, int]) -> bool:
         """恢复LIVE BOOST 左边的分页 ``point`` 是否选中：选中的是青绿色（BGR 约 176,162,84），没选中的是深蓝（约 140,84,70）。"""
@@ -1096,14 +1376,17 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         if screen is not Screen.BAND_CONFIRM:
             raise self._fail("不在乐队确认页，无法读取 LB")
         held, left = lb_bar_held(items), lb_bar_timer(items)
-        want = self._lb_want()
-        if (check or held is None) and want:
-            held = self.set_lb_cost(want)
+        if check or held is None:
+            if self.cfg.game.lb_auto:
+                held = self.set_lb_cost(None)
+            elif want := self._lb_want():
+                held = self.set_lb_cost(want)
         logger.debug("LB 持有数：%s，恢复倒计时：%s", held, left)
         return held, left
 
-    def _lb_selected(self) -> int | None:
-        lit = [c for c, p in LB_RADIO.items() if self._lit(p)]
+    def _lb_selected(self, rows: LbRows) -> int | None:
+        """看得到的几行里选中的消耗（选中的那行不在画面上、或者读不准时为 None）。"""
+        lit = [c for c, y in rows.y.items() if self._lit((rows.x, y))]
         return lit[0] if len(lit) == 1 else None
 
     def _cancel_lb_recover(self, items: list[OcrItem]) -> None:

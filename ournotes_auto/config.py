@@ -172,17 +172,25 @@ class GameConfig:
     # 游戏内「节奏图示速度」。play.sync.tau_s 与它一一对应，改了流速要重新 calibrate motion；
     # 开始演出前会从演出前选项设置弹窗读取并核对
     note_speed: float = 5.0
-    # 每局消耗的 LIVE BOOST（0~3，越多奖励越多）。开始第一局前在乐队确认页「消耗LB」弹窗里选好并核对；
-    # null 表示不改游戏里的设置。持有数量不足时游戏会消耗剩余的全部 LB；
+    # 每局消耗的 LIVE BOOST（0~5，越多奖励越多；T.G.W CARD 10 级解锁 4、14 级解锁 5，没解锁时按能选的最大值）。
+    # 开始第一局前在乐队确认页「消耗LB」弹窗里选好并核对；null 表示不改游戏里的设置。持有数量不足时游戏会消耗剩余的全部 LB；
     # 用完时弹出「恢复LIVE BOOST」（道具/星钻/广告）只点取消，之后 30 分钟内（或到玩家升级）改为 0 继续
     lb_cost: int | None = None
-    # 每局开始前 LB 持有少于 lb_cost（需要为 1~3）时，用道具里的 LIVE BOOST饮料补充（从「消耗LB」→「恢复」进去，
+    # 自动选消耗（开了就不看 lb_cost）：每局按持有数选能选的最大消耗，持有不够就全部消耗掉；每天一次的「全部消耗」
+    # 在持有 10 个以上、或比一局局消耗能省 2 局以上时用。用完后的处理同 lb_cost 为 1~5
+    lb_auto: bool = False
+    # 每局开始前 LB 持有少于 lb_cost（需要为 1~5）时，用道具里的 LIVE BOOST饮料补充（从「消耗LB」→「恢复」进去，
     # 只在「道具」页选；绝不用星钻、不看广告）。道具用完或补够 lb_refill_limit 个后按上面的方式处理
     lb_refill: bool = False
     lb_refill_limit: int = 0  # 本次运行最多补充多少 LB，0 为不限（直到道具用完）
     # 挑战演出（loop.challenge）每局消耗的挑战pt：200 / 400 / 800 / 1600（越多奖励越多，200 能打的局数最多）；
     # null 表示不改游戏里的设置。CP 不够一局时结束
     challenge_cost: int | None = 200
+
+    @property
+    def lb_spends(self) -> bool:
+        """会按配置消耗 LB（自动选消耗，或 lb_cost 为 1~5）。"""
+        return self.lb_auto or bool(self.lb_cost)
 
 
 @dataclass
@@ -207,10 +215,14 @@ class LoopConfig:
     max_plays: int = 0  # 0 表示不限次数
     # 打挑战演出（部分活动期间开放，消耗挑战pt，见 game.challenge_cost）而不是自由演出，打到 CP 不够一局为止
     challenge: bool = False
-    until_lb_empty: bool = False  # 打到 LB 用完为止（需要 game.lb_cost 为 1~3；用完后不再改为消耗 0 继续）
-    # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 0~3；
-    # 0 时不等：持有 LB 时每局消耗 1 个，用完了消耗 0 接着打）
+    # 打到 LB 用完为止（需要 game.lb_cost 为 1~5 或 game.lb_auto；用完后不再改为消耗 0 继续）
+    until_lb_empty: bool = False
+    # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 0~5；
+    # 0 时不等：持有 LB 时每局消耗 1 个，用完了消耗 0 接着打；game.lb_auto 时恢复 1 个就打）
     wait_lb: bool = False
+    # 自由演出先用乐队确认页的「跳过」（每天有次数）消耗 LB，次数用完了再演奏。LB 消耗按 game.lb_cost / lb_auto 选，
+    # 持有 0 个时不跳过（跳过也要消耗次数）
+    use_skip: bool = False
     # 每隔这么多小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领。
     # 录音室练习最多累计 12 小时，超过后效率降到 30%，挂机等长时间运行时用
     studio_claim_hours: float = 0.0
