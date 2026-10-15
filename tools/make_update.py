@@ -66,7 +66,7 @@ def main() -> int:
     infos = [info for _, info, _ in packages.values()]
     version = infos[0]["version"]
     if release.parse_version(version) is None:
-        sys.exit(f"版本号 {version!r} 不是 vX.Y.Z")
+        sys.exit(f"版本号 {version!r} 不是 vX.Y.Z 或 vX.Y.Z.W")
     for info in infos[1:]:
         if info["version"] != version or info["files"] != infos[0]["files"]:
             sys.exit("几个发布包的版本或 app 层文件不一致")

@@ -24,7 +24,8 @@ def _write(root: Path, rel: str, text: str = "x") -> Path:
 def test_parse_version():
     assert release.parse_version("v0.1.0") == (0, 1, 0)
     assert release.parse_version(" 1.10.2 ") == (1, 10, 2)
-    for text in ("dev-1a2b3c4", "v1.2", "v1.2.3-beta", "", None):
+    assert release.parse_version("v0.1.6.1") == (0, 1, 6, 1)
+    for text in ("dev-1a2b3c4", "v1.2", "v1.2.3-beta", "v1.2.3.4.5", "v1.2.3.", "", None):
         assert release.parse_version(text) is None
 
 
@@ -35,6 +36,10 @@ def test_parse_version():
         ("v0.10.0", "v0.9.9", True),  # 按数字比，不按字符串
         ("v0.1.0", "v0.1.0", False),
         ("v0.1.0", "v0.2.0", False),
+        ("v0.1.6.1", "v0.1.6", True),  # 小修补
+        ("v0.1.6.10", "v0.1.6.9", True),
+        ("v0.1.7", "v0.1.6.3", True),
+        ("v0.1.6", "v0.1.6.1", False),
         ("v0.2.0", "dev-1a2b3c4", False),  # 开发版不提示
         (None, "v0.1.0", False),
     ],
