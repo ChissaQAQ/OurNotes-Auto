@@ -54,17 +54,27 @@ def _running(run, serial: str, package: str) -> bool:
     return bool(run("-s", serial, "shell", "pidof", package, check=False).stdout.strip())
 
 
+def _in_front(run, serial: str, package: str) -> bool:
+    """游戏的界面在前台（获得焦点的窗口属于它）；读不到时当作在前台。"""
+    out = run("-s", serial, "shell", "dumpsys", "window", check=False).stdout.decode("utf-8", "replace")
+    m = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^\s/}]+)", out)
+    return m is None or m.group(1) == package
+
+
 def app_running(cfg: DeviceConfig, timeout_s: float = 15.0) -> bool:
     serial, run = _runner(cfg, timeout_s)
     return _running(run, serial, cfg.package)
 
 
 def start_app(cfg: DeviceConfig, timeout_s: float = 30.0) -> bool:
-    """游戏没在运行时启动它，返回是否启动了。"""
+    """游戏没在运行时启动它，在后台时切回前台（不重启），返回是否启动或切换了。"""
     serial, run = _runner(cfg, timeout_s)
     if _running(run, serial, cfg.package):
-        return False
-    logger.info("经 adb（%s）启动 %s", serial, cfg.package)
+        if _in_front(run, serial, cfg.package):
+            return False
+        logger.info("游戏在后台，经 adb（%s）切回前台", serial)
+    else:
+        logger.info("经 adb（%s）启动 %s", serial, cfg.package)
     _launch(run, serial, cfg.package)
     return True
 
