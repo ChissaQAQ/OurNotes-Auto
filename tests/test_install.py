@@ -173,6 +173,14 @@ def test_runtime_info_detects_dll_and_python_changes(tmp_path, project):
     for rel in ("ournotes_auto/cli.py", "config/user.json", release.RELEASE_FILE, "python/Lib/__pycache__/x.pyc"):
         _write(tmp_path, rel)
     assert install.runtime_info(tmp_path, "mxu")["files"] == python_changed
+    # pip 生成的启动器带打包时间、RECORD 记着它们的哈希，每次构建都不一样，也不算
+    for rel in ("python/Lib/site-packages/bin/f2py.exe", "python/Lib/site-packages/numpy-2.5.3.dist-info/RECORD"):
+        _write(tmp_path, rel, "build 1")
+        assert install.runtime_info(tmp_path, "mxu")["files"] == python_changed
+        _write(tmp_path, rel, "build 2")
+        assert install.runtime_info(tmp_path, "mxu")["files"] == python_changed
+    _write(tmp_path, "python/Lib/site-packages/numpy/core.pyd", "new")
+    assert install.runtime_info(tmp_path, "mxu")["files"] != python_changed  # 依赖本身的文件照算
 
 
 @pytest.mark.parametrize("kind", ["mxu", "mfaa"])

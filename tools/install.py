@@ -34,6 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RID = "win-x64"
 PY_DIR = "python"  # 发布包里嵌入式 Python 的目录
+SITE_PACKAGES = f"{PY_DIR}/Lib/site-packages"
 sys.path.insert(0, str(ROOT))
 from ournotes_auto import release  # noqa: E402
 from ournotes_auto.ocr_models import EXTRA  # noqa: E402
@@ -174,6 +175,10 @@ def runtime_info(out: Path, kind: str) -> dict:
         if path.relative_to(out).parts[0] in release.USER_DIRS or rel == release.RELEASE_FILE or release.is_app_file(rel) or rel.startswith(release.MODEL_DIR + "/"):
             continue
         if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        # pip 生成的命令行启动器（site-packages/bin/*.exe）里有打包时间，RECORD 里记着它们的哈希，每次构建都不一样；
+        # 算进来的话每次发版都成了整包更新。依赖本身由 deps 和其余文件反映。
+        if rel.startswith(f"{SITE_PACKAGES}/bin/") or (rel.startswith(f"{SITE_PACKAGES}/") and rel.endswith(".dist-info/RECORD")):
             continue
         runtime_files.update(f"{rel}\0{release.sha256_file(path)}\n".encode("utf-8"))
     info = {
