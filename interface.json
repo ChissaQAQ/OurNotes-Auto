@@ -9,7 +9,7 @@
     },
     "name": "OurNotesAuto",
     "label": "$app.label",
-    "version": "v0.1.5",
+    "version": "v0.1.6",
     "description": "$app.description",
     "welcome": "$app.welcome",
     "icon": "docs/ui/icon.png",
