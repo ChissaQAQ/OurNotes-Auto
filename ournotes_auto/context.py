@@ -184,6 +184,7 @@ def open_context(
             source.ipc.wait_for_game_display(stop=stop)
             logger.debug("重启游戏后重新解析 display_id：%s → %s", before, source.ipc.display_id)
 
+        store = RecordStore(data_dir)
         nav = GameNavigator(
             cfg,
             source,
@@ -193,6 +194,7 @@ def open_context(
             jackets=jackets,
             restart_app=restart_app,
             app_running=lambda: adb.app_running(cfg.device),
+            store=store,
         )
         # 演奏界面连击数小图 → 数字（结束后在日志里列出断连处附近的音符，调试漏判用）
         reader = combo_reader(ocr.read_text) if watch_combo else None
@@ -200,4 +202,4 @@ def open_context(
         if record:
             cfg.play.sync.record_frames = max(cfg.play.sync.record_frames, 600)
             session.dump_success = False
-        yield TaskContext(cfg, nav, session, client, catalog, RecordStore(data_dir), stop)
+        yield TaskContext(cfg, nav, session, client, catalog, store, stop)

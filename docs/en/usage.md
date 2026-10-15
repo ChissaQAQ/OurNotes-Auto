@@ -37,7 +37,25 @@ The game just needs to be on the Home screen or the Free LIVE Select Song screen
 
 Repeat Play, Use Up LB, AFK Farming and AP Completion all have the option "Refill LB with Items When Low" (off by default): before each round, if LB held is less than the per-round cost, it goes through the LB "Settings" → "Recovery" and, only on the "Item" tab, uses Boost Drinks to top up just enough for this round (Small +1 first, then +10 if that's not enough); it taps OK only after verifying that the selected quantity, the recovery preview and the numbers on the confirmation popup all match; if it's not on the "Item" tab or anything doesn't match, it taps Cancel and won't refill again this run. Never uses Stars or watches ads.
 
-The sub-option "Max Refill" is the maximum amount of LB refilled in this run; 0 means until the drinks run out. After the drinks run out, it continues as before (Use Up LB ends there, AFK Farming starts waiting for recovery). Requires LB per round to be set to 1–3.
+The sub-option "Max Refill" is the maximum amount of LB refilled in this run; 0 means until the drinks run out. After the drinks run out, it continues as before (Use Up LB ends there, AFK Farming starts waiting for recovery). Requires LB per round to be set to 1–5 or "Auto".
+
+### LB per Round: 4, 5 and "Auto"
+
+"LB per Round" can be 0–5 (Repeat Play and AP Completion can also keep the in-game setting). 4 and 5 are unlocked at T.G.W CARD Lv.10 and Lv.14; while locked, it uses the largest value the LB "Settings" popup offers and says so in the log.
+
+With "Auto (by LB held)", it opens the LB "Settings" popup before each round and picks by the LB held at that moment:
+
+- Normally the largest cost available (3 while 4 and 5 are locked); if fewer LB are held, it picks the amount held and consumes all that's left.
+- The once-a-day "Consume All" (up to 10 LB in one round, usable with 4 or more held) is used in two cases: 10 or more LB are held, or it saves 2 or more rounds compared with consuming round by round (e.g. with 7 held and a max cost of 3, round by round takes 3 rounds, Consume All takes 1).
+- Once "Consume All" has been used, it's recorded in `data/state.json` (per account when taking turns with "Switch Account") and not checked again that day (game date, which changes at 23:00 every day); if you used it by hand in the game and the popup shows that today's uses are used up, that's recorded too.
+- Use Up LB with Auto ends when LB runs out; AFK Farming with Auto consumes each LB as soon as it recovers instead of waiting for several. AFK Farming with 0 still works as before: consume 1 while LB is held, otherwise 0.
+
+### Use Skip
+
+Use Up LB and AFK Farming have the option "Use Skip" (off by default): before each round it first taps "Skip" on the Formation screen, picks the cost in the confirmation popup according to "LB per Round" (Auto also uses "Consume All" here), and skips the currently selected song; once the day's skips run out it plays normally. Skips don't count as rounds; the log at the end lists how many were skipped.
+
+- It only skips when the round would consume LB (LB per round 1–5 or Auto; AFK Farming with 0 skips only while LB is held, consuming 1). When LB runs out it doesn't skip (if the confirmation popup shows 0 held it taps "Close") and continues as before.
+- "Skip" in Challenge Live is never tapped.
 
 ### Other Options
 
@@ -58,7 +76,7 @@ The sub-option "Max Refill" is the maximum amount of LB refilled in this run; 0 
 | MV / background | Off, or a dark, static background (required) | At the start, it waits for the screen to settle before tracking the first note. With a constantly moving background, it starts tracking after at most 4 seconds, and a bright background can also bleed in, making sync fail or be inaccurate |
 | Bar line display (Details → notes settings) | Either on or off | When tracking the first note at the start, bar lines spanning the lanes are recognized and skipped. Version 0.1.3 and earlier mistake a bar line that falls before the first note for the first note, so the whole round is early and life quickly hits zero; turn it off when using those versions |
 | Effect and performance levels | Not enforced; turning them down is recommended on a weaker PC | It only looks at the screen for the first few seconds (when there are no hit effects yet), and colored effects are filtered out; after that it plays from the chart and only watches the pause button at the top right. But so far it has only been tested with them turned down: with high effects, bright white opening effects may bleed into the tracking area, or full-screen performances may cover the pause button for more than 2 seconds in a row and be taken as leaving the play screen, stopping touches. Turning them down also makes the emulator frame rate steadier |
-| LB "Settings" on the Formation screen | Set automatically from the config key `game.lb_cost` (0–3) | Before the first round, it opens the popup, selects the value and verifies it; the game remembers it. 0 consumes no LB (LIVE START shows "n ▸ n"). When LB is short, the game consumes all that's left; when "LIVE Boost Recover" (Item/Star/ad) pops up, it only taps Cancel and that round switches to 0 (with `game.lb_refill` on, it first refills with Boost Drinks from Items, see [above](#refill-lb-with-items-when-low)). Leave it empty (null) to keep the in-game setting |
+| LB "Settings" on the Formation screen | Set automatically from the config key `game.lb_cost` (0–5) or `game.lb_auto` | Before the first round, it opens the popup, selects the value and verifies it; the game remembers it. 0 consumes no LB (LIVE START shows "n ▸ n"). When LB is short, the game consumes all that's left; when "LIVE Boost Recover" (Item/Star/ad) pops up, it only taps Cancel and that round switches to 0 (with `game.lb_refill` on, it first refills with Boost Drinks from Items, see [above](#refill-lb-with-items-when-low)). Leave it empty (null) to keep the in-game setting |
 
 After switching PCs or emulator instances or reinstalling, play one or two songs on a low difficulty first and check the log for sync failures or speed warnings. Screenshot and touch latency differ between PCs, but there's no need to tune anything manually: auto-correction adjusts the timing offset round by round, by at most 1ms per round (see [Timing Offset and Auto-Correction](#timing-offset-and-auto-correction)).
 

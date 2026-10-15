@@ -112,6 +112,10 @@ class Navigator(Protocol):
         """
         ...
 
+    def skip_live(self, lb_short: str = "zero") -> bool:
+        """乐队确认页「跳过」一次（``loop.use_skip``），回到乐队确认页；没有次数、LB 用完时不跳过，返回 False。"""
+        ...
+
     def retry_live(self) -> None:
         """演奏中暂停 → 重试，这首歌从头开始，点完立即返回；不在演奏画面或重试没生效时抛 NavigationError。"""
         ...
@@ -198,6 +202,7 @@ class RunStats:
     full_combo: int = 0
     all_perfect: int = 0
     failures: int = 0
+    skips: int = 0  # 用「跳过」消耗 LB 的次数（不算在 plays 里）
     maintenance: bool = False  # 因服务器维护停止
     restart: bool = False  # 为换上新版本退出（挂机），Agent 换完后用同样的参数重新启动
 
@@ -265,10 +270,13 @@ class Runner:
         self.wall_clock = time.time  # 每天定时领取日常用（按电脑的本地时间）
         self._next_claim = 0.0  # 下次领取录音室练习的时刻：开始时先领一次
         lc = config.loop
-        if lc.until_lb_empty and not config.game.lb_cost:
-            raise ValueError("打到 LB 用完需要设置 game.lb_cost 为 1~3")
-        if lc.wait_lb and config.game.lb_cost is None:
-            raise ValueError("挂机需要设置 game.lb_cost 为 0~3")
+        game = config.game
+        if lc.until_lb_empty and not game.lb_spends:
+            raise ValueError("打到 LB 用完需要设置 game.lb_cost 为 1~5 或 game.lb_auto")
+        if lc.wait_lb and game.lb_cost is None and not game.lb_auto:
+            raise ValueError("挂机需要设置 game.lb_cost 为 0~5 或 game.lb_auto")
+        if lc.use_skip and not lc.challenge and game.lb_cost is None and not game.lb_auto:
+            logger.warning("没有设置每局 LB 消耗（不改游戏里的设置），不使用跳过")
         if str(lc.daily_claim_time).strip():
             parse_daily_time(lc.daily_claim_time)  # 时间格式不对时现在就报错
         self._next_daily: float | None = None  # 下次领取日常的时刻：开始后第一次到点时领
@@ -286,8 +294,20 @@ class Runner:
         logger.info("曲目：%s（%d，%s，%s）", song.display_title(), song.music_id, diff, basis)
         return song, diff
 
+    def _lb_short(self) -> str:
+        """LB 不够时怎么办（见 :meth:`Navigator.start_live`）。"""
+        lc, game = self.cfg.loop, self.cfg.game
+        if lc.wait_lb and not game.lb_cost and not game.lb_auto:
+            return "auto"  # 挂机消耗 0：有 LB 就消耗，用完消耗 0 接着打，不等
+        return "stop" if lc.until_lb_empty or lc.wait_lb else "zero"
+
     def play_once(self) -> PlayResult | None:
         self.nav.ensure_band_confirm(self.source.difficulty)
+        lb_short = self._lb_short()
+        if self.cfg.loop.use_skip and not self.cfg.loop.challenge:
+            # 先用跳过次数消耗 LB，用完了再演奏（跳过的是当前选中的歌）
+            while not self.stop.is_set() and self.nav.skip_live(lb_short):
+                self.stats.skips += 1
         song, diff = self._identify()
         try:
             chart = self.client.chart(song.music_id, diff, song.display_title())
@@ -298,11 +318,6 @@ class Runner:
             # 谱面站一时连不上：算这局失败，下一局再试（连续失败够多才停）
             raise NavigationError(str(e)) from e
         self.session.learned_offset_ms = self.store.learned_offset_ms + self._chart_offset(chart)
-        lc = self.cfg.loop
-        if lc.wait_lb and not self.cfg.game.lb_cost:
-            lb_short = "auto"  # 挂机消耗 0：有 LB 就消耗，用完消耗 0 接着打，不等
-        else:
-            lb_short = "stop" if lc.until_lb_empty or lc.wait_lb else "zero"
         self.nav.start_live(lb_short)
         outcome = self._play(chart)
         counts = self.nav.read_result(chart.judged_count or None)
@@ -529,10 +544,10 @@ class Runner:
         return wait
 
     def _wait_lb(self) -> None:
-        """挂机：停在乐队确认页等 LB 恢复到每局消耗数（LB 少于它时每局奖励也少）。
+        """挂机：停在乐队确认页等 LB 恢复到每局消耗数（LB 少于它时每局奖励也少；``game.lb_auto`` 时恢复 1 个就打）。
         每次醒来都重新进入乐队确认页：等待期间游戏可能日期变更、回到标题画面重新登录；
         到了定时领取录音室练习、日常的时间也会醒来去领。"""
-        need = self.cfg.game.lb_cost
+        need = 1 if self.cfg.game.lb_auto else self.cfg.game.lb_cost
         last: int | None = -1
         while True:
             self._check_update()
@@ -602,11 +617,12 @@ class Runner:
                 except (NavigationError, TimeoutError) as e:
                     logger.warning("恢复选曲页的设置失败：%s", e)
         logger.info(
-            "共演奏 %d 局：FC %d，AP %d，失败 %d",
+            "共演奏 %d 局：FC %d，AP %d，失败 %d%s",
             self.stats.plays,
             self.stats.full_combo,
             self.stats.all_perfect,
             self.stats.failures,
+            f"；跳过 {self.stats.skips} 次" if self.stats.skips else "",
         )
         return self.stats
 

@@ -78,6 +78,12 @@ def chart_key(music_id: int, difficulty: str) -> str:
     return f"{music_id}_{difficulty}"
 
 
+def game_day(now: float | None = None) -> str:
+    """游戏里的日期（YYYY-MM-DD）：每天北京时间 23:00（日本时间 0:00）变更。"""
+    t = time.time() if now is None else now
+    return time.strftime("%Y-%m-%d", time.gmtime(t + 9 * 3600))
+
+
 class RecordStore:
     def __init__(self, data_dir: str | Path = "data"):
         self.dir = Path(data_dir)
@@ -162,6 +168,35 @@ class RecordStore:
         if count:
             self._save_state(state)
         return count
+
+    def account(self, package: str) -> str:
+        """这个服上次用「切换账号」切到的账号（:func:`~ournotes_auto.nav.screens.account_key` 之后），没切过为空。"""
+        return self._load_state().get("account", {}).get(package, "")
+
+    def set_account(self, package: str, account: str) -> None:
+        state = self._load_state()
+        if state.setdefault("account", {}).get(package) != account:
+            state["account"][package] = account
+            self._save_state(state)
+
+    def lb_all_used(self, package: str) -> str | None:
+        """这个服的当前账号（:meth:`account`）上次用「全部消耗」（每天一次）是哪个游戏日（:func:`game_day`），没记过为 None。"""
+        state = self._load_state()
+        used = state.get("lb_all_used", {}).get(package)
+        return used.get(state.get("account", {}).get(package, "")) if isinstance(used, dict) else None
+
+    def set_lb_all_used(self, package: str, day: str | None) -> None:
+        """记下（``day`` 为 None 时删掉）这个服的当前账号在游戏日 ``day`` 用过了「全部消耗」。"""
+        state = self._load_state()
+        account = state.get("account", {}).get(package, "")
+        used = state.setdefault("lb_all_used", {})
+        if not isinstance(used.get(package), dict):
+            used[package] = {}  # 开发版里曾经不分账号
+        if day is not None:
+            used[package][account] = day
+        elif used[package].pop(account, None) is None:
+            return
+        self._save_state(state)
 
     def append(self, result: PlayResult) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)

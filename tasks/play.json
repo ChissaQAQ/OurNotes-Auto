@@ -28,6 +28,7 @@
                 "SongMode",
                 "Difficulty",
                 "ClearLbCost",
+                "UseSkip",
                 "LbRefill",
                 "MaxPlays"
             ],
@@ -45,6 +46,7 @@
                 "SongMode",
                 "Difficulty",
                 "IdleLbCost",
+                "UseSkip",
                 "LbRefill",
                 "StudioClaim",
                 "DailyClaim",
@@ -162,6 +164,22 @@
             ],
             "default_case": "No"
         },
+        "UseSkip": {
+            "type": "switch",
+            "label": "$opt.UseSkip",
+            "description": "$opt.UseSkip.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "use_skip": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "use_skip": false } } }
+                }
+            ],
+            "default_case": "No"
+        },
         "LbRefillCount": {
             "type": "input",
             "label": "$opt.LbRefillCount",
@@ -258,6 +276,12 @@
                     }
                 },
                 {
+                    "name": "auto",
+                    "label": "$opt.LbCost.auto",
+                    "description": "$opt.LbCost.auto.desc",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "lb_cost": "auto" } } }
+                },
+                {
                     "name": "0",
                     "label": "$opt.LbCost.0",
                     "pipeline_override": {
@@ -297,6 +321,16 @@
                             }
                         }
                     }
+                },
+                {
+                    "name": "4",
+                    "label": "$opt.LbCost.4",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "lb_cost": 4 } } }
+                },
+                {
+                    "name": "5",
+                    "label": "$opt.LbCost.5",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "lb_cost": 5 } } }
                 }
             ],
             "default_case": "keep"
@@ -306,6 +340,22 @@
             "label": "$opt.ClearLbCost",
             "description": "$opt.ClearLbCost.desc",
             "cases": [
+                {
+                    "name": "auto",
+                    "label": "$opt.LbCost.auto",
+                    "description": "$opt.LbCost.auto.desc",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "clear_lb_cost": "auto" } } }
+                },
+                {
+                    "name": "5",
+                    "label": "$opt.LbCost.5",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "clear_lb_cost": 5 } } }
+                },
+                {
+                    "name": "4",
+                    "label": "$opt.LbCost.4",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "clear_lb_cost": 4 } } }
+                },
                 {
                     "name": "3",
                     "pipeline_override": {
@@ -344,6 +394,22 @@
             "label": "$opt.IdleLbCost",
             "description": "$opt.IdleLbCost.desc",
             "cases": [
+                {
+                    "name": "auto",
+                    "label": "$opt.LbCost.auto",
+                    "description": "$opt.IdleLbCost.auto.desc",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "clear_lb_cost": "auto" } } }
+                },
+                {
+                    "name": "5",
+                    "label": "$opt.LbCost.5",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "clear_lb_cost": 5 } } }
+                },
+                {
+                    "name": "4",
+                    "label": "$opt.LbCost.4",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "clear_lb_cost": 4 } } }
+                },
                 {
                     "name": "3",
                     "pipeline_override": { "OurNotesParam": { "attach": { "clear_lb_cost": 3 } } }

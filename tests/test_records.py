@@ -132,3 +132,26 @@ def test_chart_offset_disabled():
     for _ in range(5):
         store.autotune(PlayResult(100001, "expert", fast=0, slow=50), cfg, 5.0)
     assert store.chart_offsets() == {} and store.learned_offset_ms < -4
+
+
+def test_lb_all_used_per_account(tmp_path):
+    """「全部消耗」每个账号每天一次：按「切换账号」切到的账号分开记。"""
+    store = RecordStore(tmp_path)
+    assert store.lb_all_used("pkg") is None and store.account("pkg") == ""
+    store.set_lb_all_used("pkg", "2026-10-15")  # 没切换过账号
+    store.set_account("pkg", "a")
+    assert store.lb_all_used("pkg") is None
+    store.set_lb_all_used("pkg", "2026-10-16")
+    assert store.lb_all_used("pkg") == "2026-10-16" and store.lb_all_used("other") is None
+    store.set_account("pkg", "")
+    assert store.lb_all_used("pkg") == "2026-10-15"
+    store.set_lb_all_used("pkg", None)
+    assert store.lb_all_used("pkg") is None
+    store.set_account("pkg", "a")
+    assert RecordStore(tmp_path).lb_all_used("pkg") == "2026-10-16"
+    state = store._load_state()
+    state["lb_all_used"]["pkg"] = "2026-10-14"  # 开发版里不分账号的旧格式
+    store._save_state(state)
+    assert store.lb_all_used("pkg") is None
+    store.set_lb_all_used("pkg", "2026-10-17")
+    assert store.lb_all_used("pkg") == "2026-10-17"

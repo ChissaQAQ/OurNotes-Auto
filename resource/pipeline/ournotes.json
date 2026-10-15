@@ -9,6 +9,7 @@
             "clear_lb_cost": 3,
             "lb_refill": false,
             "lb_refill_count": 0,
+            "use_skip": false,
             "studio_claim": true,
             "studio_claim_hours": 4,
             "daily_claim": true,

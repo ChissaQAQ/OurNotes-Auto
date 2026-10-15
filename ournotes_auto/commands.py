@@ -145,6 +145,7 @@ def cmd_look(cfg: Config, args) -> int:
 
 def check_run_config(cfg: Config) -> None:
     """连续演奏前检查配置（--set 或界面传来的值可能不合法）。"""
+    from .nav.screens import LB_MAX_COST
     from .sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES, SONG_MODES, parse_difficulties
 
     if cfg.game.difficulty not in DIFFICULTIES:
@@ -181,14 +182,21 @@ def check_run_config(cfg: Config) -> None:
         raise SetupError(
             f"挑战演出每局消耗的挑战pt应为 {'/'.join(map(str, CHALLENGE_COSTS))}：{cfg.game.challenge_cost}"
         )
-    if cfg.game.lb_cost is not None and cfg.game.lb_cost not in (0, 1, 2, 3):
-        raise SetupError(f"每局 LB 消耗应为 0~3：{cfg.game.lb_cost}")
-    if cfg.loop.until_lb_empty and not cfg.game.lb_cost:
-        raise SetupError("打到 LB 用完需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
-    if cfg.loop.wait_lb and cfg.game.lb_cost is None:
-        raise SetupError("挂机需要把每局 LB 消耗设为 0~3（--lb-cost 或 game.lb_cost；0 为不等 LB：有就每局消耗 1 个，用完消耗 0 接着打）")
-    if cfg.game.lb_refill and not cfg.game.lb_cost:
-        raise SetupError("LB 不足时用道具补充需要把每局 LB 消耗设为 1~3（--lb-cost 或 game.lb_cost）")
+    if cfg.game.lb_cost is not None and cfg.game.lb_cost not in range(LB_MAX_COST + 1):
+        raise SetupError(f"每局 LB 消耗应为 0~{LB_MAX_COST}：{cfg.game.lb_cost}")
+    if cfg.loop.until_lb_empty and not cfg.game.lb_spends:
+        raise SetupError(
+            f"打到 LB 用完需要把每局 LB 消耗设为 1~{LB_MAX_COST} 或自动（--lb-cost / --lb-auto 或 game.lb_cost / game.lb_auto）"
+        )
+    if cfg.loop.wait_lb and cfg.game.lb_cost is None and not cfg.game.lb_auto:
+        raise SetupError(
+            f"挂机需要把每局 LB 消耗设为 0~{LB_MAX_COST} 或自动（--lb-cost / --lb-auto 或 game.lb_cost / game.lb_auto；"
+            "0 为不等 LB：有就每局消耗 1 个，用完消耗 0 接着打）"
+        )
+    if cfg.game.lb_refill and not cfg.game.lb_spends:
+        raise SetupError(
+            f"LB 不足时用道具补充需要把每局 LB 消耗设为 1~{LB_MAX_COST} 或自动（--lb-cost / --lb-auto 或 game.lb_cost / game.lb_auto）"
+        )
     if cfg.game.lb_refill_limit < 0:
         raise SetupError(f"用道具补充 LB 的上限应为 0（不限）或正整数：{cfg.game.lb_refill_limit}")
     if cfg.loop.studio_claim_hours < 0:
@@ -232,6 +240,10 @@ def cmd_run(cfg: Config, args) -> int:
         cfg.loop.max_plays = args.max_plays
     if args.lb_cost is not None:
         cfg.game.lb_cost = args.lb_cost
+    if args.lb_auto:
+        cfg.game.lb_auto = True
+    if args.use_skip:
+        cfg.loop.use_skip = True
     if args.lb_refill is not None:
         cfg.game.lb_refill = True
         cfg.game.lb_refill_limit = args.lb_refill
@@ -340,6 +352,7 @@ def cmd_start(cfg: Config, args) -> int:
 def cmd_switch_account(cfg: Config, args) -> int:
     """在标题画面退出当前账号，从登录记录里选账号名包含 ``args.account`` 的账号登录，然后进入游戏。"""
     from .config import INTL_PACKAGES
+    from .nav.screens import account_key
     from .records import RecordStore
     from .runner import NavigationError
 
@@ -351,7 +364,9 @@ def cmd_switch_account(cfg: Config, args) -> int:
         nav = _game_navigator(cfg, args, source, touch)
         try:
             nav.switch_account(args.account, args.timeout)
-            if RecordStore("data").clear_ap_done():
+            store = RecordStore("data")
+            store.set_account(cfg.device.package, account_key(args.account))  # 「全部消耗」按账号记
+            if store.clear_ap_done():
                 logger.info("换了账号，之后优先没 AP 的歌时各难度重新检查")
             screen = nav.ensure_in_game(args.timeout)
         except NavigationError as e:
@@ -435,6 +450,7 @@ def cmd_select(cfg: Config, args) -> int:
 
 
 def register(sub) -> None:
+    from .nav.screens import LB_MAX_COST
     from .sources import SONG_MODES
 
     sp = sub.add_parser("screenshot", help="截图（可叠加判定线/轨道线核对几何参数）")
@@ -483,7 +499,20 @@ def register(sub) -> None:
     )
     sp.add_argument("--songs", metavar="LIST", help="覆盖 loop.song_list（歌单：曲目 ID 或曲名，逗号分隔，可加 @难度）")
     sp.add_argument("-n", "--max-plays", type=int, help="覆盖 loop.max_plays（0 为不限）")
-    sp.add_argument("--lb-cost", type=int, choices=(0, 1, 2, 3), help="覆盖 game.lb_cost（每局消耗的 LB）")
+    sp.add_argument(
+        "--lb-cost",
+        type=int,
+        choices=range(LB_MAX_COST + 1),
+        help="覆盖 game.lb_cost（每局消耗的 LB；4、5 要 T.G.W CARD 10、14 级解锁）",
+    )
+    sp.add_argument(
+        "--lb-auto",
+        action="store_true",
+        help="每局按持有数自动选 LB 消耗（能选的最大值，不够就全部消耗；每天一次的「全部消耗」在能省 2 局以上时用）",
+    )
+    sp.add_argument(
+        "--use-skip", action="store_true", help="自由演出先用乐队确认页的「跳过」消耗 LB，跳过次数用完了再演奏"
+    )
     sp.add_argument(
         "--lb-refill",
         type=int,

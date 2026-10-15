@@ -21,9 +21,15 @@ class FakeNav:
     def __init__(self, title="诗超绊", diff="expert"):
         self.title, self.diff = title, diff
         self.calls = []
+        self.skips = 0  # 剩余的跳过次数
 
     def ensure_band_confirm(self, difficulty=None):
         self.calls.append(f"ensure:{difficulty}")
+
+    def skip_live(self, lb_short="zero"):
+        self.calls.append(f"skip:{lb_short}")
+        self.skips -= 1
+        return self.skips >= 0
 
     def selected_song(self):
         return SongLabel(self.title, self.diff)
@@ -127,6 +133,22 @@ def test_runner_plays_and_autotunes(tmp_path):
     assert hist[0].offset_ms == 3.0 and hist[1].offset_ms < 3.0
     assert hist[0].stalls is None
 
+
+def test_runner_uses_skips_first(tmp_path):
+    """使用跳过：每局前先把跳过次数用完再演奏；跳过不算局数，挑战演出不跳过。"""
+    runner, nav, _ = make(tmp_path)
+    runner.cfg.loop.use_skip = True
+    runner.cfg.game.lb_cost = 3
+    nav.skips = 2
+    stats = runner.run()
+    assert stats.plays == 2 and stats.skips == 2
+    assert nav.calls[:5] == ["ensure:expert", "skip:zero", "skip:zero", "skip:zero", "start:zero"]
+    assert nav.calls.count("skip:zero") == 4  # 第二局前又看了一次（次数用完了）
+    runner, nav, _ = make(tmp_path / "challenge")
+    runner.cfg.loop.use_skip = runner.cfg.loop.challenge = True
+    nav.skips = 2
+    runner.run()
+    assert not any(c.startswith("skip") for c in nav.calls)
 
 def test_runner_adds_chart_offset(tmp_path):
     """这张谱面学到了自己的 offset 时，演奏用全局 + 谱面的值；关掉按谱面修正就不加。"""

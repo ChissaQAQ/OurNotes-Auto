@@ -10,11 +10,14 @@ device:
 game:
   difficulty: expert         # easy / normal / hard / expert
   note_speed: 5.0            # 游戏内「节奏图示速度」，须与 play.sync.tau_s 对应
-  # 每局消耗的 LIVE BOOST：0~3，null 为不改游戏里的设置。第一局前自动在「消耗LB」弹窗里选好；
-  # LB 不够时游戏会消耗剩余全部；用完时弹出「恢复LIVE BOOST」只点取消，之后 30 分钟内改为 0
+  # 每局消耗的 LIVE BOOST：0~5（4、5 要 T.G.W CARD 10、14 级解锁，没解锁时按能选的最大值），null 为不改游戏里的设置。
+  # 第一局前自动在「消耗LB」弹窗里选好；LB 不够时游戏会消耗剩余全部；用完时弹出「恢复LIVE BOOST」只点取消，之后 30 分钟内改为 0
   # （loop.until_lb_empty 为 true 时则就此结束）
   lb_cost: null
-  # true：每局前 LB 持有少于 lb_cost（须为 1~3）时，用道具里的 LIVE BOOST饮料补够（从「消耗LB」→「恢复」进去，
+  # true：不看 lb_cost，每局按持有数选能选的最大消耗，不够就全部消耗；每天一次的「全部消耗」在持有 10 个以上、
+  # 或比一局局消耗能少打 2 局以上时用（用过记在 data/state.json，按「切换账号」切到的账号分开记，当天不再看）
+  lb_auto: false
+  # true：每局前 LB 持有少于 lb_cost（须为 1~5，或 lb_auto）时，用道具里的 LIVE BOOST饮料补够（从「消耗LB」→「恢复」进去，
   # 只在「道具」页选，先用小型饮料；绝不用星钻、不看广告）。饮料用完或补够 lb_refill_limit 个后按上面的方式处理
   lb_refill: false
   lb_refill_limit: 0         # 本次运行最多补充多少 LB，0 为不限（直到饮料用完）
@@ -39,9 +42,11 @@ loop:
   song_list: ""              # 歌单：曲目 ID 或曲名，逗号分隔，可加 @难度，如 "100010, 碧天伴走@hard"
   max_plays: 0               # 0 为不限
   challenge: false           # true：打挑战演出（部分活动期间开放，消耗挑战pt），打到 CP 不够一局为止
-  until_lb_empty: false      # true：打到 LB 用完为止（清体力，需要 game.lb_cost 为 1~3）
+  until_lb_empty: false      # true：打到 LB 用完为止（清体力，需要 game.lb_cost 为 1~5 或 game.lb_auto）
   wait_lb: false             # true：挂机，LB 用完后停在乐队确认页等它恢复到 game.lb_cost 个再接着打，一直运行
-                             # （game.lb_cost 为 0 时不等：持有 LB 时每局消耗 1 个，用完了消耗 0 接着打）
+                             # （game.lb_cost 为 0 时不等：持有 LB 时每局消耗 1 个，用完了消耗 0 接着打；
+                             # game.lb_auto 时每恢复 1 个就消耗）
+  use_skip: false            # true：自由演出先用乐队确认页的「跳过」消耗 LB（每天有次数），次数用完了再演奏
   studio_claim_hours: 0      # 每隔这么多小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领（最多累计 12 小时）
   daily_claim_time: ""       # 每天到这个时间（电脑的本地时间，要加引号，如 "22:30"）回主界面领一次任务、礼物盒等日常；
                              # 留空不领。游戏每天 23:00 日期变更，挂机跨天时用

@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 import threading
 from concurrent.futures import Future
 from pathlib import Path
@@ -18,13 +19,15 @@ from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import (
     CLEAR_MARK_ROI,
     CP_RADIO,
-    LB_RADIO,
+    LB_ALL_CHECK,
     RESULT_ROW_Y,
+    SKIP_ALL_CHECK,
     SELECT_TITLE_ROI,
     LbDrink,
     in_roi,
 )
 from ournotes_auto.nav.song_select import BTN_DIFFICULTY
+from ournotes_auto.records import RecordStore, game_day
 from ournotes_auto.result_reader import OcrItem
 from ournotes_auto.runner import (
     CpExhausted,
@@ -403,10 +406,16 @@ def test_stray_retry_confirm_is_cancelled(monkeypatch):
 
 
 class LbGame(FakeGame):
-    """乐队确认页 + LB 消耗设置弹窗（按当前选中项画出白色单选按钮）；``held`` 为 0 且消耗不为 0 时
-    LIVE START 弹出恢复 LIVE BOOST（``popup``，实机大多直接开始、不消耗）。顶栏和弹窗上的持有数按 ``held``
+    """乐队确认页 + LB 消耗设置弹窗 / 跳过确认弹窗：消耗数列表只露出 4 行（``top`` 为最大能选几个，超过 3 时上下拖
+    才看得全，``scroll`` 为露出的最小一行），按当前选中项画出白色单选按钮，勾上「全部消耗」（``all_on``，今天用过了
+    ``all_used`` 或持有不到 4 个时勾不上）也画白色。``held`` 为 0 且消耗不为 0 时 LIVE START 弹出恢复 LIVE BOOST
+    （``popup``，实机大多直接开始、不消耗），开始的局记在 ``starts``（消耗, 全部消耗）。顶栏和弹窗上的持有数按 ``held``
     改写，``bar`` 指定顶栏的识别结果（模拟读错），``timer`` 为顶栏下一行的恢复倒计时（LB 没满时才有），
-    ``setting`` 为弹窗用的截图（活动期间每行还写着「活动pt」「挑战pt」）。"""
+    ``setting`` 为弹窗用的截图（活动期间每行还写着「活动pt」「挑战pt」）。``skips`` 为还能跳过几次，跳过消耗的 LB
+    记在 ``skipped``。"""
+
+    DIALOGS = {"lb_setting": LB_ALL_CHECK, "skip_confirm": SKIP_ALL_CHECK}  # 弹窗 → 「全部消耗」复选框
+    RADIO_X = 315
 
     def __init__(
         self,
@@ -416,6 +425,9 @@ class LbGame(FakeGame):
         bar: str | None = None,
         timer: str | None = None,
         setting: str = "lb_setting",
+        top: int = 3,
+        skips: int = 0,
+        all_used: bool = False,
     ):
         super().__init__("band_confirm")
         self.cost = cost
@@ -424,38 +436,116 @@ class LbGame(FakeGame):
         self.bar = bar
         self.timer = timer
         self.setting = setting
+        self.top = top
+        self.scroll = 0
+        self.skips = skips
+        self.all_used = all_used
+        self.all_on = False
+        self.starts: list[tuple[int, bool]] = []
+        self.skipped: list[int] = []
+        self.drags = 0
+        self._drag_y = [0.0, 0.0]
+
+    def rows(self) -> dict[int, int]:
+        """露出的各行：消耗 → 单选按钮中心 y（大的在上面）。"""
+        return {c: 292 - 56 * (c - self.scroll) for c in range(self.scroll, min(self.scroll + 3, self.top) + 1)}
 
     def grab(self):
-        if self.state != "lb_setting":
+        if self.state not in self.DIALOGS:
             return super().grab()
         w, h = self.size
         img = np.full((h, w, 3), (71, 38, 38), np.uint8)
-        x, y = LB_RADIO[self.cost]
-        cv2.circle(img, (x * w // 1280, y * h // 720), 12, (255, 255, 255), -1)
+        lit = [(self.RADIO_X, y) for c, y in self.rows().items() if c == self.cost]
+        if self.all_on:
+            lit.append(self.DIALOGS[self.state])
+        for x, y in lit:
+            cv2.circle(img, (x * w // 1280, y * h // 720), 12, (255, 255, 255), -1)
         return img, 0.0
 
     def read(self, frame, roi=None):
-        name = "lb_setting" if isinstance(frame, np.ndarray) else frame
+        name = self.state if isinstance(frame, np.ndarray) else frame
         items = load_items(self.setting if name == "lb_setting" else name)
-        if name not in ("band_confirm", "lb_setting"):
+        if name not in ("band_confirm", *self.DIALOGS):
             return items
         bar = f"{self.held}/10" if self.bar is None else self.bar
         texts = {"10": bar, "99": f"{self.held}/99"}
-        items = [OcrItem(it.x, it.y, it.w, it.h, texts.get(it.text.rpartition("/")[2], it.text)) for it in items]
-        if name == "band_confirm" and self.timer is not None:
-            items.append(OcrItem(1037, 46, 73, 28, self.timer))
+        items = [
+            OcrItem(it.x, it.y, it.w, it.h, re.sub(r"还剩\d+次", f"还剩{self.skips}次", texts.get(it.text.rpartition("/")[2], it.text)))
+            for it in items
+        ]
+        if name == "band_confirm":
+            if self.timer is not None:
+                items.append(OcrItem(1037, 46, 73, 28, self.timer))
+            return items
+        # 弹窗：消耗数按露出的行重写，「今日次数已用完」按 all_used
+        items = [
+            it
+            for it in items
+            if "已用完" not in it.text and not (re.fullmatch(r"\d", it.text) and 400 < it.x + it.w / 2 < 470 and 95 < it.cy < 320)
+        ]
+        items += [OcrItem(424, y - 17, 28, 34, str(c)) for c, y in self.rows().items()]
+        if self.all_used:
+            items.append(OcrItem(572, 419, 130, 17, "今日次数已用完"))
         return items
 
     def tap(self, x, y):
         p = (x * 1280 / self.size[0], y * 720 / self.size[1])
-        if self.state == "lb_setting":
-            self.cost = next((c for c, q in LB_RADIO.items() if math.dist(p, q) < 20), self.cost)
-        if self.state == "band_confirm" and math.dist(p, (1140, 648)) < 40 and self.cost and not self.held:
-            if self.popup:
-                self.taps.append((self.state, p))
-                self.state = "lb_recover"
-                return
+        here = self.state
+
+        def near(q, r=40):
+            return math.dist(p, q) < r
+
+        nxt = None
+        if here in self.DIALOGS:
+            if near(self.DIALOGS[here], 20) and not self.all_used and self.held >= 4:
+                self.all_on = not self.all_on
+            self.cost = next((c for c, y in self.rows().items() if near((self.RADIO_X, y), 20)), self.cost)
+        if here == "band_confirm":
+            if near((920, 665)):
+                self.scroll = 0
+            elif near((780, 664)) and self.skips:
+                self.scroll, nxt = 0, "skip_confirm"
+            elif near((1140, 648)):
+                if self.cost and not self.held and self.popup:
+                    nxt = "lb_recover"
+                else:
+                    self.starts.append((self.cost, self.all_on))
+                    if self.all_on:
+                        self.all_used, self.all_on = True, False
+        elif here == "skip_confirm":
+            if near((497, 657)):
+                nxt = "band_confirm"
+            elif near((781, 657)):
+                spent = min(self.held, 10 if self.all_on else self.cost)
+                self.held -= spent
+                self.skips -= 1
+                self.skipped.append(spent)
+                if self.all_on:
+                    self.all_used, self.all_on = True, False
+                nxt = "skip_result"
+        elif here == "skip_result" and near((1126, 659)):
+            nxt = "band_confirm"
+        if nxt:
+            self.taps.append((here, p))
+            self.state = nxt
+            return
         super().tap(x, y)
+
+    # 拖消耗数列表：往下拖露出上面更大的，往上拖回到 0
+    def down(self, finger, x, y):
+        self._drag_y = [y * 720 / self.size[1]] * 2
+
+    def move(self, finger, x, y):
+        self._drag_y[1] = y * 720 / self.size[1]
+
+    def up(self, finger):
+        dy = self._drag_y[1] - self._drag_y[0]
+        if self.state in self.DIALOGS and abs(dy) > 50:
+            self.scroll = max(self.top - 3, 0) if dy > 0 else 0
+            self.drags += 1
+
+    def flush(self):
+        pass
 
 
 def tapped(game, point, radius=20):
@@ -901,9 +991,178 @@ def test_lb_recover_cancelled_while_navigating():
     assert game.state == "band_confirm" and tapped(game, (498, 663)) == ["lb_recover"]
 
 
+@pytest.mark.parametrize(
+    "held, top, all_ok, want",
+    [
+        (0, 3, True, (0, False)),
+        (2, 3, True, (2, False)),
+        (6, 3, True, (3, False)),  # 一局局消耗 2 局打完，「全部消耗」只省 1 局
+        (7, 3, True, (3, True)),  # 3 局 → 1 局
+        (7, 3, False, (3, False)),  # 今天用过了
+        (9, 5, True, (5, False)),
+        (10, 5, True, (5, True)),  # 持有 10 个（「全部消耗」最多就消耗 10 个）
+        (24, 4, True, (4, True)),
+    ],
+)
+def test_lb_auto_cost(held, top, all_ok, want):
+    assert navigator.lb_auto_cost(held, top, all_ok) == want
+
+
+def lb_clock(monkeypatch, nav):
+    """导航里的等待改为推进假时钟；拖列表结束时的停顿（不可打断的 time.sleep）跳过。"""
+    now = [1000.0]
+    monkeypatch.setattr(navigator.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(navigator.time, "sleep", lambda s: None)
+
+    def sleep(s):
+        now[0] += s
+
+    nav._sleep = sleep
+    return now
+
+
+def lb_nav(monkeypatch, game, store=None, **game_cfg):
+    nav = make_nav(game, game, game)
+    for key, value in game_cfg.items():
+        setattr(nav.cfg.game, key, value)
+    nav.store = store
+    lb_clock(monkeypatch, nav)
+    return nav
+
+
+def next_live(game, held=None):
+    game.state = "band_confirm"
+    game.taps.clear()
+    if held is not None:
+        game.held = held
+
+
+def test_set_lb_cost_above_three_drags_list(monkeypatch):
+    """每局消耗 4、5（T.G.W CARD 10、14 级解锁）：列表只露出 4 行，往下拖露出上面更大的再选。"""
+    game = LbGame(cost=0, top=5)
+    nav = lb_nav(monkeypatch, game, lb_cost=4)
+    nav.start_live()
+    assert game.starts == [(4, False)] and game.state == "loading"
+    assert game.drags == 1 and nav._lb_top == 5
+
+
+def test_set_lb_cost_capped_when_locked(monkeypatch):
+    """设置的消耗还没解锁（拖过列表最大也只有 3）：按能选的最大值消耗。"""
+    game = LbGame(cost=0, top=3)
+    nav = lb_nav(monkeypatch, game, lb_cost=5)
+    nav.start_live()
+    assert game.starts == [(3, False)] and nav._lb_top == 3
+
+
+def test_lb_auto_picks_max_and_all_once_a_day(monkeypatch, tmp_path):
+    """自动选消耗：持有 10 个以上时用一次「全部消耗」（记在 state.json，当天不再用），之后按能选的最大值消耗；
+    顶栏的持有数算出来的选择和现在的一样就不开弹窗。"""
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=24, top=4)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    nav.start_live()
+    assert game.starts == [(4, True)] and game.all_used
+    assert store.lb_all_used(nav.cfg.device.package) == game_day()
+    next_live(game, held=14)
+    nav.start_live()
+    assert game.starts[-1] == (4, False) and not tapped(game, LB_ALL_CHECK)
+    next_live(game, held=10)
+    nav.start_live()
+    assert game.starts[-1] == (4, False) and not tapped(game, (920, 665))  # 没打开弹窗
+
+
+def test_lb_auto_follows_held_and_stops_when_empty(monkeypatch):
+    game = LbGame(cost=3, held=2, top=3)
+    nav = lb_nav(monkeypatch, game, lb_auto=True)
+    nav.start_live("stop")
+    assert game.starts == [(2, False)]  # 不够一局最大消耗：全部消耗掉
+    next_live(game, held=7)  # 一局局消耗要 3 局，「全部消耗」1 局
+    nav.start_live("stop")
+    assert game.starts[-1] == (3, True)
+    next_live(game, held=0)
+    with pytest.raises(LbExhausted):
+        nav.start_live("stop")
+    assert game.state == "band_confirm" and not tapped(game, (1140, 648))
+    nav.start_live()  # 不清体力时消耗 0 接着打
+    assert game.starts[-1] == (0, False)
+
+
+def test_lb_auto_all_used_elsewhere(monkeypatch, tmp_path):
+    """弹窗上写着今天的「全部消耗」已用完（别处用过了）：不勾，记下来。"""
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=10, top=3, all_used=True)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    nav.start_live()
+    assert game.starts == [(3, False)] and not tapped(game, LB_ALL_CHECK)
+    assert store.lb_all_used(nav.cfg.device.package) == game_day()
+
+
+def test_lb_auto_skips_check_when_used_today(monkeypatch, tmp_path):
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=7, top=3)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    store.set_lb_all_used(nav.cfg.device.package, game_day())
+    nav.start_live()
+    assert game.starts == [(3, False)] and not tapped(game, LB_ALL_CHECK)
+
+
+def test_skip_live_until_used_up(monkeypatch):
+    """使用跳过：乐队确认页还有跳过次数时跳过（在确认弹窗里选好消耗），次数用完了才演奏。"""
+    game = LbGame(cost=0, held=8, skips=2)
+    nav = lb_nav(monkeypatch, game, lb_cost=3)
+    assert nav.skip_live() and game.skipped == [3] and game.state == "band_confirm"
+    assert nav.skip_live() and game.skipped == [3, 3] and game.skips == 0
+    game.taps.clear()
+    assert not nav.skip_live() and not game.taps
+    nav.start_live()
+    assert game.starts == [(3, False)] and game.state == "loading"
+
+
+def test_skip_live_closes_when_lb_empty(monkeypatch):
+    game = LbGame(cost=3, held=0, skips=2)
+    nav = lb_nav(monkeypatch, game, lb_cost=3)
+    assert not nav.skip_live() and not game.taps  # 顶栏持有 0：不打开确认弹窗
+    game.bar = ""  # 顶栏没读出来：弹窗里看到持有 0 点「关闭」
+    assert not nav.skip_live()
+    assert game.state == "band_confirm" and game.skips == 2 and not game.skipped
+    assert tapped(game, (497, 657)) == ["skip_confirm"]  # 关闭
+
+
+@pytest.mark.parametrize("cost", [None, 0])
+def test_skip_live_needs_lb_cost(monkeypatch, cost):
+    """不改消耗设置、或者每局消耗 0 时不跳过（跳过不消耗 LB 就白用了次数）。"""
+    game = LbGame(cost=3, held=8, skips=2)
+    nav = lb_nav(monkeypatch, game, lb_cost=cost)
+    assert not nav.skip_live() and not game.taps
+
+
+def test_skip_live_auto_uses_all(monkeypatch, tmp_path):
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=10, skips=2)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    assert nav.skip_live() and game.skipped == [10] and game.held == 0
+    assert tapped(game, SKIP_ALL_CHECK) == ["skip_confirm"]
+    assert store.lb_all_used(nav.cfg.device.package) == game_day()
+    assert not nav.skip_live() and game.skips == 1  # LB 用完了：关闭，不跳过
+
+
+def test_skip_live_idle_zero_cost(monkeypatch):
+    """挂机每局消耗 0（有 LB 就每局消耗 1 个）：跳过也消耗 1 个。"""
+    game = LbGame(cost=0, held=3, skips=1)
+    nav = lb_nav(monkeypatch, game, lb_cost=0)
+    assert nav.skip_live("auto") and game.skipped == [1]
+
+
+def test_skip_live_not_in_challenge(monkeypatch):
+    game = LbGame(cost=3, held=8, skips=2)
+    nav = lb_nav(monkeypatch, game, lb_cost=3)
+    nav.challenge = True
+    assert not nav.skip_live() and not game.taps
+
+
 def test_invalid_lb_cost():
     cfg = Config()
-    cfg.game.lb_cost = 4
+    cfg.game.lb_cost = 6
     with pytest.raises(ValueError):
         GameNavigator(cfg, None, None, None)
 

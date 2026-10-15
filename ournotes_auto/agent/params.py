@@ -9,6 +9,7 @@ from typing import Any
 
 from ..config import JP_PACKAGE, parse_daily_time
 from ..device.mumu_ipc import find_dll
+from ..nav.screens import LB_MAX_COST
 from ..sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
 
 PARAM_NODE = "OurNotesParam"  # 界面选项都覆盖到这个节点的 attach 上
@@ -153,19 +154,28 @@ def flag(attach: Mapping[str, Any], key: str, default: bool = False) -> bool:
     return _bool(attach, key) if key in attach else default
 
 
-def _lb_cost(attach: Mapping[str, Any]) -> str:
-    """``lb_cost``：``keep``（不改游戏里的设置）或 0~3。"""
-    if str(_get(attach, "lb_cost")).strip().lower() == "keep":
-        return "null"
-    return str(_int(attach, "lb_cost", 0, 3))
+def _lb_cost(attach: Mapping[str, Any], key: str = "lb_cost", lo: int = 0) -> dict[str, str]:
+    """``lb_cost`` / ``clear_lb_cost``：``auto``（每局按持有数自动选）、``keep``（不改游戏里的设置，只有 ``lb_cost``）
+    或 ``lo``~5。"""
+    raw = str(_get(attach, key)).strip().lower()
+    if raw == "auto":
+        return {"game.lb_cost": "null", "game.lb_auto": "true"}
+    if raw == "keep" and key == "lb_cost":
+        return {"game.lb_cost": "null", "game.lb_auto": "false"}
+    return {"game.lb_cost": str(_int(attach, key, lo, LB_MAX_COST)), "game.lb_auto": "false"}
 
 
-def _lb_refill(attach: Mapping[str, Any], lb_cost: str) -> dict[str, str]:
+def _lb_spends(sets: Mapping[str, str]) -> bool:
+    """按这些配置项会消耗 LB（自动选，或每局消耗 1~5）。"""
+    return sets["game.lb_auto"] == "true" or sets["game.lb_cost"] not in ("null", "0")
+
+
+def _lb_refill(attach: Mapping[str, Any], sets: Mapping[str, str]) -> dict[str, str]:
     """``lb_refill``（开关）、``lb_refill_count``（最多补充多少 LB，0 为直到道具用完）；资源是旧版没有这两项时不补充。"""
     if not flag(attach, "lb_refill"):
         return {"game.lb_refill": "false"}
-    if lb_cost in ("null", "0"):
-        raise ParamError("LB 不足时用道具补充，需要把「每局消耗 LB」选为 1~3")
+    if not _lb_spends(sets):
+        raise ParamError(f"LB 不足时用道具补充，需要把「每局消耗 LB」选为 1~{LB_MAX_COST} 或自动")
     return {"game.lb_refill": "true", "game.lb_refill_limit": str(_int(attach, "lb_refill_count", 0))}
 
 
@@ -199,10 +209,11 @@ def _ap_settings(attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.song_mode": "ap",
         "loop.ap_difficulties": ",".join(chosen),
         "loop.ap_max_attempts": str(_int(attach, "ap_max_attempts", 1, 99)),
-        "game.lb_cost": lb_cost,
+        **lb_cost,
         **_lb_refill(attach, lb_cost),
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
+        "loop.use_skip": "false",
     }
 
 
@@ -233,6 +244,7 @@ def _challenge_settings(attach: Mapping[str, Any]) -> dict[str, str]:
         "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
+        "loop.use_skip": "false",
     }
     if mode == "ap_first":
         sets["loop.ap_first_difficulties"] = ",".join(reversed(DIFFICULTIES)) if high_first else difficulty
@@ -253,8 +265,9 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
 
     共用 attach 键：``max_plays`` ``touch`` ``restart_low_fps``（关掉时不因游戏变卡重启，旧资源没有这项时开）和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
     重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
-    ``song_list``）；重复刷歌另有 ``lb_cost``（``keep`` 或 0~3），
-    清体力 / 挂机另有 ``clear_lb_cost``（清体力 1~3，挂机 0~3：0 时不等 LB，有就消耗、用完消耗 0 一直打）；AP补完另有 ``ap_expert`` 等
+    ``song_list``）；重复刷歌另有 ``lb_cost``（``keep``、``auto`` 或 0~5），
+    清体力 / 挂机另有 ``clear_lb_cost``（``auto`` 或清体力 1~5、挂机 0~5：0 时不等 LB，有就消耗、用完消耗 0 一直打）
+    和 ``use_skip``（先用「跳过」消耗 LB）；AP补完另有 ``ap_expert`` 等
     四个难度开关、``ap_order``、``ap_max_attempts`` 和 ``lb_cost``。四个任务都有 ``lb_refill`` ``lb_refill_count``
     （LB 不足时用道具补充）。挂机另有 ``studio_claim`` ``studio_claim_hours``（定时领取录音室练习）和
     ``daily_claim`` ``daily_claim_time``（每天定时领取日常），其他任务不领。
@@ -287,14 +300,14 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
             raise ParamError("选曲方式为歌单时要填写歌单")
         sets["loop.song_list"] = songs
     if task == "repeat":
-        sets["game.lb_cost"] = _lb_cost(attach)
+        sets.update(_lb_cost(attach))
         sets["loop.until_lb_empty"] = "false"
     else:
-        cost = _int(attach, "clear_lb_cost", 0 if task == "idle" else 1, 3)
-        sets["game.lb_cost"] = str(cost)
-        sets["loop.until_lb_empty"] = "true" if cost else "false"  # 挂机消耗 0 时不等 LB，一直打
-    sets.update(_lb_refill(attach, sets["game.lb_cost"]))
+        sets.update(_lb_cost(attach, "clear_lb_cost", 0 if task == "idle" else 1))
+        sets["loop.until_lb_empty"] = "true" if _lb_spends(sets) else "false"  # 挂机消耗 0 时不等 LB，一直打
+    sets.update(_lb_refill(attach, sets))
     sets["loop.wait_lb"] = "true" if task == "idle" else "false"
+    sets["loop.use_skip"] = "true" if task != "repeat" and flag(attach, "use_skip") else "false"
     return sets
 
 
