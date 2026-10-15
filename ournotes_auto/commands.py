@@ -295,7 +295,7 @@ def cmd_run(cfg: Config, args) -> int:
 
 
 def _launch_game(cfg: Config) -> bool:
-    """游戏没在运行时启动它，返回是否启动了。"""
+    """游戏没在运行时启动它（在后台时切回前台），返回是否启动或切换了。"""
     from .device import adb
 
     adb.resolve_package(cfg.device)
