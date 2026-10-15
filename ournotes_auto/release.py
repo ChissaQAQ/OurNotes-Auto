@@ -60,13 +60,16 @@ STATUS_FILE = f"{UPDATE_DIR}/status.json"  # 更新器的进度，Agent 读了�
 MANIFEST_FILE = f"{UPDATE_DIR}/manifest.json"  # Agent 下载的 update.json（带检查时间），更新器按它更新
 FAILED_FILE = f"{UPDATE_DIR}/failed.json"  # 更新失败、已经还原的版本，不再自动重试
 EXIT_UPDATE = 75  # 演奏进程为了热更新在安全点退出的退出码，Agent 看到后用同样的参数重新启动它
-_VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+_VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?")
 
 
 def parse_version(text: str | None) -> tuple[int, ...] | None:
-    """``v1.2.3`` / ``1.2.3`` → (1, 2, 3)；开发版等其他格式返回 None。"""
+    """``v1.2.3`` / ``1.2.3`` → (1, 2, 3)，小修补 ``v1.2.3.1`` → (1, 2, 3, 1)（比 v1.2.3 新、比 v1.2.4 旧）；开发版等其他格式返回 None。
+
+    v0.1.5 及以前的版本只认三段，四段的版本号要等用户更新到 v0.1.6 之后才收得到。
+    """
     m = _VERSION.fullmatch(str(text or "").strip())
-    return tuple(int(x) for x in m.groups()) if m else None
+    return tuple(int(x) for x in m.groups() if x is not None) if m else None
 
 
 def is_newer(latest: str | None, current: str | None) -> bool:

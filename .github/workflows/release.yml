@@ -62,7 +62,7 @@ jobs:
             python tools/install.py --ui "$zip" --python downloads/python-embed.zip --version "$VERSION" --out "dist/$ui"
             (cd "dist/$ui" && 7z a -tzip "../OurNotes-Auto-$VERSION-win-x64-$ui.zip" . > /dev/null)
           done
-          # 自动更新用的 app 层压缩包和更新清单；手动运行时版本号不是 vX.Y.Z，不生成
+          # 自动更新用的 app 层压缩包和更新清单；手动运行时版本号不是 vX.Y.Z（或 vX.Y.Z.W），不生成
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             python tools/make_update.py dist/OurNotes-Auto-$VERSION-win-x64-*.zip --out dist
           fi
