@@ -24,6 +24,11 @@ from ournotes_auto.nav.daily import (
     pass_banners,
     practice_level_up,
     purchase_ok,
+    free_recruit,
+    free_recruit_ok,
+    paid_gems,
+    recruit_badge,
+    recruit_top,
     reward_close,
     reward_ok,
 )
@@ -493,3 +498,138 @@ def test_failed_job_does_not_stop_others(clock):
     assert nav.run_daily(["missions", "gifts"]) == ["任务"]
     assert game.claimed == ["daily_gifts_empty"]
     assert game.state == "home"
+
+
+# 免费招募：主界面「招募」→ 招募页 → 免费（1次）→ 确认招募 OK → 演出 SKIP → 招募结算 招募TOP → 招募页（已用）
+RECRUIT_ROUTES = {
+    "home_recruit_badge": [((576, 660), "recruit_free")],
+    "recruit_free": [((918, 562), "recruit_confirm"), ((164, 40), "home_recruit_badge")],
+    "recruit_confirm": [((782, 634), "recruit_ticket"), ((496, 634), "recruit_free")],
+    "recruit_ticket": [((1206, 46), "recruit_result")],
+    "recruit_result": [((867, 659), "recruit_used")],
+    "recruit_used": [((164, 40), "home")],
+}
+# 招募页的付费招募按钮（50 / 1200 / 10 次）、招募结算的「再次招募」
+RECRUIT_PAID = [(440, 561), (680, 560), (1158, 562), (1137, 659)]
+
+
+def recruit_game(state="home_recruit_badge", **kw):
+    return DailyGame(state, routes={**RECRUIT_ROUTES, **kw.pop("routes", {})}, **kw)
+
+
+def assert_no_paid_taps(game):
+    for state, p in game.taps:
+        if state.startswith("recruit_"):
+            assert all(math.dist(p, q) > 30 for q in RECRUIT_PAID), (state, p)
+
+
+def test_recruit_helpers():
+    assert recruit_badge(load_items("home_recruit_badge"))
+    for name in ("home", "home_badges", "recruit_free"):
+        assert not recruit_badge(load_items(name)), name
+    button = free_recruit(load_items("recruit_free"))
+    assert button is not None and math.dist(center(button), (918, 562)) < 5
+    for name in ("recruit_used", "recruit_confirm", "home_recruit_badge"):
+        assert free_recruit(load_items(name)) is None, name
+    # 「免费」下面不是「1次」（比如 10 次）不算
+    ten = [dataclasses.replace(it, text="10次") if it.text == "1次" else it for it in load_items("recruit_free")]
+    assert free_recruit(ten) is None
+    for name in ("recruit_free", "recruit_used"):
+        assert page_title(load_items(name)) == "招募", name
+        assert gem_balance(load_items(name)) == 36530, name
+        assert paid_gems(load_items(name)) == 0, name
+    ok = free_recruit_ok(load_items("recruit_confirm"))
+    assert ok is not None and math.dist(center(ok), (782, 634)) < 5
+    for text in ("将消耗200个星钻，进行1次招募。", "将消耗0个星钻，进行10次招募。", "将消耗0个付费星钻，进行1次招募。"):
+        items = [dataclasses.replace(it, text=text) if "消耗" in it.text else it for it in load_items("recruit_confirm")]
+        assert free_recruit_ok(items) is None, text
+    assert free_recruit_ok([it for it in load_items("recruit_confirm") if "消耗" not in it.text]) is None
+    for name in ("recruit_free", "recruit_result", "daily_gifts_confirm"):
+        assert free_recruit_ok(load_items(name)) is None, name
+    top = recruit_top(load_items("recruit_result"))
+    assert top is not None and math.dist(center(top), (867, 659)) < 5
+    near = [*load_items("recruit_result"), OcrItem(900, 645, 100, 30, "再次招募")]
+    assert recruit_top(near) is None
+    for name in ("recruit_free", "recruit_ticket", "recruit_confirm"):
+        assert recruit_top(load_items(name)) is None, name
+
+
+def test_recruit_free_pull(clock, monkeypatch, tmp_path):
+    """有免费次数：点免费、确认 OK、演出 SKIP、招募结算截图后点招募TOP；付费招募和「再次招募」都没点过。"""
+    monkeypatch.setattr(daily, "RECRUIT_SHOT_DIR", tmp_path / "recruit")
+    images = []
+    monkeypatch.setattr(daily, "log_image", images.append)
+    game = recruit_game()
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["recruit"]) == []
+    assert game.state == "home"
+    shots = list((tmp_path / "recruit").glob("*.jpg"))
+    assert len(shots) == 1 and shots[0].stat().st_size > 0
+    assert images == shots
+    assert [p for s, p in game.taps if s == "recruit_confirm"] == [(782, 634)]
+    assert len([p for s, p in game.taps if s == "recruit_free" and math.dist(p, (918, 562)) < 30]) == 1
+    assert [p for s, p in game.taps if s == "recruit_result"] == [(867, 659)]
+    assert_no_paid_taps(game)
+
+
+def test_recruit_no_badge_is_skipped(clock):
+    """主界面没有「免费招募」角标：不进招募页。"""
+    game = recruit_game("home")
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["recruit"]) == []
+    assert all(math.dist(p, (576, 660)) > 30 for _, p in game.taps)
+
+
+def test_recruit_used_page_is_not_tapped(clock):
+    """有角标但招募页上已经没有免费按钮（只剩要星钻的招募1次）：什么都不点，返回主界面。"""
+    game = recruit_game(routes={"home_recruit_badge": [((576, 660), "recruit_used")]})
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["recruit"]) == []
+    assert game.state == "home"
+    assert [p for s, p in game.taps if s == "recruit_used"] == [(164, 40)]
+
+
+def test_recruit_paid_dialog_is_cancelled(clock):
+    """确认招募写着要消耗星钻：点取消、报错，不点 OK。"""
+    game = recruit_game()
+
+    def read(frame, roi=None):
+        items = DailyGame.read(game, frame)
+        if game.state == "recruit_confirm":
+            items = [dataclasses.replace(it, text="将消耗200个星钻，进行1次招募。") if "消耗" in it.text else it for it in items]
+        return items
+
+    game.read = read
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["recruit"]) == ["免费招募"]
+    assert [p for s, p in game.taps if s == "recruit_confirm"] == [(496, 634)]
+    assert game.state == "home_recruit_badge"
+    assert_no_paid_taps(game)
+
+
+def test_recruit_stops_when_gems_change(clock, monkeypatch, tmp_path):
+    """招募后星钻数变了：该项记为出错。"""
+    monkeypatch.setattr(daily, "RECRUIT_SHOT_DIR", tmp_path)
+    game = recruit_game()
+
+    def read(frame, roi=None):
+        items = DailyGame.read(game, frame)
+        if game.state == "recruit_used":
+            items = [dataclasses.replace(it, text="36,330") if it.text == "36,530" else it for it in items]
+        return items
+
+    game.read = read
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["recruit"]) == ["免费招募"]
+    assert game.state == "home"
+    assert_no_paid_taps(game)
+
+
+def test_go_home_leaves_recruit_result(clock):
+    """上次停在了招募结算：回主界面时只点「招募TOP」。"""
+    game = recruit_game("recruit_result")
+    nav = daily_nav(game, clock)
+    nav.go_home()
+    assert game.state == "home"
+    assert [s for s, _ in game.taps] == ["recruit_result", "recruit_used"]
+    assert_no_paid_taps(game)

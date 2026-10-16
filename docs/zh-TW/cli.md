@@ -54,7 +54,7 @@ ournotes-auto run --challenge --mode ap_first           # 挑戰演出：先打 
 ournotes-auto start
 ournotes-auto switch-account user_123   # 登出目前帳號，從登入紀錄裡選帳號名稱包含 user_123 的帳號登入，然後進入主畫面
 ournotes-auto daily
-ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,gifts   # 錄音室練習、任務、通行證、期間限定任務、新手任務、T.G.W CARD、禮物盒
+ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # 錄音室練習、任務、通行證、期間限定任務、新手任務、T.G.W CARD、免費轉蛋、禮物盒
 ournotes-auto daily --jobs story   # 跳過沒看過的樂團 / 側寫 / 羈絆故事（要明確指定才做）
 ournotes-auto daily --jobs event   # 跳過限時活動沒看過的活動故事 / 側寫故事（要明確指定才做）
 

@@ -17,6 +17,7 @@
                 "DailyLimited",
                 "DailyBeginner",
                 "DailyTgw",
+                "DailyRecruit",
                 "DailyGifts"
             ],
             "default_check": true
@@ -240,6 +241,34 @@
                         "OurNotesParam": {
                             "attach": {
                                 "daily_tgw": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "DailyRecruit": {
+            "type": "switch",
+            "label": "$opt.DailyRecruit",
+            "description": "$opt.DailyRecruit.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_recruit": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "daily_recruit": false
                             }
                         }
                     }

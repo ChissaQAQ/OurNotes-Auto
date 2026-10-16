@@ -13,7 +13,12 @@
   - 免费商品点「购买」直接买下（没有确认框），弹出「购买完成」只点 OK。
   - 领完后面的商品会补到同一格（可能要星钻），所以不按位置点：每次都重新认「免费」，领完核对星钻数没变。
   - 日服进商店前要先确认年龄（选出生年月），只点「取消」跳过，要用户自己确认一次。
-- 不碰招募、礼包、交换所、通行证高级档和 pt 旁的「+」，不用星钻。
+- 招募只做每天一次的免费招募（见 :meth:`DailyMixin._daily_recruit`）：
+  - 主界面「招募」入口上有「免费招募」角标才进去；招募页上只认文字是「免费」、下一行只有「1次」（没有价格）的按钮。
+  - 「确认招募」弹窗写着「消耗0个星钻」才点 OK，写的不是 0 个就点取消、报错。
+  - 抽卡演出只点右上角的「SKIP」，招募结算存一张截图（data/recruit/）后只点「招募TOP」，绝不点「再次招募」。
+  - 招募前后核对星钻数（免费和付费）没变。
+- 不碰付费招募、礼包、交换所、通行证高级档和 pt 旁的「+」，不用星钻。
 - 看故事（跳过没看过的乐队故事、视角故事、羁绊故事，限时活动的活动故事、视角故事）在 story.py。
 """
 
@@ -23,10 +28,16 @@ import logging
 import math
 import re
 import time
+from datetime import datetime
+from pathlib import Path
 
+import cv2
+import numpy as np
+
+from ..logfile import log_image
 from ..result_reader import OcrItem
 from ..runner import NavigationError, ServerMaintenance
-from .screens import RELOGIN_SCREENS, TITLE_ROI, Rect, Screen, center, find, in_roi
+from .screens import RELOGIN_SCREENS, TITLE_ROI, Rect, Screen, center, find, in_roi, skip_button
 from .song_select import filter_open
 
 logger = logging.getLogger(__name__)
@@ -42,6 +53,7 @@ DAILY_JOBS = {
     "limited": "限定任务",
     "beginner": "新手任务",
     "tgw": "T.G.W CARD",
+    "recruit": "免费招募",
     "gifts": "礼物盒",
 }
 # 不指定项目时不做的（要下载数据、比较慢，界面上默认也不勾）
@@ -56,10 +68,11 @@ HOME_ENTRIES = {
     "新手任务": (40, 152),
     "礼物盒": (1232, 150),
     "商店": (690, 620),
+    "招募": (576, 660),
 }
 # 页面标题（左上角）必须完全相等：「任务」「通行证任务」「任务通行证」互相包含，「录音室练习奖励」是领取后的弹窗
 POPUP_PAGES = ("任务", "礼物盒", "通行证任务")  # 左下角「关闭」
-FULL_PAGES = ("录音室练习", "任务通行证", "限定任务", "新手任务", "好友邀请", "交换所", "商店", "T.G.WCARD")  # 左上角主页按钮
+FULL_PAGES = ("录音室练习", "任务通行证", "限定任务", "新手任务", "好友邀请", "交换所", "商店", "T.G.WCARD", "招募")  # 左上角主页按钮
 BTN_PAGE_CLOSE = (497, 655)
 PAGE_CLOSE_ROI: Rect = (400, 620, 200, 70)
 BTN_HOME = (164, 40)  # 左上角主页按钮
@@ -135,6 +148,31 @@ HELP_LIT_DX = -55
 # 日服第一次打开商店时要先填出生年月（「年龄确认」，标题在上方中间）：留给用户自己填，只点取消
 AGE_CHECK_ROI: Rect = (440, 10, 400, 60)
 BTN_AGE_CANCEL = (497, 659)
+# 免费招募。主界面「招募」入口上方的「免费招募」角标，有免费次数时才有（用掉就消失）
+RECRUIT_BADGE_ROI: Rect = (500, 540, 150, 70)
+# 招募页底部一排招募按钮：第一行是按钮文字（「每日1次限定」「招募10次」「免费」），第二行是价格（「付费」「50」「1200」），
+# 免费招募第二行只有「1次」；用过之后变成「招募1次」「200」
+RECRUIT_BUTTON_ROI: Rect = (300, 535, 980, 50)
+RECRUIT_PRICE_ROW = (575, 615)
+RECRUIT_PRICE_DX = 120  # 第二行离按钮文字中心不超过这么远的算同一个按钮（相邻按钮约 240px）
+PAID_GEM_ROI: Rect = (700, 10, 300, 55)  # 右上角「付费」和它右边的付费星钻数
+PAID_GEM_DX = 200
+# 「确认招募」弹窗：「将消耗0个星钻，进行1次招募。」，左下「取消」右下「OK」
+RECRUIT_DIALOG_TITLE_ROI: Rect = (440, 55, 400, 55)
+RECRUIT_DIALOG_OK_ROI: Rect = (640, 600, 300, 70)
+RECRUIT_DIALOG_CANCEL_ROI: Rect = (340, 600, 300, 70)
+_RECRUIT_COST = re.compile(r"消耗(\d[\d,]*)个")
+RECRUIT_DIALOG_FRAMES = 2  # 连续这么多帧都写着消耗 0 个星钻才点 OK
+RECRUIT_DIALOG_BAD_FRAMES = 3  # 弹窗上连续这么多帧读不出「消耗0个星钻」就点取消
+# 招募结算：顶部「招募结算」，底部中间「招募TOP」，右下「再次招募」（绝不能点）
+RECRUIT_RESULT_TITLE_ROI: Rect = (440, 40, 400, 55)
+RECRUIT_TOP_ROI: Rect = (740, 630, 260, 60)
+RECRUIT_AGAIN_MIN_DX = 150  # 「招募TOP」离「再次招募」至少这么远才点
+RECRUIT_TIMEOUT_S = 90.0  # 点了 OK 之后这么久没回到招募页就报错
+RECRUIT_SKIP_RETAP_S = 3.0
+RECRUIT_TOP_RETAP_S = 5.0
+RECRUIT_SHOT_DELAY_S = 1.5  # 招募结算出现后等成员卡片都翻出来再截图
+RECRUIT_SHOT_DIR = Path("data/recruit")  # 免费招募结果的截图（相对于程序目录，界面日志按这个路径显示）
 # 左上角有主页按钮、可以直接点它回主界面的画面
 HOME_BUTTON_SCREENS = frozenset(
     (
@@ -232,6 +270,79 @@ def gem_balance(items: list[OcrItem]) -> int | None:
 
 def _compact(text: str) -> str:
     return re.sub(r"\s+", "", text)
+
+
+def recruit_badge(items: list[OcrItem]) -> bool:
+    """主界面「招募」入口上的「免费招募」角标（今天还有免费次数）。"""
+    return find(items, "免费招募", RECRUIT_BADGE_ROI, exact=True) is not None
+
+
+def free_recruit(items: list[OcrItem]) -> OcrItem | None:
+    """招募页上免费招募按钮的「免费」：第二行只有「1次」，没有「付费」、价格之类的别的字。"""
+    for it in items:
+        if not in_roi(it, RECRUIT_BUTTON_ROI) or _compact(it.text) != "免费":
+            continue
+        x = center(it)[0]
+        row = [
+            _compact(r.text)
+            for r in items
+            if RECRUIT_PRICE_ROW[0] <= r.cy <= RECRUIT_PRICE_ROW[1] and abs(center(r)[0] - x) <= RECRUIT_PRICE_DX
+        ]
+        if row == ["1次"]:
+            return it
+    return None
+
+
+def paid_gems(items: list[OcrItem]) -> int | None:
+    """右上角「付费」右边的付费星钻数。"""
+    label = find(items, "付费", PAID_GEM_ROI, exact=True)
+    if label is None:
+        return None
+    nums = [
+        it
+        for it in items
+        if in_roi(it, PAID_GEM_ROI) and _GEMS.fullmatch(_compact(it.text)) and 0 < it.x - label.right <= PAID_GEM_DX
+    ]
+    if not nums:
+        return None
+    return int(_compact(min(nums, key=lambda it: it.x).text).replace(",", ""))
+
+
+def recruit_dialog(items: list[OcrItem]) -> bool:
+    """「确认招募」弹窗（不管消耗什么）。"""
+    return find(items, "确认招募", RECRUIT_DIALOG_TITLE_ROI, exact=True) is not None
+
+
+def recruit_costs(items: list[OcrItem]) -> list[str]:
+    """「确认招募」弹窗上「将消耗N个星钻」的 N（读到几处就几个）。"""
+    return [m.group(1) for it in items if (m := _RECRUIT_COST.search(_compact(it.text)))]
+
+
+def free_recruit_ok(items: list[OcrItem]) -> OcrItem | None:
+    """「确认招募」弹窗写着「将消耗0个星钻，进行1次招募。」（没有「付费」「广告」）时右下角的 OK。"""
+    if not recruit_dialog(items) or recruit_costs(items) != ["0"]:
+        return None
+    if find(items, "1次招募") is None or find(items, "付费") or find(items, "广告"):
+        return None
+    return find(items, "OK", RECRUIT_DIALOG_OK_ROI, exact=True)
+
+
+def recruit_top(items: list[OcrItem]) -> OcrItem | None:
+    """招募结算画面底部的「招募TOP」（右边的「再次招募」绝不能点，离它太近时不认）。"""
+    if find(items, "招募结算", RECRUIT_RESULT_TITLE_ROI, exact=True) is None:
+        return None
+    top = find(items, "招募TOP", RECRUIT_TOP_ROI, exact=True)
+    if top is None:
+        return None
+    again = [it for it in items if "再次招募" in _compact(it.text)]
+    if any(abs(center(it)[0] - center(top)[0]) < RECRUIT_AGAIN_MIN_DX for it in again):
+        return None
+    return top
+
+
+def _gems_text(gems: tuple[int, int | None]) -> str:
+    free, paid = gems
+    return f"{free}" if paid is None else f"{free}，付费 {paid}"
 
 
 def practice_level_up(items: list[OcrItem]) -> bool:
@@ -371,6 +482,138 @@ class DailyMixin:
         bought = self._claim_free()
         logger.info("T.G.W CARD·专享商品目录：%s", f"领了 {bought} 件免费商品" if bought else "没有免费商品")
 
+    def _daily_recruit(self) -> None:
+        """每天一次的免费招募：有角标才进招募页，按钮、确认框都核对是免费的才点，结果截图存到 data/recruit/。"""
+        if not self._recruit_badge():
+            logger.info("免费招募：今天没有免费次数")
+            return
+        if not self._open_page("招募"):
+            return
+        button, gems = self._recruit_page()
+        if button is None:
+            logger.info("免费招募：招募页上没有免费招募的按钮，跳过")
+            return
+        self.tap(center(button), "免费招募")
+        self._confirm_free_recruit()
+        shot = self._settle_recruit()
+        if shot is not None:
+            logger.info("免费招募：结果截图 %s", shot.as_posix())
+            log_image(shot)
+        _, after = self._recruit_page()
+        # 付费星钻数只在前后都读到时比较（只有一位的「0」偶尔漏读）
+        paid_changed = None not in (gems[1], after[1]) and after[1] != gems[1]
+        if after[0] != gems[0] or paid_changed:
+            raise self._fail(f"免费招募后星钻数变了（{_gems_text(gems)} → {_gems_text(after)}）")
+        logger.info("免费招募：已招募")
+
+    def _recruit_badge(self, frames: int = 3) -> bool:
+        """在主界面看几帧有没有「免费招募」角标（OCR 偶尔漏读）。"""
+        for i in range(frames):
+            if i:
+                self._sleep(1.0)
+                self.look()
+            if recruit_badge(self._items):
+                return True
+        return False
+
+    def _recruit_page(self, timeout_s: float = 15.0) -> tuple[OcrItem | None, tuple[int, int | None]]:
+        """等招募页连续两帧认出的免费招募按钮和星钻数都一样，返回按钮的「免费」（没有为 None）和（星钻, 付费星钻）。"""
+        start = time.monotonic()
+        prev = None
+        while time.monotonic() - start < timeout_s:
+            _, items = self.look()
+            cur = None
+            if page_title(items) == "招募" and not has_confirm(items) and gem_balance(items) is not None:
+                cur = (free_recruit(items), (gem_balance(items), paid_gems(items)))
+            if cur is not None and prev is not None and cur[1] == prev[1]:
+                a, b = cur[0], prev[0]
+                if a is None and b is None or a is not None and b is not None and math.dist(center(a), center(b)) <= 8:
+                    return cur
+            prev = cur
+            self._sleep(1.0)
+        raise self._fail("没能停在招募页")
+
+    def _confirm_free_recruit(self, timeout_s: float = 15.0) -> None:
+        """点了免费招募后的「确认招募」：连续几帧都写着消耗 0 个星钻才点 OK；写的不是 0 个、读不出来就点取消、报错。"""
+        start = time.monotonic()
+        good = bad = 0
+        while time.monotonic() - start < timeout_s:
+            self._sleep(0.8)
+            _, items = self.look()
+            if not recruit_dialog(items):
+                good = bad = 0
+                continue
+            ok = free_recruit_ok(items)
+            costs = recruit_costs(items)
+            if ok is not None:
+                good, bad = good + 1, 0
+                if good >= RECRUIT_DIALOG_FRAMES:
+                    self.tap(center(ok), "OK（免费招募）")
+                    return
+                continue
+            good, bad = 0, bad + 1
+            if (costs and costs != ["0"]) or bad >= RECRUIT_DIALOG_BAD_FRAMES:
+                cancel = find(items, "取消", RECRUIT_DIALOG_CANCEL_ROI, exact=True)
+                if cancel is not None:
+                    self.tap(center(cancel), "取消")
+                    self._sleep(1.0)
+                cost = f"消耗 {'、'.join(costs)} 个星钻" if costs else "没读到消耗 0 个星钻"
+                done = "点了取消" if cancel is not None else "没有点"
+                raise self._fail(f"确认招募弹窗上{cost}，不是免费招募（{done}，没有招募）")
+        raise self._fail("点了免费招募后没有弹出确认招募")
+
+    def _settle_recruit(self, timeout_s: float = RECRUIT_TIMEOUT_S) -> Path | None:
+        """确认招募之后：演出只点右上角的「SKIP」，到招募结算存一张截图，点「招募TOP」，等回到招募页。返回截图路径。
+
+        这里不按通用流程处理画面（招募演出会被认成登录奖励等），认不出的画面什么都不点。
+        """
+        start = time.monotonic()
+        skipped_at = top_at = None
+        shot = None
+        while time.monotonic() - start < timeout_s:
+            self._sleep(0.8)
+            _, items = self.look(still_ok=True)
+            now = time.monotonic()
+            top = recruit_top(items)
+            if top is not None:
+                if top_at is None:
+                    self._sleep(RECRUIT_SHOT_DELAY_S)
+                    _, items = self.look(still_ok=True)
+                    top = recruit_top(items)
+                    if top is None:
+                        continue
+                    shot = self._save_recruit_shot()
+                    now = time.monotonic()
+                if top_at is None or now - top_at > RECRUIT_TOP_RETAP_S:
+                    self.tap(center(top), "招募TOP")
+                    top_at = now
+                continue
+            if top_at is not None and page_title(items) == "招募":
+                return shot
+            skip = skip_button(items)
+            if skip is not None and top_at is None and (skipped_at is None or now - skipped_at > RECRUIT_SKIP_RETAP_S):
+                self.tap(center(skip), "SKIP")
+                skipped_at = now
+        raise self._fail(f"免费招募后 {timeout_s:.0f}s 没有回到招募页")
+
+    def _save_recruit_shot(self) -> Path | None:
+        """把最近一帧（招募结算）存成 JPEG，存不了返回 None（不影响招募）。"""
+        frame = self._frame
+        if not isinstance(frame, np.ndarray):
+            return None
+        path = RECRUIT_SHOT_DIR / f"{datetime.now():%Y%m%d_%H%M%S}.jpg"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # cv2.imwrite 不支持非 ASCII 路径（程序目录可能含中文）
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if not ok:
+                raise OSError("JPEG 编码失败")
+            path.write_bytes(buf.tobytes())
+        except OSError as e:
+            logger.warning("免费招募：保存结果截图失败：%s", e)
+            return None
+        return path
+
     def _daily_gifts(self) -> None:
         if self._open_page("礼物盒"):
             self._claim("礼物盒")
@@ -450,6 +693,13 @@ class DailyMixin:
                 # 上次停在了一键领取礼物的确认框（比如中途停止）：取消，领取礼物时会重新点
                 self.tap(self._button(items, "取消", BTN_GIFT_CANCEL), "取消")
                 self._sleep(1.0)
+                continue
+            # 上次停在了招募结算 / 确认招募：只点「招募TOP」/「取消」（「再次招募」、OK 绝不点）
+            top = recruit_top(items)
+            cancel = find(items, "取消", RECRUIT_DIALOG_CANCEL_ROI, exact=True) if recruit_dialog(items) else None
+            if top is not None or cancel is not None:
+                self.tap(center(top or cancel), "招募TOP" if top is not None else "取消")
+                self._sleep(1.5)
                 continue
             title = page_title(items)
             if title is not None:

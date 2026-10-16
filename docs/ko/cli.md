@@ -54,7 +54,7 @@ ournotes-auto run --challenge --mode ap_first           # 챌린지 라이브: E
 ournotes-auto start
 ournotes-auto switch-account user_123   # 현재 계정에서 로그아웃하고, 로그인 기록에서 계정 이름에 user_123이 들어간 계정으로 로그인한 뒤 홈 화면으로 진입
 ournotes-auto daily
-ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,gifts   # 스튜디오 연습, 미션, 패스, 기간 한정 미션, 초보자 미션, T.G.W CARD, 선물함
+ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # 스튜디오 연습, 미션, 패스, 기간 한정 미션, 초보자 미션, T.G.W CARD, 무료 뽑기, 선물함
 ournotes-auto daily --jobs story   # 보지 않은 밴드 / 어나더 / 인연 스토리 스킵(명시해야 실행)
 ournotes-auto daily --jobs event   # 기간 한정 이벤트에서 보지 않은 이벤트 스토리 / 어나더 스토리 스킵(명시해야 실행)
 
