@@ -6,6 +6,12 @@ import logging
 from pathlib import Path
 
 LOG_MAX_BYTES = 5 * 1024 * 1024
+# 这个日志记录器的消息是一张截图的相对路径（相对于程序目录），MXU 的界面日志里显示成图片，别的界面不显示
+IMAGE_LOGGER = "ournotes_auto.image"
+
+
+def log_image(path: str | Path) -> None:
+    logging.getLogger(IMAGE_LOGGER).info("%s", Path(path).as_posix())
 
 
 def file_handler(path: str | Path) -> logging.FileHandler:

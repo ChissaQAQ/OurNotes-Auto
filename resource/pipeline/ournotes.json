@@ -42,6 +42,7 @@
             "daily_limited": true,
             "daily_beginner": true,
             "daily_tgw": true,
+            "daily_recruit": true,
             "daily_gifts": true
         }
     },

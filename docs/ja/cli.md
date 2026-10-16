@@ -54,7 +54,7 @@ ournotes-auto run --challenge --mode ap_first           # チャレンジライ�
 ournotes-auto start
 ournotes-auto switch-account user_123   # 現在のアカウントからログアウトし、ログイン履歴からアカウント名に user_123 を含むアカウントを選んでログインし、ホーム画面に入る
 ournotes-auto daily
-ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,gifts   # スタジオ練習、ミッション、パス、期間限定ミッション、ビギナーミッション、T.G.W CARD、プレゼントボックス
+ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # スタジオ練習、ミッション、パス、期間限定ミッション、ビギナーミッション、T.G.W CARD、無料ガチャ、プレゼントボックス
 ournotes-auto daily --jobs story   # 未読のバンド / アナザー / 絆ストーリーをスキップ（明示したときだけ実行）
 ournotes-auto daily --jobs event   # 期間限定イベントの未読のイベントストーリー / アナザーストーリーをスキップ（明示したときだけ実行）
 

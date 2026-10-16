@@ -2,7 +2,7 @@
 
 - MFAAvalonia：每行以 ``info:`` / ``warn:`` / ``err:`` 等开头的输出显示在界面日志里（按 Markdown 渲染），
   其余只进它自己的日志文件；
-- MXU：标准输出里的 HTML ``<span>`` 行；
+- MXU：标准输出里的 HTML ``<span>`` 行，截图（:data:`~ournotes_auto.logfile.IMAGE_LOGGER`）是 ``<img>``；
 - 其他（命令行调试）：普通文本。
 """
 
@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 
-from ..logfile import file_handler
+from ..logfile import IMAGE_LOGGER, file_handler
 
 MFAA_PREFIX = {
     "DEBUG": "debug",
@@ -46,6 +46,9 @@ class UiFormatter(logging.Formatter):
         if record.exc_info:
             msg += "\n" + self.formatException(record.exc_info)
         lines = msg.splitlines() or [""]
+        if record.name == IMAGE_LOGGER and self.client == "MXU":
+            # MXU 把相对路径的图片按程序目录读进来显示（Agent 的工作目录就是程序目录）
+            return f'<img src="{html.escape(msg.strip())}" style="max-width:480px;width:100%;" />'
         if self.client in ("MFAAVALONIA", "MFAA"):
             prefix = MFAA_PREFIX.get(record.levelname, "info")
             return "\n".join(f"{prefix}:{line}" for line in lines)
@@ -66,6 +69,8 @@ def setup_logging(log_file: str | None = "data/agent.log", client: str | None = 
     _ui = ui = logging.StreamHandler(sys.stdout if client == "MXU" else sys.stderr)
     ui.setLevel(logging.INFO)
     ui.setFormatter(UiFormatter(client))
+    if client != "MXU":
+        ui.addFilter(lambda record: record.name != IMAGE_LOGGER)  # 只能显示路径文字，旁边那条普通日志已经写了
     root.addHandler(ui)
     if log_file:
         root.addHandler(file_handler(log_file))

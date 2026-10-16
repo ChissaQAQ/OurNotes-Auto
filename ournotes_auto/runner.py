@@ -40,7 +40,7 @@ STUDIO_RETRY_S = 1800.0
 DAILY_RETRY_S = 600.0
 DAILY_TRIES = 3
 # 挂机每天领取的日常（录音室练习由定时收获领，看故事要等剧情播完，不在这里领）
-IDLE_DAILY_JOBS = ("missions", "pass", "limited", "beginner", "tgw", "gifts")
+IDLE_DAILY_JOBS = ("missions", "pass", "limited", "beginner", "tgw", "recruit", "gifts")
 # 游戏出帧率按最近这么多次同步的中位数看（见 loop.min_fps）
 FPS_WINDOW = 5
 

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from ournotes_auto.agent.logs import UiFormatter, set_ui_debug, setup_logging
+from ournotes_auto.logfile import IMAGE_LOGGER
 from ournotes_auto.agent.params import ParamError, agent_argv, device_from_controller, flag, global_args, run_settings, worker_args
 from ournotes_auto.agent.worker import WORKER_LOGGER, parse_line, run_worker
 
@@ -419,10 +420,12 @@ def test_worker_args_daily():
     args = worker_args("daily", attach, {"device.instance": "1"})
     assert args == [
         "--set", "device.instance=1", "--set", "device.touch=mumu",
-        "daily", "--jobs", "studio,story,missions,pass,beginner,tgw,gifts",
+        "daily", "--jobs", "studio,story,missions,pass,beginner,tgw,recruit,gifts",
     ]
-    assert build_parser().parse_args(args).jobs == ["studio", "story", "missions", "pass", "beginner", "tgw", "gifts"]
-    old = {k: v for k, v in attach.items() if k != "daily_event"}
+    jobs = ["studio", "story", "missions", "pass", "beginner", "tgw", "recruit", "gifts"]
+    assert build_parser().parse_args(args).jobs == jobs
+    # 旧资源的 attach 里没有后加的项目：不做
+    old = {k: v for k, v in attach.items() if k not in ("daily_event", "daily_recruit")}
     assert worker_args("daily", old, {})[-1] == "studio,story,missions,pass,beginner,tgw,gifts"
     with pytest.raises(ParamError, match="至少要选一项"):
         worker_args("daily", {"touch": "mumu", **{f"daily_{j}": False for j in DAILY_JOBS}}, {})
@@ -628,6 +631,19 @@ def test_ui_formatter():
     assert UiFormatter("MXU").format(_record(logging.INFO, "<1>")) == "<span>&lt;1&gt;</span>"
     assert UiFormatter("MXU").format(_record(logging.ERROR, "x")) == '<span style="color:crimson;">x</span>'
     assert UiFormatter("").format(_record(logging.INFO, "hi")).endswith(" I hi")
+
+
+def test_ui_image_line():
+    """截图日志：MXU 显示成图片（路径相对于程序目录），别的界面不显示。"""
+    record = logging.LogRecord(IMAGE_LOGGER, logging.INFO, __file__, 1, "%s", ("data/recruit/a&b.jpg",), None)
+    assert UiFormatter("MXU").format(record) == '<img src="data/recruit/a&amp;b.jpg" style="max-width:480px;width:100%;" />'
+    for client, shown in (("MXU", True), ("MFAAVALONIA", False), ("", False)):
+        ui = setup_logging(None, client=client)
+        try:
+            assert bool(ui.filter(record)) == shown, client
+            assert ui.filter(_record(logging.INFO, "x")), client
+        finally:
+            logging.getLogger().removeHandler(ui)
 
 
 def test_ui_debug_switch():

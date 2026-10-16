@@ -54,7 +54,7 @@ ournotes-auto run --challenge --mode ap_first           # Challenge LIVE: play E
 ournotes-auto start
 ournotes-auto switch-account user_123   # log out of the current account, log in to the account whose name contains user_123 from the login history, then enter the Home screen
 ournotes-auto daily
-ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,gifts   # Studio Practice, Missions, Mission Pass, Limited-Time Missions, Beginner Missions, T.G.W CARD, Gift Box
+ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # Studio Practice, Missions, Mission Pass, Limited-Time Missions, Beginner Missions, T.G.W CARD, free gacha pull, Gift Box
 ournotes-auto daily --jobs story   # skip unread Band / Another / Bond Story episodes (only when specified explicitly)
 ournotes-auto daily --jobs event   # skip unread Event Story / Another Story episodes of the limited-time event (only when specified explicitly)
 
