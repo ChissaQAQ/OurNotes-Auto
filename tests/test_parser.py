@@ -92,6 +92,19 @@ def test_slide_with_hidden_and_combo():
     assert chart.parsed_judged == 3
 
 
+def test_slide_end_keeps_tick_order():
+    # 隐藏节点比终点早 1 tick；终点的 timeMs 与 tick 换算差超过 1.5ms 改用 timeMs 后反而更早（鳴らす EXPERT）
+    notes = [
+        note(10, "SlideBegin", 0, 0, 3, lineIds=[1]),
+        note(11, "Hidden", 959, 8, 11, lineIds=[1], judgement=False, timeMs=999),
+        note(12, "SlideEndFlick", 960, 7, 11, lineIds=[1], flick=True, judgementType="Flick", timeMs=998),
+    ]
+    chart = parse_live_score(score(notes, [{"lineId": 1, "type": "long", "noteIds": [10, 11, 12], "comboIds": []}]))
+    (s,) = chart.slides
+    assert s.tail is SlideTail.FLICK and not s.checkpoints
+    assert s.nodes[-1].span == Span(7, 12)
+    assert [n.time_ms for n in s.nodes] == sorted(n.time_ms for n in s.nodes)
+
 def test_guide_line_first_judged():
     notes = [
         note(1, "GuideBegin", 0, 0, 3, lineIds=[7], judgement=False),
