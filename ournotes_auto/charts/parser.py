@@ -141,16 +141,13 @@ def parse_live_score(
         if len(node_ids) < 2:
             logger.warning("line %s 节点不足，跳过", line.get("lineId"))
             continue
-        raw_nodes = sorted((by_id[i] for i in node_ids), key=time_of)
-        path = [
-            PathNode(
-                time_of(n),
-                _span(n),
-                Ease.parse(n.get("lineEase")),
-                Ease.parse(n.get("lineEaseR")),
-            )
-            for n in raw_nodes
-        ]
+        # 按 tick 排路径顺序：同一时刻的隐藏节点与终点只差 1 tick，其中一个改用 timeMs 时顺序会颠倒，
+        # 终点滑键被当成中途判定点（鳴らす EXPERT 固定 MISS 一个）；时间也随之取不减，免得 Slide 再按时间排回去
+        raw_nodes = sorted((by_id[i] for i in node_ids), key=lambda n: (n.get("tick", -1), time_of(n)))
+        path: list[PathNode] = []
+        for n in raw_nodes:
+            t = max(time_of(n), path[-1].time_ms) if path else time_of(n)
+            path.append(PathNode(t, _span(n), Ease.parse(n.get("lineEase")), Ease.parse(n.get("lineEaseR"))))
         head_raw, tail_raw = raw_nodes[0], raw_nodes[-1]
         if not head_raw.get("judgement"):
             head = SlideHead.NONE
@@ -168,7 +165,7 @@ def parse_live_score(
             tail = SlideTail.TRACE
         else:
             tail = SlideTail.RELEASE
-        checkpoints = [time_of(n) for n in raw_nodes[1:-1] if n.get("judgement")]
+        checkpoints = [p.time_ms for p, n in zip(path[1:-1], raw_nodes[1:-1]) if n.get("judgement")]
         checkpoints += [time_of(by_id[c]) for c in combo_ids if by_id[c].get("judgement")]
         if head is SlideHead.NONE and not checkpoints and tail is SlideTail.NONE:
             continue  # 纯装饰路径
