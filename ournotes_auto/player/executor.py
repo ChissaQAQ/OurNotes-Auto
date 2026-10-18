@@ -20,6 +20,7 @@ class ExecStats:
     batches: int = 0
     lateness_ms: list[float] = field(default_factory=list)  # 每批实际发送相对计划的迟到
     aborted: bool = False
+    held: int = 0  # 暂停发送期间丢掉的事件数
 
     @property
     def max_late_ms(self) -> float:
@@ -37,7 +38,9 @@ class Executor:
     """把 :class:`TouchEvent` 按 ``t0 + (t_ms + offset_ms) / 1000`` 的主机时刻发送到触控后端。
 
     - 计划时刻相差不超过 ``batch_ms`` 的事件合并为一批，一次 flush；
-    - 已落后超过 ``stale_move_ms`` 的移动事件直接跳过（按下/抬起始终发送），防止积压。
+    - 已落后超过 ``stale_move_ms`` 的移动事件直接跳过（按下/抬起始终发送），防止积压；
+    - ``hold`` 置位期间不发送（看不到演奏画面时，免得点到暂停菜单）：按着的触点先抬起，
+      暂停期间开始的音符直到抬起都不发，恢复后从下一个按下接着打。
     """
 
     def __init__(
@@ -68,11 +71,14 @@ class Executor:
         t0: float,
         offset_ms: float = 0.0,
         stop: threading.Event | None = None,
+        hold: threading.Event | None = None,
     ) -> ExecStats:
         stats = ExecStats()
         base = t0 + offset_ms / 1000
         n = len(events)
         i = 0
+        down: set[int] = set()  # 按着的触点
+        dropped: set[int] = set()  # 按下没发（或暂停时抬起了）的触点：它之后的移动、抬起也不发
         with high_resolution_timer():
             raise_thread_priority()
             try:
@@ -94,7 +100,28 @@ class Executor:
                         break
                     sleep_until(due, self.spin_s)
                     late_ms = (now() - due) * 1000
+                    if hold is not None and hold.is_set():
+                        if down:
+                            for f in sorted(down):
+                                self.backend.up(f)
+                            self.backend.flush()
+                            dropped |= down
+                            down.clear()
+                        dropped.update(e.finger for e in events[i:j] if e.action is Action.DOWN)
+                        stats.held += j - i
+                        i = j
+                        continue
                     for e in self._send_order(events[i:j]):
+                        if e.action is Action.DOWN:
+                            dropped.discard(e.finger)
+                            down.add(e.finger)
+                        elif e.finger in dropped:
+                            if e.action is Action.UP:
+                                dropped.discard(e.finger)
+                            stats.held += 1
+                            continue
+                        elif e.action is Action.UP:
+                            down.discard(e.finger)
                         if e.action is Action.MOVE and late_ms > self.stale_move_ms:
                             stats.skipped_moves += 1
                             continue
@@ -117,12 +144,13 @@ class Executor:
                         logger.exception("抬起全部触点失败")
         if stats.lateness_ms:
             logger.debug(
-                "执行完毕：%d 事件 / %d 批，平均迟到 %.2fms，最大 %.2fms，>4ms %d 批，跳过移动 %d",
+                "执行完毕：%d 事件 / %d 批，平均迟到 %.2fms，最大 %.2fms，>4ms %d 批，跳过移动 %d，暂停时没发 %d",
                 stats.sent,
                 stats.batches,
                 stats.mean_late_ms,
                 stats.max_late_ms,
                 stats.late_count(),
                 stats.skipped_moves,
+                stats.held,
             )
         return stats

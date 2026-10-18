@@ -81,10 +81,13 @@ class FakeClient:
 
 
 class FakeSession:
-    def __init__(self, fail=False, max_late=0.2, interrupt=False, stalls=(), fails=0, life_zeros=0, fps=()):
+    def __init__(
+        self, fail=False, max_late=0.2, interrupt=False, stalls=(), fails=0, life_zeros=0, fps=(), interrupts=0
+    ):
         """``fail``：同步总是失败；``fails``：前几次同步失败，之后成功；``life_zeros``：前几次演奏中生命值归零；
-        ``fps``：依次每次同步测到的出帧率（用完了是 60）。"""
+        ``interrupt``：演奏总是被打断；``interrupts``：前几次被打断；``fps``：依次每次同步测到的出帧率（用完了是 60）。"""
         self.fail, self.max_late, self.interrupt = fail, max_late, interrupt
+        self.interrupts = interrupts
         self.fps = list(fps)
         self.last_fps = None
         self.fails = fails
@@ -101,7 +104,8 @@ class FakeSession:
         sync = SyncResult(1.0, 0.0, [], -40.0, 0.835, 1.0, 1.0, 190.0, not failed, fps=self.last_fps)
         if failed:
             raise SyncFailed("假失败", sync)
-        if self.interrupt:
+        self.interrupts -= 1
+        if self.interrupt or self.interrupts >= 0:
             raise PlayInterrupted("演奏中途离开了演奏画面")
         self.life_zeros -= 1
         if self.life_zeros >= 0:
@@ -289,15 +293,41 @@ def test_frame_rate_watch_recovers():
     assert watch.slow() == 41 and watch.enabled
 
 
+def test_interrupted_play_retries_same_live(tmp_path):
+    """演奏中被暂停（看不到演奏画面太久）：和同步失败一样从头重试这一局，不点「终止」（#80）。"""
+    runner, nav, store = make(tmp_path, interrupts=1)
+    runner.cfg.loop.max_plays = 1
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "result", "leave"]
+    assert len(store.history()) == 1
+
+
 def test_interrupted_play_leaves_recovery_to_navigation(tmp_path):
-    """演奏中途离开了演奏画面（暂停、闪退）：不等结算，下一局开头的导航从当前画面恢复。"""
+    """重试次数用完了，或者既不在演奏画面也不在暂停菜单（闪退等，重试不了）：不等结算，下一局开头的导航从当前画面恢复。"""
     runner, nav, store = make(tmp_path, interrupt=True)
     runner.cfg.loop.max_plays = 0
     runner.cfg.loop.max_failures = 2
     stats = runner.run()
     assert stats.failures == 2 and stats.plays == 0
     assert "result" not in nav.calls and nav.calls.count("ensure:expert") == 2
+    assert nav.calls.count("retry") == 2 * runner.cfg.loop.sync_retries
     assert store.history() == []
+
+    from ournotes_auto.runner import NavigationError
+
+    runner, nav, store = make(tmp_path / "crash", interrupts=1)
+    runner.cfg.loop.max_plays = 1
+
+    def crashed():
+        nav.calls.append("retry")
+        raise NavigationError("没有在演奏画面上（看不到右上角的暂停按钮），不重试")
+
+    nav.retry_live = crashed
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 1
+    assert nav.calls[:4] == ["ensure:expert", "start:zero", "retry", "ensure:expert"]
+    assert "result" not in nav.calls[:4]
 
 
 def test_unreliable_execution_skips_autotune(tmp_path):

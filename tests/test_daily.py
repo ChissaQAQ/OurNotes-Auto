@@ -406,6 +406,27 @@ def test_pass_selection_failure_is_reported(clock):
     assert game.state == "home"
 
 
+def test_pass_pt_popup_after_selecting(clock):
+    """1.0.6：选中第二个通行证后弹出「获得通行证pt」，淡入的那一帧认不出：关掉弹窗接着领，不算出错。"""
+    claimable = {"daily_pass_two", "daily_pass_two_second"}
+    game = DailyGame("home", claimable, routes={**TWO_PASS_ROUTES, "daily_pass_pt": [((640, 545), "daily_pass_two_second")]})
+    orig_tap, orig_read = game.tap, game.read
+
+    def tap(x, y):
+        if game.state == "daily_pass_two" and math.dist((x, y), PASS_BANNER_2) < 30:
+            game.taps.append((game.state, (x, y)))
+            game.state, game.fading = "fade_in", ["daily_pass_pt", 1]
+            return
+        orig_tap(x, y)
+
+    game.tap = tap
+    game.read = lambda frame, roi=None: [] if game.state == "fade_in" else orig_read(frame)
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["pass"]) == []
+    assert game.claimed == ["daily_pass_two", "daily_pass_two_second"]
+    assert any(s == "daily_pass_pt" for s, _ in game.taps)
+
+
 def test_run_daily_selected_jobs(clock):
     game = DailyGame("song_select", {"daily_gifts_empty"})
     nav = daily_nav(game, clock)

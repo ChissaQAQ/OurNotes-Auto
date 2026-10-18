@@ -136,6 +136,19 @@ _DIALOGS = {
     "演出已暂停": Screen.PAUSE,
     "要跳过故事吗": Screen.STORY_SKIP,
 }
+# 加载画面中间有随机小提示（如「玩家等级提升后，会恢复LIVE BOOST。」，小标题「玩家等级」），会被当成弹窗、RANK UP：
+# 加载中只认可能叠在上面的这几种，别的都算加载
+_LOADING_DIALOGS = frozenset(
+    (
+        Screen.MAINTENANCE,
+        Screen.UPDATE_REQUIRED,
+        Screen.DATA_DOWNLOAD,
+        Screen.NOTIFY,
+        Screen.NOTIFY_PERMISSION,
+        Screen.CONNECT_ERROR,
+        Screen.DATE_CHANGE,
+    )
+)
 # LIVE CLEAR / LIVE FINISH 大字，OCR 常读成 LVEOLEAR、LVEFINSH
 _LIVE_END = re.compile(r"^L.?VE")
 LIVE_END_ROI: Rect = (250, 60, 780, 170)
@@ -283,9 +296,15 @@ def _setting_dialog(items: list[OcrItem], title: OcrItem) -> Screen:
 
 
 def classify(items: list[OcrItem]) -> Screen:
+    now_loading = any("LOADING" in it.text.upper() for it in items)
     for text, screen in _DIALOGS.items():
-        if it := find(items, text):
+        if now_loading and screen not in _LOADING_DIALOGS:
+            continue
+        # 恢复弹窗的标题在左上角（别处的「恢复LIVE BOOST」是说明文字）
+        if it := find(items, text, TITLE_ROI if screen is Screen.LB_RECOVER else None):
             return _setting_dialog(items, it) if screen is Screen.LB_SETTING else screen
+    if now_loading:
+        return Screen.UNKNOWN
     # 跳过确认的标题别的语言没见过：左下「关闭」、右下「跳过」，中间有「全部消耗」
     if (
         find(items, "全部消耗", exact=True)

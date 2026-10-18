@@ -15,6 +15,8 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import DeviceConfig
@@ -26,6 +28,7 @@ logger = logging.getLogger(__name__)
 # 启动/退出时按进程名清理遗留进程不能误杀它（进程名最长 15 个字符）
 PROC_NAME = "ournotes_touch"
 REMOTE_BIN = f"/data/local/tmp/{PROC_NAME}"
+DEFAULT_DEVICE = "/dev/input/event4"  # MuMu 上 display 0（只开一个标签时游戏就在这里）的触摸屏
 
 
 def _local_binary(abi: str) -> Path:
@@ -37,17 +40,67 @@ def _local_binary(abi: str) -> Path:
     return p
 
 
+@dataclass(frozen=True)
+class TouchScreen:
+    path: str  # evdev 节点
+    orientation: int | None  # 这块屏幕的旋转（同 SurfaceOrientation），读不到为 None
+    active: bool
+
+
+def touch_screens(dumpsys: str) -> dict[int, TouchScreen]:
+    """``dumpsys input`` 里每块屏幕（displayId）的触摸屏。MuMu 开多个标签时每个标签是一块屏幕，各有一个触摸屏（#84）。
+
+    Event Hub 段是编号和节点（``4: Xiaomi Touchscreen`` 下面的 ``Path: /dev/input/event4``），Input Reader 段的
+    各设备有 ``EventHub Devices: [ 4 ]``，触摸屏的 Touch Input Mapper 下有
+    ``Viewport INTERNAL: displayId=0, ..., orientation=1, ..., isActive=[1]``。
+    """
+    hub, _, reader = dumpsys.partition("Input Reader State")
+    paths: dict[int, str] = {}
+    hub_id = None
+    for line in hub.splitlines():
+        if m := re.match(r"\s+(-?\d+): ", line):
+            hub_id = int(m[1])
+        elif (m := re.match(r"\s+Path: (\S+)", line)) and hub_id is not None:
+            paths.setdefault(hub_id, m[1])
+    screens: dict[int, TouchScreen] = {}
+    for block in re.split(r"\n {2}Device -?\d+:", reader):
+        hub_ids = re.search(r"EventHub Devices: \[\s*(-?\d+)", block)
+        _, mapper, rest = block.partition("Touch Input Mapper")
+        rest = re.split(r"\n(?! {5})", rest, maxsplit=1)[0]  # 只看这个设备的映射器（缩进更深的几行）
+        vp = re.search(r"Viewport \w+: displayId=(\d+).*", rest)
+        if not (mapper and hub_ids and vp and int(hub_ids[1]) in paths):
+            continue
+        orientation = re.search(r"orientation=(\d)", vp[0])
+        active = re.search(r"isActive=\[(\d)\]", vp[0])
+        screens.setdefault(
+            int(vp[1]),
+            TouchScreen(paths[int(hub_ids[1])], orientation and int(orientation[1]), active is None or active[1] == "1"),
+        )
+    return screens
+
+
 class MinitouchTouch:
     """触点 0~9 即 minitouch 的 contact 0~9；down/move/up 先缓存，``flush`` 时一次提交（同一帧）。
 
     坐标：游戏画面（横屏，``size``）→ 触摸屏原生坐标（竖屏）。目前只支持屏幕顺时针转 90° 的横屏
     （MuMu 上观察到：原生 X = 短边 - 画面 y，原生 Y = 画面 x），启动时核对。
+
+    触摸屏：给了 ``device`` 就用它；否则按 ``display_id()``（游戏所在的屏幕，截图用的那块）从 dumpsys input 里找，
+    游戏重启后换了屏幕就跟着换，找不到时用 :data:`DEFAULT_DEVICE`。
     """
 
-    def __init__(self, cfg: DeviceConfig, size: tuple[int, int], device: str = "/dev/input/event4"):
+    def __init__(
+        self,
+        cfg: DeviceConfig,
+        size: tuple[int, int],
+        device: str | None = None,
+        display_id: Callable[[], int] | None = None,
+    ):
         self.cfg = cfg
         self.size = size
-        self.device = device
+        self.device = device or DEFAULT_DEVICE
+        self._display_id = None if device else display_id
+        self._display: int | None = None  # 当前触摸屏所在的屏幕
         self._adb = adb_path(cfg)
         self._serial = adb_serial(cfg)
         self._proc: subprocess.Popen | None = None
@@ -64,14 +117,46 @@ class MinitouchTouch:
 
     def start(self) -> None:
         subprocess.run([self._adb, "connect", self._serial], check=True, capture_output=True, timeout=15)
-        rotation = re.search(r"SurfaceOrientation:\s*(\d)", self._run("shell", "dumpsys", "input"))
-        if rotation is None or rotation[1] != "1":
-            raise RuntimeError(f"minitouch 后端只支持横屏（SurfaceOrientation 1），当前 {rotation and rotation[1]}")
+        info = self._run("shell", "dumpsys", "input")
+        screen = self._bind(info)
+        if screen is not None and screen.orientation is not None:
+            rotation = str(screen.orientation)
+        else:
+            m = re.search(r"SurfaceOrientation:\s*(\d)", info)
+            rotation = m and m[1]
+        if rotation != "1":
+            raise RuntimeError(f"minitouch 后端只支持横屏（SurfaceOrientation 1），当前 {rotation}")
         abi = self._run("shell", "getprop", "ro.product.cpu.abi").strip()
         self._run("push", str(_local_binary(abi)), REMOTE_BIN, timeout_s=30)
         self._run("shell", "chmod", "755", REMOTE_BIN)
         self._spawn()
-        logger.debug("minitouch 已启动（%s，触摸屏 %dx%d）", self._serial, self.max_x, self.max_y)
+        logger.debug(
+            "minitouch 已启动（%s，%s，display %s，触摸屏 %dx%d）",
+            self._serial,
+            self.device,
+            self._display,
+            self.max_x,
+            self.max_y,
+        )
+
+    def _bind(self, info: str | None = None) -> TouchScreen | None:
+        """换成游戏所在屏幕的触摸屏（``info`` 为 dumpsys input 的输出，没给就现查）。固定了触摸屏时什么也不做。"""
+        if self._display_id is None:
+            return None
+        display = self._display_id()
+        screen = touch_screens(info if info is not None else self._run("shell", "dumpsys", "input")).get(display)
+        self._display = display
+        if screen is None:
+            log = logger.warning if display else logger.debug
+            log("没找到 display %d 的触摸屏，用 %s", display, DEFAULT_DEVICE)
+            self.device = DEFAULT_DEVICE
+            return None
+        if display:
+            logger.info("触摸屏：display %d 的 %s", display, screen.path)
+        if not screen.active:
+            logger.warning("游戏所在的屏幕（display %d）不在前台，点击可能无效：在 MuMu 里把游戏的标签切到前面", display)
+        self.device = screen.path
+        return screen
 
     def _spawn(self) -> None:
         self._kill_server()
@@ -138,6 +223,11 @@ class MinitouchTouch:
         self._buf.append("c\n")
         data = "".join(self._buf).encode()
         self._buf.clear()
+        if self._display_id is not None and self._display_id() != self._display:
+            # 游戏重启后换了一块屏幕（MuMu 多标签）：换触摸屏重开 minitouch，这一批会晚约半秒
+            self._stop_proc()
+            self._bind()
+            self._spawn()
         try:
             self._write(data)
         except OSError:
@@ -176,6 +266,9 @@ class MinitouchTouch:
                 self._kill_server()
 
     def _stop_proc(self) -> None:
+        self._stdin = None  # 重开失败时 release_all 不再往关掉的管道写
+        if self._proc is None:
+            return
         try:
             self._proc.stdin.close()  # minitouch 读到 EOF 后自行退出
             self._proc.wait(timeout=5)

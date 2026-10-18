@@ -444,16 +444,18 @@ class DailyMixin:
         date, point, selected = banners[index]
         if not selected:
             self.tap(point, label)
-            for _ in range(10):
+            for _ in range(12):
                 self._sleep(0.5)
-                _, items = self.look()
-                if page_title(items) != "任务通行证":
-                    raise self._fail(f"点{label}后不在任务通行证页")
+                screen, items = self.look()
+                # 选中后可能弹出「获得通行证pt」（1.0.6 起领完前一个通行证之后），淡入时画面认不出：关掉或接着等
+                if self._dismiss(screen, items) or page_title(items) != "任务通行证":
+                    continue
                 banners = pass_banners(items)
                 if len(banners) == count and banners[index][2]:
                     break
             else:
-                raise self._fail(f"没能选中{label}")
+                on_page = page_title(self._items) == "任务通行证"
+                raise self._fail(f"没能选中{label}" if on_page else f"点{label}后不在任务通行证页")
             self._sleep(1.0)
             self.look()
         logger.info("%s：%s 截止", label, date)

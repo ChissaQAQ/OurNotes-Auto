@@ -232,3 +232,29 @@ def test_category_change_clears_positions():
     assert nav.list_positions.pos
     nav.set_song_category("全部")
     assert nav.list_positions.pos == {}
+
+
+class RankedJackets(JacketMatcher):
+    """排名写死的封面匹配。"""
+
+    def __init__(self, ranked):
+        self.ranked = ranked
+
+    def rank(self, crop):
+        return self.ranked
+
+
+@pytest.mark.parametrize(
+    "ranked, expect",
+    [
+        ([(1, 0.90), (2, 0.51)], 1),
+        ([(1, 0.999), (2, 0.82)], 1),  # 几乎一模一样，第二名也挺像
+        ([(1, 0.84), (2, 0.25)], 1),  # 几乎全白的封面（起死開戦，#78）
+        ([(1, 0.84), (2, 0.50)], None),
+        ([(1, 0.79), (2, 0.0)], None),
+    ],
+)
+def test_center_song_tiers(ranked, expect):
+    nav = GameNavigator(Config(), None, None, None, jackets=RankedJackets(ranked))
+    nav._frame = np.zeros((720, 1280, 3), np.uint8)
+    assert nav._center_song() == expect

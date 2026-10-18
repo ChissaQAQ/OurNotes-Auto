@@ -343,23 +343,25 @@ class Runner:
     def _play(self, chart: Chart) -> PlayOutcome | None:
         """演奏一局，返回 None 表示放弃（歌还在放，之后照常等结算）。
 
-        首音符同步失败、演奏中生命值归零（整体对不上了）时暂停、从头重试，最多 ``loop.sync_retries`` 次：
+        首音符同步失败、演奏中生命值归零（整体对不上了）、演奏中被暂停时从头重试，最多 ``loop.sync_retries`` 次：
         干等这首歌放完几乎拿不到分，这一局消耗的 LB 就浪费了（「终止」也拿不到演出奖励）。
         """
         retries = 0
         while True:
+            interrupted = False
             try:
                 return self.session.play(chart, self.stop, retry=retries > 0)
-            except (SyncFailed, SyncTimeout, LifeDepleted) as e:
+            except (SyncFailed, SyncTimeout, LifeDepleted, PlayInterrupted) as e:
+                interrupted = isinstance(e, PlayInterrupted)
                 if retries >= self.cfg.loop.sync_retries or self.stop.is_set():
+                    if interrupted:
+                        # 暂停菜单、闪退后的桌面等交给下一局开头的导航处理
+                        raise NavigationError(str(e)) from e
                     # 自由演出 LIFE 归零也不会中断，等歌曲结束后照常离开结算页
                     logger.error("本局放弃：%s", e)
                     return None
                 retries += 1
                 logger.warning("%s，从头重试（第 %d 次）", e, retries)
-            except PlayInterrupted as e:
-                # 暂停菜单、闪退后的桌面等交给下一局开头的导航处理
-                raise NavigationError(str(e)) from e
             finally:
                 self.frame_rate.add(self.session.last_fps)
             try:
@@ -367,6 +369,8 @@ class Runner:
             except ServerMaintenance:
                 raise
             except NavigationError as e:
+                if interrupted:
+                    raise  # 不在演奏画面也不在暂停菜单（闪退等），交给下一局开头的导航处理
                 logger.error("重试失败，本局放弃：%s", e)
                 return None
 

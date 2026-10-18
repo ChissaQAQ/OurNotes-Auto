@@ -91,3 +91,28 @@ def test_executor_sends_down_before_up_in_batch():
         ("move", 0), ("up", 2), ("down", 1), ("down", 2), ("up", 0),
         ("up", 1), ("up", 2),
     ]
+
+
+def test_executor_hold_releases_and_skips():
+    """暂停（看不到演奏画面）时抬起按着的触点、这段时间的事件都不发；按下没发的触点之后的移动、抬起也不发。"""
+
+    class Hold:
+        def __init__(self, *states):
+            self.states = list(states)
+
+        def is_set(self):
+            return self.states.pop(0)
+
+    events = [
+        TouchEvent(0, Action.DOWN, 0, 1, 1),
+        TouchEvent(20, Action.DOWN, 1, 2, 2),
+        TouchEvent(40, Action.MOVE, 0, 3, 3),
+        TouchEvent(40, Action.UP, 1, 2, 2),
+        TouchEvent(60, Action.DOWN, 2, 4, 4),
+        TouchEvent(80, Action.UP, 0, 3, 3),
+        TouchEvent(80, Action.UP, 2, 4, 4),
+    ]
+    backend = FakeBackend()
+    stats = Executor(backend).run(events, now(), hold=Hold(False, True, False, False, False))
+    assert [r[1:3] for r in backend.log] == [("down", 0), ("up", 0), ("down", 2), ("up", 2)]
+    assert stats.sent == 3 and stats.held == 4 and not stats.aborted and not backend.released

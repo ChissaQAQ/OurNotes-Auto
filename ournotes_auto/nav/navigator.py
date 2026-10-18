@@ -1046,13 +1046,14 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         """演奏中暂停 → 重试 → 确认重试，这首歌从头开始（同步失败、演奏明显对不上时，不用干等歌曲放完）；
         点完立即返回，首音符同步要尽早开始看画面。
 
-        先确认还在演奏画面（右上角的暂停按钮），不在就什么都不点。重试没生效时点「继续」接着放完这首歌
-        （「终止」拿不到演出奖励），抛出 NavigationError。
+        先确认还在演奏画面（右上角的暂停按钮）或暂停菜单上（演奏中被暂停了），都不在就什么都不点。
+        重试没生效时点「继续」接着放完这首歌（「终止」拿不到演出奖励），抛出 NavigationError。
         """
-        self.look()
-        if not self._in_play(self._frame):
-            raise self._fail("没有在演奏画面上（看不到右上角的暂停按钮），不重试")
-        self.tap(BTN_PLAY_PAUSE, "暂停")
+        screen, _ = self.look()
+        if screen is not Screen.PAUSE:
+            if not self._in_play(self._frame):
+                raise self._fail("没有在演奏画面上（看不到右上角的暂停按钮），不重试")
+            self.tap(BTN_PLAY_PAUSE, "暂停")
         started = paused_at = time.monotonic()
         retry_at = confirm_at = unknown_at = None
         screen = Screen.UNKNOWN

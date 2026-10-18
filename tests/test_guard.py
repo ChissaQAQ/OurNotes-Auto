@@ -1,4 +1,4 @@
-"""PlayGuard：认出演奏画面右上角的暂停按钮；看不到一段时间就停止触控。"""
+"""PlayGuard：认出演奏画面右上角的暂停按钮；看不到一段时间就先不发送触控，再久就结束这一局。"""
 
 import threading
 import time
@@ -56,11 +56,37 @@ class Screens:
 
 def test_lost_sets_abort():
     src = Screens(play_n=2)
-    g = PlayGuard(src, TEMPLATE, lost_s=0.1, interval_s=0.02)
+    g = PlayGuard(src, TEMPLATE, lost_s=0.1, interval_s=0.02, abort_s=0.3)
     abort = g.start()
+    assert g.hold.wait(2.0) and not abort.is_set()  # 先不发送触控
     assert abort.wait(2.0)
     g.stop()
     assert g.lost and src.grabs >= 3
+    assert len(g.hidden) == 1 and g.hidden[0].end is None and g.hidden[0].score < guard_mod.MATCH_THRESHOLD
+
+
+def test_hidden_then_back_resumes():
+    """演出中途暂停按钮消失几秒、歌照常在放（#82）：先不发送触控，又看到了接着打。"""
+
+    class Gap:
+        def __init__(self):
+            self.grabs = 0
+
+        def grab(self):
+            self.grabs += 1
+            return corner_frame("band" if 3 <= self.grabs <= 12 else "play"), 0.0
+
+    src = Gap()
+    g = PlayGuard(src, TEMPLATE, lost_s=0.05, interval_s=0.02, abort_s=5.0)
+    abort = g.start()
+    assert g.hold.wait(2.0)
+    deadline = time.monotonic() + 2.0
+    while g.hold.is_set() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not g.hold.is_set() and not abort.is_set()
+    g.stop()
+    assert not g.lost
+    assert len(g.hidden) == 1 and g.hidden[0].end is not None and g.hidden[0].frame.shape == (720, 1280, 3)
 
 
 def test_play_screen_keeps_going_and_forwards_stop():
@@ -187,7 +213,7 @@ def test_life_not_checked_off_play_screen():
             frame, t = super().grab()
             return (frame if self.grabs <= self.alive_n else corner_frame("pause")), t
 
-    g = PlayGuard(Paused(alive_n=2), TEMPLATE, lost_s=0.1, interval_s=0.02, life_zero_s=0.01)
+    g = PlayGuard(Paused(alive_n=2), TEMPLATE, lost_s=0.1, interval_s=0.02, life_zero_s=0.01, abort_s=0.2)
     abort = g.start()
     assert abort.wait(2.0)
     g.stop()

@@ -177,24 +177,43 @@ class PlaySession:
         guard = None
         if self.guard_template is not None:
             pc = self.cfg.play
-            guard = PlayGuard(timed, self.guard_template, pc.guard_lost_s, life_zero_s=pc.guard_life_zero_s)
+            guard = PlayGuard(
+                timed, self.guard_template, pc.guard_lost_s, life_zero_s=pc.guard_life_zero_s, abort_s=pc.guard_abort_s
+            )
         try:
-            stats = self.executor.run(plan.events, sync.t0, offset, guard.start(stop) if guard else stop)
+            stats = self.executor.run(
+                plan.events, sync.t0, offset, guard.start(stop) if guard else stop, guard.hold if guard else None
+            )
         finally:
             if guard is not None:
                 guard.stop()
             samples = watcher.stop() if watcher is not None else []
-        stalls = [((a - sync.t0) * 1000 - offset, (b - sync.t0) * 1000 - offset) for a, b in timed.stalls()]
+        def chart_ms(t: float) -> float:
+            return (t - sync.t0) * 1000 - offset
+
+        stalls = [(chart_ms(a), chart_ms(b)) for a, b in timed.stalls()]
         if stalls:
             logger.warning(
                 "演奏中截图卡住 %d 次（模拟器卡顿，这段时间的触控可能失效）：%s",
                 len(stalls),
                 "，".join(f"谱面 {a:.0f}~{b:.0f}ms" for a, b in stalls),
             )
+        if guard is not None and guard.hidden:
+            logger.warning(
+                "演奏中 %d 次看不到暂停按钮（暂停按钮匹配度很低），这段时间没发送触控：%s",
+                len(guard.hidden),
+                "，".join(
+                    f"谱面 {chart_ms(h.start):.0f}~{'' if h.end is None else f'{chart_ms(h.end):.0f}'}ms（{h.score:.2f}）"
+                    for h in guard.hidden
+                ),
+            )
+            for h in guard.hidden:
+                self._save_frame("debug/guard", f"{chart.key}_{chart_ms(h.start):.0f}ms", h.frame, "看不到暂停按钮时")
         if guard is not None and guard.lost:
             raise PlayInterrupted("演奏中途离开了演奏画面")
         if guard is not None and guard.life_zero:
-            self._save_life_zero(chart, guard.zero_frame)
+            if guard.zero_frame is not None:
+                self._save_frame("debug/life", chart.key, guard.zero_frame, "判定生命值归零时")
             if self.cfg.play.sync.record_frames:
                 self._dump(tracker, chart, sync)  # 多半是同步跟错了，和同步失败一样保存
             raise LifeDepleted("演奏中生命值降到 0（整体对不上了）")
@@ -221,22 +240,20 @@ class PlaySession:
                 logger.warning("保存连击数截图失败：%s", e)
 
     @staticmethod
-    def _save_life_zero(chart: Chart, frame: np.ndarray | None) -> None:
-        """判定生命值归零时的画面存到 debug/life，方便核对是不是误判（只留最新 20 张）。"""
-        if frame is None:
-            return
-        folder = Path("debug/life")
-        path = folder / f"{chart.key}_{time.strftime('%Y%m%d_%H%M%S')}.png"
+    def _save_frame(folder: str, name: str, frame: np.ndarray, what: str) -> None:
+        """判定生命值归零、看不到暂停按钮时的画面存到 ``folder``，方便核对是不是误判（只留最新 20 张）。"""
+        folder = Path(folder)
+        path = folder / f"{name}_{time.strftime('%Y%m%d_%H%M%S')}.png"
         try:
             folder.mkdir(parents=True, exist_ok=True)
             ok, buf = cv2.imencode(".png", frame)  # cv2.imwrite 不支持非 ASCII 路径
             if ok:
                 buf.tofile(str(path))
-                logger.info("判定生命值归零时的画面已保存到 %s", path)
+                logger.info("%s的画面已保存到 %s", what, path)
             for old in sorted(folder.glob("*.png"), key=lambda p: p.stat().st_mtime)[:-20]:
                 old.unlink(missing_ok=True)
         except OSError as e:
-            logger.warning("保存生命值归零的画面失败：%s", e)
+            logger.warning("保存%s的画面失败：%s", what, e)
 
     @staticmethod
     def _dump(tracker: NoteTracker, chart: Chart, sync: SyncResult | None) -> None:

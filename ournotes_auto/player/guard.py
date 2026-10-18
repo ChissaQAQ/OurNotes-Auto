@@ -1,8 +1,10 @@
 """演奏期间确认游戏还停在演奏画面。
 
-右上角的暂停按钮是不透明的界面元素，演奏画面上总能原样看到；暂停菜单（变暗模糊）、闪退回桌面、
-切到别的应用时都看不到。连续 ``lost_s`` 秒看不到就置位 ``abort``，让执行器停止发送触控，
+右上角的暂停按钮是不透明的界面元素，演奏画面上一般都能原样看到；暂停菜单（变暗模糊）、闪退回桌面、
+切到别的应用时都看不到。连续 ``lost_s`` 秒看不到就置位 ``hold``，让执行器先不发送触控，
 否则会一直点到暂停菜单的按钮（判定线附近正好是「终止」「重试」「继续」）或桌面图标。
+游戏 1.0.6 起有的歌演出中途暂停按钮会消失几秒、歌照常在放（#82）：又看到了就清除 ``hold`` 接着打，
+连续 ``abort_s`` 秒都看不到才置位 ``abort``、结束这一局。
 
 同时看暂停按钮左边的生命值条：连续 ``life_zero_s`` 秒是空的说明已经整体对不上了（自由演出 LIFE 归零
 也不会中断，接着打只是浪费时间），同样停止触控，交给调用方暂停重试。暂停菜单里「重试」不会恢复生命值，
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -57,6 +60,11 @@ def load_template(path: Path = TEMPLATE_PATH) -> np.ndarray | None:
 
 def pause_visible(frame: np.ndarray, template: np.ndarray) -> bool:
     """画面右上角是否有演奏画面的暂停按钮（暂停菜单下变暗模糊，认不出）。"""
+    return pause_score(frame, template) >= MATCH_THRESHOLD
+
+
+def pause_score(frame: np.ndarray, template: np.ndarray) -> float:
+    """暂停按钮的匹配度，见 :data:`MATCH_THRESHOLD`。"""
     th, tw = template.shape[:2]
     x0, y0 = max(PAUSE_POS[0] - MARGIN, 0), max(PAUSE_POS[1] - MARGIN, 0)
     x1, y1 = min(PAUSE_POS[0] + tw + MARGIN, DESIGN_W), min(PAUSE_POS[1] + th + MARGIN, DESIGN_H)
@@ -65,7 +73,7 @@ def pause_visible(frame: np.ndarray, template: np.ndarray) -> bool:
     win = frame[round(y0 * sy) : round(y1 * sy), round(x0 * sx) : round(x1 * sx)]
     if win.shape[1::-1] != (x1 - x0, y1 - y0):
         win = cv2.resize(win, (x1 - x0, y1 - y0), interpolation=cv2.INTER_AREA)
-    return float(cv2.matchTemplate(win, template, cv2.TM_CCOEFF_NORMED).max()) >= MATCH_THRESHOLD
+    return float(cv2.matchTemplate(win, template, cv2.TM_CCOEFF_NORMED).max())
 
 
 def life_fill(frame: np.ndarray) -> float:
@@ -77,7 +85,19 @@ def life_fill(frame: np.ndarray) -> float:
     return float((bar.mean(axis=0).max(axis=1) > LIT_LEVEL).mean())
 
 
+@dataclass
+class Hidden:
+    """一段看不到暂停按钮、暂停了触控的时间（:func:`~ournotes_auto.player.clock.now` 的时刻）。"""
+
+    start: float
+    end: float | None  # 还没回来（结束这一局）为 None
+    score: float  # 刚看不到时的匹配度
+    frame: np.ndarray  # 刚看不到时的画面（存下来排查是什么挡住了）
+
+
 class PlayGuard:
+    MAX_HIDDEN = 5  # 只记前几段（每段带一张截图）
+
     def __init__(
         self,
         source: FrameSource,
@@ -85,14 +105,18 @@ class PlayGuard:
         lost_s: float = 2.0,
         interval_s: float = 0.5,
         life_zero_s: float = 0.0,
+        abort_s: float = 10.0,
     ):
         """``life_zero_s``：生命值条连续这么久是空的就停止触控；0 为不看生命值。"""
         self.source = source
         self.template = template
         self.lost_s = lost_s
+        self.abort_s = max(abort_s, lost_s)
         self.interval_s = interval_s
         self.life_zero_s = life_zero_s
         self.abort = threading.Event()
+        self.hold = threading.Event()  # 看不到演奏画面，先不发送触控
+        self.hidden: list[Hidden] = []
         self.lost = False  # 是因为看不到演奏画面而停止的
         self.life_zero = False  # 是因为生命值归零而停止的
         self.zero_frame: np.ndarray | None = None  # 判定归零时的画面（存下来排查）
@@ -116,6 +140,7 @@ class PlayGuard:
     def _loop(self, stop: threading.Event | None) -> None:
         checking = True
         seen = now()
+        first_lost = None  # 这次看不到后的第一帧：(匹配度, 画面)
         alive = False  # 这一局看到过生命值条亮着
         last_lit = 1.0  # 最后一次看到亮着时的比例
         empty_at = None  # 生命值条开始变空的时刻
@@ -127,7 +152,8 @@ class PlayGuard:
                 continue  # 截图出了问题，只转发 stop
             try:
                 frame, _ = self.source.grab()
-                ok = self.visible(frame)
+                score = pause_score(frame, self.template)
+                ok = score >= MATCH_THRESHOLD
                 # 只在认得出演奏画面时看生命值（别的画面上那个位置是什么都有可能）
                 fill = life_fill(frame) if ok and self.life_zero_s > 0 else None
             except Exception as e:  # noqa: BLE001 - 检查失败不能影响演奏
@@ -136,12 +162,24 @@ class PlayGuard:
                 continue
             t = now()
             if ok:
-                seen = t
-            elif t - seen >= self.lost_s:
-                logger.error("%.1fs 没有看到演奏画面（被暂停、闪退或切到了别的画面），停止触控", t - seen)
-                self.lost = True
-                self.abort.set()
-                return
+                if self.hold.is_set():
+                    logger.warning("又看到了演奏画面（%.1fs 没看到），接着打", t - seen)
+                    self.hold.clear()
+                    if self.hidden and self.hidden[-1].end is None:
+                        self.hidden[-1].end = t
+                seen, first_lost = t, None
+            else:
+                first_lost = first_lost or (score, frame)
+                if t - seen >= self.abort_s:
+                    logger.error("%.1fs 没有看到演奏画面（被暂停、闪退或切到了别的画面），停止触控", t - seen)
+                    self.lost = True
+                    self.abort.set()
+                    return
+                if t - seen >= self.lost_s and not self.hold.is_set():
+                    logger.warning("%.1fs 没有看到演奏画面（暂停按钮匹配度 %.2f），先不发送触控", t - seen, first_lost[0])
+                    if len(self.hidden) < self.MAX_HIDDEN:
+                        self.hidden.append(Hidden(seen, None, *first_lost))
+                    self.hold.set()
             # 重试不会恢复生命值：归零后重试，一开始就是 0，这一局看不出来，要先看到条亮着
             if fill is not None and fill >= LIFE_EMPTY:
                 alive, last_lit = True, fill
