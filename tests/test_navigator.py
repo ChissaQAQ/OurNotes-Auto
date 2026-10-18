@@ -363,6 +363,14 @@ def test_retry_live_options(monkeypatch):
     assert [s for s, _ in game.taps] == ["playing", "pause", "retry_confirm", "live_options"]
 
 
+def test_retry_live_from_pause(monkeypatch):
+    """演奏中已经被暂停了（#80）：不点暂停，直接重试。"""
+    game, nav = play_nav(monkeypatch, "pause")
+    nav.retry_live()
+    assert game.state == "loading"
+    assert [s for s, _ in game.taps] == ["pause", "retry_confirm"]
+
+
 def test_retry_live_not_in_play(monkeypatch):
     """不在演奏画面（看不到暂停按钮，如歌已经放完）：什么都不点。"""
     game, nav = play_nav(monkeypatch, "live_clear")

@@ -46,7 +46,7 @@ def open_device(cfg: Config):
     if cfg.device.touch == "minitouch":
         from .device.minitouch import MinitouchTouch
 
-        mt = MinitouchTouch(cfg.device, source.size)
+        mt = MinitouchTouch(cfg.device, source.size, display_id=lambda: ipc.display_id)
         try:
             mt.start()
             touch = mt

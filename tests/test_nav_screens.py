@@ -103,6 +103,7 @@ def load(name: str) -> list[OcrItem]:
         ("high_score", Screen.POPUP),
         ("intro_card", Screen.UNKNOWN),
         ("loading", Screen.UNKNOWN),
+        ("loading_tip_lb", Screen.UNKNOWN),  # 加载小提示「玩家等级提升后，会恢复LIVE BOOST。」（#85）
         ("date_change", Screen.DATE_CHANGE),
         ("title", Screen.TITLE),
         ("title_loading", Screen.TITLE),

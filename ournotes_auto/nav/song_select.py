@@ -50,12 +50,11 @@ EMPTY_ROI: Rect = (380, 300, 520, 90)  # 列表为空时的「没有符合筛选
 LOCK_ROI: Rect = (740, 510, 540, 80)  # 选中未解锁的歌时右侧面板的「解锁条件」
 SELECT_JACKET_ROI = (737, 92, 300, 300)  # 右侧面板的封面
 # 选曲页的大封面有的和缩略图差得多一些（unravel 只有 0.90，第二名 0.51），阈值放宽、要求和第二名拉开更多。
-# 认错的代价只是跳过判断用错了曲目：演奏前在乐队确认页还会按曲名 + 等级再认一次
-SELECT_MIN_SCORE = 0.85
-SELECT_MIN_MARGIN = 0.25
-# 几乎一模一样时第二名也可能挺像（青春コンプレックス 0.999，同是蓝色调的 100020 有 0.82），只要求拉开 0.1
-SELECT_SURE_SCORE = 0.97
-SELECT_SURE_MARGIN = 0.1
+# 认错的代价只是跳过判断用错了曲目：演奏前在乐队确认页还会按曲名 + 等级再认一次。
+# (最低相关系数, 至少比第二名高多少)，满足一档就算：
+# 几乎一模一样时第二名也可能挺像（青春コンプレックス 0.999，同是蓝色调的 100020 有 0.82），只要求拉开 0.1；
+# 几乎全白的封面纹理淡，分数偏低但别的歌都不像（起死開戦 0.84，第二名 0.25，#78）
+SELECT_TIERS = ((0.85, 0.25), (0.97, 0.1), (0.80, 0.45))
 BTN_RANDOM = (967, 660)
 BTN_DIFFICULTY = {"easy": (807, 555), "normal": (937, 555), "hard": (1068, 555), "expert": (1198, 555)}
 # 随机选曲没得选（比如筛选后能打的只剩当前选中的这首）时的提示条，横跨屏幕中间，挡住封面下半部分
@@ -476,9 +475,7 @@ class SongSelectMixin:
         if self.jackets is None:
             return None
         crop = crop_jacket(self._frame, SELECT_JACKET_ROI)
-        hit = self.jackets.identify(crop, SELECT_MIN_SCORE, SELECT_MIN_MARGIN) or self.jackets.identify(
-            crop, SELECT_SURE_SCORE, SELECT_SURE_MARGIN
-        )
+        hit = next((h for s, m in SELECT_TIERS if (h := self.jackets.identify(crop, s, m))), None)
         return hit[0] if hit else None
 
     def select_song(self, music_id: int, max_drags: int = 80) -> SongPick | None:

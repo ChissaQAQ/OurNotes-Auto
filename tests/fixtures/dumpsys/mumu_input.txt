@@ -1,0 +1,365 @@
+INPUT MANAGER (dumpsys input)
+
+Input properties:
+  velocitytracker_strategy (flag value) = default
+
+Input Manager State:
+  Display not interactive: {}
+  System UI Lights Out: true
+  Pointer Speed: 0
+  Display with Mouse Pointer Acceleration Disabled: {}
+  Pointer Gestures Enabled: true
+  Pointer Capture: Disabled, seq=0
+
+Event Hub State:
+  BuiltInKeyboardId: -2
+  Devices:
+    1: Xiaomi Joystick
+      Classes: KEYBOARD | CURSOR | DPAD | GAMEPAD | JOYSTICK | VIBRATOR | BATTERY | EXTERNAL
+      Path: /dev/input/event7
+      Enabled: true
+      Descriptor: f334d7240cd15b6779f86af0f21ff06cd5174eea
+      Location: 
+      ControllerNumber: 1
+      UniqueId: 
+      Identifier: bus=0x0003, vendor=0x1235, product=0x0001, version=0x0000, bluetoothAddress=<not set>
+      KeyLayoutFile: /system/usr/keylayout/Generic.kl
+      KeyCharacterMapFile: /system/usr/keychars/Generic.kcm
+      ConfigurationFile: 
+      VideoDevice: <none>
+      SysfsDevicePath: /sys/devices/virtual
+      KeyState (pressed): <none>
+      AbsState: ABS_X=0, ABS_Y=0, ABS_Z=0, ABS_RZ=0, ABS_GAS=0, ABS_BRAKE=0, ABS_HAT0X=0, ABS_HAT0Y=0
+    2: Xiaomi Mouse
+      Classes: CURSOR | BATTERY | EXTERNAL
+      Path: /dev/input/event6
+      Enabled: true
+      Descriptor: 31d5c422005eb13d7f2b228bbc65e2a117cda0e4
+      Location: 
+      ControllerNumber: 0
+      UniqueId: 
+      Identifier: bus=0x0003, vendor=0x1237, product=0x0001, version=0x0000, bluetoothAddress=<not set>
+      KeyLayoutFile: 
+      KeyCharacterMapFile: 
+      ConfigurationFile: 
+      VideoDevice: <none>
+      SysfsDevicePath: /sys/devices/virtual
+      KeyState (pressed): <none>
+    3: Xiaomi Keyboard
+      Classes: KEYBOARD | ALPHAKEY | BATTERY | EXTERNAL
+      Path: /dev/input/event5
+      Enabled: true
+      Descriptor: e7b96c0aaf6719167bd529d815b1ade1220cd34d
+      Location: 
+      ControllerNumber: 0
+      UniqueId: 
+      Identifier: bus=0x0003, vendor=0x1236, product=0x0001, version=0x0000, bluetoothAddress=<not set>
+      KeyLayoutFile: /system/usr/keylayout/Generic.kl
+      KeyCharacterMapFile: /system/usr/keychars/Generic.kcm
+      ConfigurationFile: 
+      VideoDevice: <none>
+      SysfsDevicePath: /sys/devices/virtual
+      KeyState (pressed): <none>
+    -1: Virtual
+      Classes: KEYBOARD | ALPHAKEY | DPAD | VIRTUAL
+      Path: <virtual>
+      Enabled: true
+      Descriptor: a718a782d34bc767f4689c232d64d527998ea7fd
+      Location: 
+      ControllerNumber: 0
+      UniqueId: <virtual>
+      Identifier: bus=0x0000, vendor=0x0000, product=0x0000, version=0x0000, bluetoothAddress=<not set>
+      KeyLayoutFile: /system/usr/keylayout/Generic.kl
+      KeyCharacterMapFile: /system/usr/keychars/Virtual.kcm
+      ConfigurationFile: 
+      VideoDevice: <none>
+      SysfsDevicePath: <none>
+    4: Xiaomi Touchscreen
+      Classes: TOUCH | TOUCH_MT | BATTERY
+      Path: /dev/input/event4
+      Enabled: true
+      Descriptor: e2af2aee625c3b6e5e9b6244f78a3667ab1b5c9e
+      Location: 
+      ControllerNumber: 0
+      UniqueId: 
+      Identifier: bus=0x0000, vendor=0x1234, product=0x0001, version=0x0000, bluetoothAddress=<not set>
+      KeyLayoutFile: 
+      KeyCharacterMapFile: 
+      ConfigurationFile: 
+      VideoDevice: <none>
+      SysfsDevicePath: /sys/devices/virtual
+      KeyState (pressed): <none>
+      AbsState: ABS_MT_SLOT=1, ABS_MT_POSITION_X=258, ABS_MT_POSITION_Y=919, ABS_MT_TRACKING_ID=-1, ABS_MT_PRESSURE=50
+    5: Xiaomi integration
+      Classes: KEYBOARD
+      Path: /dev/input/event3
+      Enabled: true
+      Descriptor: 0417af3390d1355d03338e74cafeff9cd88bcf7b
+      Location: 
+      ControllerNumber: 0
+      UniqueId: 
+      Identifier: bus=0x0001, vendor=0x80ee, product=0xcafe, version=0x0702, bluetoothAddress=<not set>
+      KeyLayoutFile: /system/usr/keylayout/Generic.kl
+      KeyCharacterMapFile: /system/usr/keychars/Generic.kcm
+      ConfigurationFile: 
+      VideoDevice: <none>
+      SysfsDevicePath: /sys/devices/pci0000:00/0000:00:04.0
+      KeyState (pressed): <none>
+      AbsState: ABS_X=0, ABS_Y=0
+  Unattached video devices:
+    <none>
+
+Input Reader State (Nums of device: 6):
+  Device 6: Xiaomi Joystick
+    EventHub Devices: [ 1 ] 
+    Generation: 47
+    IsExternal: true
+    IsWaking: false
+    AssociatedDisplayPort: <none>
+    AssociatedDisplayUniqueIdByPort: <none>
+    AssociatedDisplayUniqueIdByDescriptor: <none>
+    HasMic:     false
+    Sources: KEYBOARD | DPAD | GAMEPAD | MOUSE | JOYSTICK
+    KeyboardType: 1
+    ControllerNum: 1
+    Motion Ranges:
+      X: source=MOUSE, min=0.000, max=1279.000, flat=0.000, fuzz=0.000, resolution=0.000
+      Y: source=MOUSE, min=0.000, max=719.000, flat=0.000, fuzz=0.000, resolution=0.000
+      PRESSURE: source=MOUSE, min=0.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      HAT_Y: source=JOYSTICK, min=-1.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      LTRIGGER: source=JOYSTICK, min=0.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      BRAKE: source=JOYSTICK, min=0.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      RTRIGGER: source=JOYSTICK, min=0.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      GAS: source=JOYSTICK, min=0.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      Z: source=JOYSTICK, min=-1.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      Y: source=JOYSTICK, min=-1.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      HAT_X: source=JOYSTICK, min=-1.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      RZ: source=JOYSTICK, min=-1.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      X: source=JOYSTICK, min=-1.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+    Vibrator Input Mapper:
+      Vibrating: false
+    Keyboard Input Mapper:
+      Parameters:
+        OrientationAware: false
+        HandlesKeyRepeat: false
+      Orientation: Rotation90
+      KeyDowns: 0 keys currently down
+      MetaState: 0x0
+      KeyboardLayoutInfo: <not set>
+    Cursor Input Mapper:
+      Parameters:
+        HasAssociatedDisplay: true
+        Mode: POINTER
+        OrientationAware: false
+      XScale: 1.000
+      YScale: 1.000
+      XPrecision: 1.000
+      YPrecision: 1.000
+      HaveVWheel: false
+      HaveHWheel: false
+      WheelYVelocityControlParameters: scale=1.000, lowThreshold=15.000, highThreshold=50.000, acceleration=4.000
+      WheelXVelocityControlParameters: scale=1.000, lowThreshold=15.000, highThreshold=50.000, acceleration=4.000
+      VWheelScale: 1.000
+      HWheelScale: 1.000
+      DisplayId: 0
+      Orientation: Rotation270
+      ButtonState: 0x00000000
+      Down: false
+      DownTime: 0
+    Joystick Input Mapper:
+      Axes:
+        HAT_Y: min=-1.00000, max=1.00000, flat=0.00000, fuzz=0.00000, resolution=0.00000
+          scale=1.00000, offset=-0.00000, highScale=1.00000, highOffset=-0.00000
+          rawAxis=17, rawMin=-1, rawMax=1, rawFlat=0, rawFuzz=0, rawResolution=0
+        LTRIGGER: min=0.00000, max=1.00000, flat=0.00000, fuzz=0.00000, resolution=0.00000
+          scale=1.00000, offset=0.00000, highScale=1.00000, highOffset=0.00000
+          rawAxis=10, rawMin=0, rawMax=1, rawFlat=0, rawFuzz=0, rawResolution=0
+        RTRIGGER: min=0.00000, max=1.00000, flat=0.00000, fuzz=0.00000, resolution=0.00000
+          scale=1.00000, offset=0.00000, highScale=1.00000, highOffset=0.00000
+          rawAxis=9, rawMin=0, rawMax=1, rawFlat=0, rawFuzz=0, rawResolution=0
+        Z: min=-1.00000, max=1.00000, flat=0.00000, fuzz=0.00000, resolution=0.00000
+          scale=0.00000, offset=-0.00000, highScale=0.00000, highOffset=-0.00000
+          rawAxis=2, rawMin=-1000000, rawMax=1000000, rawFlat=0, rawFuzz=0, rawResolution=0
+        Y: min=-1.00000, max=1.00000, flat=0.00000, fuzz=0.00000, resolution=0.00000
+          scale=0.00000, offset=-0.00000, highScale=0.00000, highOffset=-0.00000
+          rawAxis=1, rawMin=-1000000, rawMax=1000000, rawFlat=0, rawFuzz=0, rawResolution=0
+        HAT_X: min=-1.00000, max=1.00000, flat=0.00000, fuzz=0.00000, resolution=0.00000
+          scale=1.00000, offset=-0.00000, highScale=1.00000, highOffset=-0.00000
+          rawAxis=16, rawMin=-1, rawMax=1, rawFlat=0, rawFuzz=0, rawResolution=0
+        RZ: min=-1.00000, max=1.00000, flat=0.00000, fuzz=0.00000, resolution=0.00000
+          scale=0.00000, offset=-0.00000, highScale=0.00000, highOffset=-0.00000
+          rawAxis=5, rawMin=-1000000, rawMax=1000000, rawFlat=0, rawFuzz=0, rawResolution=0
+        X: min=-1.00000, max=1.00000, flat=0.00000, fuzz=0.00000, resolution=0.00000
+          scale=0.00000, offset=-0.00000, highScale=0.00000, highOffset=-0.00000
+          rawAxis=0, rawMin=-1000000, rawMax=1000000, rawFlat=0, rawFuzz=0, rawResolution=0
+    Input Controller:
+      RawLights:
+        Id:	 Name:	 Flags:	 Max brightness:	 Brightness
+      Batteries:
+        Id: 1        Name: battery      Capacity: 76
+      Status: Discharging
+  Device 5: Xiaomi Mouse
+    EventHub Devices: [ 2 ] 
+    Generation: 45
+    IsExternal: true
+    IsWaking: false
+    AssociatedDisplayPort: <none>
+    AssociatedDisplayUniqueIdByPort: <none>
+    AssociatedDisplayUniqueIdByDescriptor: <none>
+    HasMic:     false
+    Sources: MOUSE
+    KeyboardType: 0
+    ControllerNum: 0
+    Motion Ranges:
+      X: source=MOUSE, min=0.000, max=1279.000, flat=0.000, fuzz=0.000, resolution=0.000
+      Y: source=MOUSE, min=0.000, max=719.000, flat=0.000, fuzz=0.000, resolution=0.000
+      PRESSURE: source=MOUSE, min=0.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      VSCROLL: source=MOUSE, min=-1.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+      HSCROLL: source=MOUSE, min=-1.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+    Cursor Input Mapper:
+      Parameters:
+        HasAssociatedDisplay: true
+        Mode: POINTER
+        OrientationAware: false
+      XScale: 1.000
+      YScale: 1.000
+      XPrecision: 1.000
+      YPrecision: 1.000
+      HaveVWheel: true
+      HaveHWheel: true
+      WheelYVelocityControlParameters: scale=1.000, lowThreshold=15.000, highThreshold=50.000, acceleration=4.000
+      WheelXVelocityControlParameters: scale=1.000, lowThreshold=15.000, highThreshold=50.000, acceleration=4.000
+      VWheelScale: 1.000
+      HWheelScale: 1.000
+      DisplayId: 0
+      Orientation: Rotation270
+      ButtonState: 0x00000000
+      Down: false
+      DownTime: 0
+    Input Controller:
+      RawLights:
+        Id:	 Name:	 Flags:	 Max brightness:	 Brightness
+      Batteries:
+        Id: 1        Name: battery      Capacity: 76
+      Status: Discharging
+  Device -1: Virtual
+    EventHub Devices: [ -1 ] 
+    Generation: 41
+    IsExternal: false
+    IsWaking: false
+    AssociatedDisplayPort: <none>
+    AssociatedDisplayUniqueIdByPort: <none>
+    AssociatedDisplayUniqueIdByDescriptor: <none>
+    HasMic:     false
+    Sources: KEYBOARD | DPAD
+    KeyboardType: 2
+    ControllerNum: 0
+    Keyboard Input Mapper:
+      Parameters:
+        OrientationAware: false
+        HandlesKeyRepeat: false
+      Orientation: Rotation90
+      KeyDowns: 0 keys currently down
+      MetaState: 0x0
+      KeyboardLayoutInfo: <not set>
+  Device 2: Xiaomi integration
+    EventHub Devices: [ 5 ] 
+    Generation: 49
+    IsExternal: false
+    IsWaking: false
+    AssociatedDisplayPort: <none>
+    AssociatedDisplayUniqueIdByPort: <none>
+    AssociatedDisplayUniqueIdByDescriptor: <none>
+    HasMic:     false
+    Sources: KEYBOARD
+    KeyboardType: 1
+    ControllerNum: 0
+    Keyboard Input Mapper:
+      Parameters:
+        OrientationAware: false
+        HandlesKeyRepeat: false
+      Orientation: Rotation0
+      KeyDowns: 0 keys currently down
+      MetaState: 0x0
+      KeyboardLayoutInfo: <not set>
+  Device 4: Xiaomi Keyboard
+    EventHub Devices: [ 3 ] 
+    Generation: 48
+    IsExternal: true
+    IsWaking: false
+    AssociatedDisplayPort: <none>
+    AssociatedDisplayUniqueIdByPort: <none>
+    AssociatedDisplayUniqueIdByDescriptor: <none>
+    HasMic:     false
+    Sources: KEYBOARD
+    KeyboardType: 2
+    ControllerNum: 0
+    Keyboard Input Mapper:
+      Parameters:
+        OrientationAware: false
+        HandlesKeyRepeat: false
+      Orientation: Rotation90
+      KeyDowns: 0 keys currently down
+      MetaState: 0x0
+      KeyboardLayoutInfo: <not set>
+    Input Controller:
+      RawLights:
+        Id:	 Name:	 Flags:	 Max brightness:	 Brightness
+      Batteries:
+        Id: 1        Name: battery      Capacity: 76
+      Status: Discharging
+  Device 3: Xiaomi Touchscreen
+    EventHub Devices: [ 4 ] 
+    Generation: 46
+    IsExternal: false
+    IsWaking: false
+    AssociatedDisplayPort: <none>
+    AssociatedDisplayUniqueIdByPort: <none>
+    AssociatedDisplayUniqueIdByDescriptor: <none>
+    HasMic:     false
+    Sources: TOUCHSCREEN
+    KeyboardType: 0
+    ControllerNum: 0
+    Motion Ranges:
+      X: source=TOUCHSCREEN, min=0.000, max=1279.001, flat=0.000, fuzz=0.000, resolution=0.000
+      Y: source=TOUCHSCREEN, min=0.000, max=719.001, flat=0.000, fuzz=0.000, resolution=0.000
+      PRESSURE: source=TOUCHSCREEN, min=0.000, max=1.000, flat=0.000, fuzz=0.000, resolution=0.000
+    Touch Input Mapper (mode - DIRECT):
+      Parameters:
+        GestureMode: MULTI_TOUCH
+        DeviceType: TOUCH_SCREEN
+        AssociatedDisplay: hasAssociatedDisplay=true, isExternal=false, displayId=''
+        OrientationAware: true
+        Orientation: Rotation0
+        UsiVersion: <not set>
+        EnableForInactiveViewport: false
+      Raw Touch Axes:
+        X: min=0, max=720, flat=0, fuzz=0, resolution=0
+        Y: min=0, max=1280, flat=0, fuzz=0, resolution=0
+        Pressure: unknown range
+        TouchMajor: unknown range
+        TouchMinor: unknown range
+        ToolMajor: unknown range
+        ToolMinor: unknown range
+        Orientation: unknown range
+        Distance: unknown range
+        TiltX: unknown range
+        TiltY: unknown range
+        TrackingId: min=0, max=65535, flat=0, fuzz=0, resolution=0
+        Slot: min=0, max=31, flat=0, fuzz=0, resolution=0
+      Calibration:
+        touch.size.calibration: NONE
+        touch.pressure.calibration: none
+        touch.orientation.calibration: none
+        touch.distance.calibration: none
+      Affine Transformation:
+        X scale: 1.000
+        X ymix: 0.000
+        X offset: 0.000
+        Y xmix: 0.000
+        Y scale: 1.000
+        Y offset: 0.000
+      Viewport INTERNAL: displayId=0, uniqueId=local:4619827820427265280, port=0, orientation=1, logicalFrame=[0, 0, 1280, 720], physicalFrame=[0, 0, 1280, 720], deviceSize=[1280, 720], isActive=[1]
+      DisplayBounds: 720x1280
+      PhysicalFrameInRotatedDisplay: Rect{0, 0, 1280, 720}
+      InputDeviceOrientation: Rotation0

@@ -131,8 +131,10 @@ class SyncParams:
 class PlayConfig:
     # 全局时间偏移：正值表示整体更晚按下。用于补偿截图/输入/渲染延迟
     offset_ms: float = 0.0
-    # 演奏中连续这么久（秒）看不到演奏画面（被暂停、闪退）就停止触控；0 为不检查
+    # 演奏中连续这么久（秒）看不到演奏画面（被暂停、闪退）就先不发送触控，又看到了接着打；0 为不检查
     guard_lost_s: float = 2.0
+    # 连续这么久（秒）都看不到就结束这一局（游戏暂停了就从头重试，次数算在 loop.sync_retries 里）
+    guard_abort_s: float = 10.0
     # 演奏中生命值连续这么久（秒）为 0（整体对不上了）就停止触控、暂停重试（次数算在 loop.sync_retries 里）；
     # 0 为不检查。需要 guard_lost_s 不为 0
     guard_life_zero_s: float = 1.0
