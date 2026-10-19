@@ -355,9 +355,7 @@ class UpdateCheck:
         st = self.status() or {}
         version, state, url = st.get("version"), st.get("state"), st.get("url") or DOWNLOAD_URL
         if state == "done" and version == current and self._announce_once("done", version):
-            # 热更新不重启界面，窗口标题里的版本号是界面启动时读的，下次打开界面才会变
-            title = "（界面标题里的版本号下次打开界面时才会更新）" if st.get("tier") == "hot" else ""
-            logger.info("已自动更新到 %s%s，更新内容见 %s", version, title, url)
+            logger.info("已自动更新到 %s，更新内容见 %s", version, url)
         elif state == "failed" and self._announce_once("failed", version):
             logger.warning("自动更新到 %s 失败，已恢复原版本（详见 data/update.log），可到 %s 手动下载", version, url)
         elif state == "rollback_failed" and self._announce_once("rollback_failed", version):

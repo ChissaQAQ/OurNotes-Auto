@@ -285,18 +285,6 @@ def test_report_result_once(tmp_path, caplog):
     assert msgs[0].startswith("已自动更新到 v0.2.0") and msgs[1].startswith("自动更新到 v0.3.0 失败")
 
 
-@pytest.mark.parametrize("tier", ["hot", "ui"])
-def test_report_done_title_note(tmp_path, caplog, tier):
-    """热更新不重启界面：提示窗口标题里的版本号要下次打开界面才更新（重启了界面的不用提示）。"""
-    root = _package(tmp_path, "v0.2.0")
-    _status(root, "done", tier=tier)
-    with caplog.at_level(logging.INFO, LOGGER):
-        check = UpdateCheck(root, lookup=lambda: {"version": "v0.2.0", "manifest": None}, spawn=lambda: None)
-        check.start()
-        check.report()
-    assert ("界面标题" in _infos(caplog)[0]) == (tier == "hot")
-
-
 def test_hot_ready(tmp_path, monkeypatch):
     root = _package(tmp_path)
     check = UpdateCheck(root, lookup=lambda: {"version": "v0.1.0", "manifest": None}, spawn=lambda: None)
