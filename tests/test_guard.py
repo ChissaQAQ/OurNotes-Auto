@@ -36,6 +36,13 @@ def test_visible_only_on_play_screen(size):
     assert not g.visible(np.zeros((size[1], size[0], 3), np.uint8))
 
 
+@pytest.mark.parametrize("size", [(1280, 720), (1920, 1080), (960, 540)])
+def test_visible_behind_skill_cutin(size):
+    """角色技能的立绘从暂停按钮后面滑过（亮黄色背景）：按钮还在，照样认得出（#81 #87）。"""
+    assert guard_mod.pause_score(corner_frame("cutin", size), TEMPLATE) > 0.95
+    assert guard_mod.pause_score(corner_frame("pause", size), TEMPLATE) < 0.75
+
+
 def test_pause_visible_matches_guard():
     """导航重试前用同一个函数确认还在演奏画面。"""
     assert guard_mod.pause_visible(corner_frame("play"), TEMPLATE)
@@ -87,6 +94,55 @@ def test_hidden_then_back_resumes():
     g.stop()
     assert not g.lost
     assert len(g.hidden) == 1 and g.hidden[0].end is not None and g.hidden[0].frame.shape == (720, 1280, 3)
+    assert g.false_alarm and g.hidden[0].held
+
+
+class Frames:
+    """按 ``plan`` 依次返回画面（名字见 :func:`corner_frame`），用完了一直返回最后一个。"""
+
+    def __init__(self, plan: list[str]):
+        self.plan = plan
+        self.grabs = 0
+
+    def grab(self):
+        self.grabs += 1
+        return corner_frame(self.plan[min(self.grabs, len(self.plan)) - 1]), 0.0
+
+
+def run_until_done(g: PlayGuard, timeout=2.0) -> list[bool]:
+    """跑到守卫自己结束或超时，返回期间每次看到的 hold 状态。"""
+    abort = g.start()
+    holds = []
+    deadline = time.monotonic() + timeout
+    while not abort.is_set() and time.monotonic() < deadline:
+        holds.append(g.hold.is_set())
+        time.sleep(0.005)
+    g.stop()
+    return holds
+
+
+def test_never_seen_does_not_stop():
+    """保底：这一局一直认不出暂停按钮（游戏改了按钮样子等），不暂停触控、不结束，等于不检查。"""
+    g = PlayGuard(Frames(["band"]), TEMPLATE, lost_s=0.05, interval_s=0.02, abort_s=0.2)
+    holds = run_until_done(g, timeout=0.6)
+    assert not any(holds) and not g.lost and not g.abort.is_set() and not g.hidden and not g.armed
+
+
+def test_after_false_alarm_keeps_touching():
+    """保底：看不到又自己回来了（演出挡住了），这一局之后再看不到也照常触控；太久看不到照样结束。"""
+    plan = ["play"] * 2 + ["band"] * 8 + ["play"] * 3 + ["pause"]
+    g = PlayGuard(Frames(plan), TEMPLATE, lost_s=0.05, interval_s=0.02, abort_s=0.3)
+    holds = run_until_done(g)
+    assert g.lost and g.false_alarm
+    assert [h.held for h in g.hidden] == [True, False]
+    assert not holds[-1]  # 第二次看不到时没暂停触控
+
+
+def test_hold_off_for_covered_chart():
+    """``hold=False``（这首歌之前误报过）：看不到时照常触控，太久看不到照样结束。"""
+    g = PlayGuard(Frames(["play", "pause"]), TEMPLATE, lost_s=0.05, interval_s=0.02, abort_s=0.2, hold=False)
+    holds = run_until_done(g)
+    assert g.lost and not any(holds) and [h.held for h in g.hidden] == [False]
 
 
 def test_play_screen_keeps_going_and_forwards_stop():

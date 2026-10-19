@@ -663,7 +663,7 @@ class Runner:
                 continue
             except ScreenFrozen:
                 raise
-            except (NavigationError, TimeoutError) as e:
+            except (NavigationError, TimeoutError, InterruptedError) as e:  # InterruptedError：同步时被停止
                 if self.stop.is_set():
                     break
                 result = None
