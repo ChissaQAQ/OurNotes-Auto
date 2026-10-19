@@ -112,7 +112,7 @@ so this margin is tightest at 10.00.
 
 ## Unexpected Situations
 
-- If the pause button at the top right isn't visible for `play.guard_lost_s` seconds in a row during play (default 2; paused, popup, hidden by an in-song effect), touches pause and resume once it's back; if it stays hidden for `play.guard_abort_s` seconds (default 10), the round ends: if the game is paused it restarts from the beginning (counted in `loop.sync_retries`), otherwise (crash etc.) navigation finds its way back. Set `guard_lost_s` to 0 to disable this check
+- If the pause button at the top right isn't visible for `play.guard_lost_s` seconds in a row during play (default 2; paused, popup, hidden by an in-song effect), touches pause and resume once it's back (it was hidden by an effect, so for the rest of that song touches keep going even when it's hidden); if it stays hidden for `play.guard_abort_s` seconds (default 10), the round ends: if the game is paused it restarts from the beginning (counted in `loop.sync_retries`), otherwise (crash etc.) navigation finds its way back. Set `guard_lost_s` to 0 to disable this check
 - When first-note sync fails or life drops to 0, it pauses and taps "Retry" to restart the round, without wasting LB
 - When the screen stays unrecognized, it checks the game process every 30 seconds; if the game has crashed, it restarts it via adb and logs in again from the title screen. At most 2 consecutive restarts; the count resets after getting back to Home
 - Unknown popups with only "OK" (and none of the words Cancel, Confirm, Purchase, Star and the like on them) get OK tapped to continue; the popup text is written to the log and a screenshot is saved to `debug/nav`

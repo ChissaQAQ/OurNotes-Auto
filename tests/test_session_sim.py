@@ -97,6 +97,37 @@ def test_session_hits_first_notes_on_time(tau_s):
     assert outcome.stalls == []
 
 
+def test_covered_chart_keeps_touching_next_time(monkeypatch):
+    """保底：这首歌演出挡住过暂停按钮（守卫误报过），之后再打这首时看不到也照常触控（#87）。"""
+    from ournotes_auto.player import session as session_mod
+
+    holds = []
+
+    class FakeGuard:
+        def __init__(self, *args, hold=True, **kwargs):
+            holds.append(hold)
+            self.hold, self.abort = threading.Event(), threading.Event()
+            self.hidden, self.lost, self.life_zero, self.false_alarm = [], False, False, True
+
+        def start(self, stop):
+            return self.abort
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(session_mod, "PlayGuard", FakeGuard)
+    notes = [PointNote(i, 3500 + i * 250, NoteKind.TAP, Span(4 * (i % 6), 4 * (i % 6) + 4)) for i in range(4)]
+    chart = Chart(1, "expert", notes=notes)
+    cfg = Config()
+    cfg.play.sync.stable_frames = 10
+    session = PlaySession(cfg, SimGame(chart, now() + 0.3), LogTouch())
+    assert session.guard_template is not None
+    for _ in range(2):
+        session.source = SimGame(chart, now() + 0.3)
+        assert session.play(chart, stop=threading.Event()).sync.ok
+    assert holds == [True, False]
+
+
 def test_timed_source_merges_queued_stalls():
     class Stalling:
         size = (4, 3)

@@ -536,6 +536,19 @@ def test_stop_during_navigation_is_not_a_failure(tmp_path):
     assert stats.plays == 0 and stats.failures == 0
 
 
+def test_stop_during_sync_is_not_a_failure(tmp_path):
+    """同步时被停止（sync 抛 InterruptedError）：正常结束，不当成意外错误。"""
+    runner, nav, store = make(tmp_path)
+
+    def stopped(chart, stop=None, require_sync_ok=True, retry=False):
+        runner.stop.set()
+        raise InterruptedError("同步被中止")
+
+    runner.session.play = stopped
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 0
+
+
 def test_idle_claims_studio_on_schedule(tmp_path):
     """定时收获：开始时先领一次（在换歌前）；等 LB 时到了领取时间也醒来去领，领完回乐队确认页接着等。"""
     seq = [(0, 1000), (0, 400), (3, None), (3, None)]

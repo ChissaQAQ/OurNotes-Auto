@@ -106,6 +106,8 @@ class PlaySession:
             logger.warning("找不到 %s，演奏中不检查是否离开了演奏画面", TEMPLATE_PATH)
         # 上一次同步时画面静止取的跟踪区基线（谱面, 基线）：暂停重试后歌曲立即开始，等不到静止，沿用它
         self._baseline: tuple[str, np.ndarray] | None = None
+        # 演出会挡住暂停按钮的谱面（看不到又自己回来了）：之后打这首时看不到也照常触控，免得每次都漏一段
+        self._covered: set[str] = set()
         self.last_fps: float | None = None  # 最近一次 play 同步时测到的游戏出帧率（没同步出结果时为 None）
 
     @property
@@ -178,7 +180,12 @@ class PlaySession:
         if self.guard_template is not None:
             pc = self.cfg.play
             guard = PlayGuard(
-                timed, self.guard_template, pc.guard_lost_s, life_zero_s=pc.guard_life_zero_s, abort_s=pc.guard_abort_s
+                timed,
+                self.guard_template,
+                pc.guard_lost_s,
+                life_zero_s=pc.guard_life_zero_s,
+                abort_s=pc.guard_abort_s,
+                hold=chart.key not in self._covered,
             )
         try:
             stats = self.executor.run(
@@ -198,12 +205,15 @@ class PlaySession:
                 len(stalls),
                 "，".join(f"谱面 {a:.0f}~{b:.0f}ms" for a, b in stalls),
             )
+        if guard is not None and guard.false_alarm:
+            self._covered.add(chart.key)
         if guard is not None and guard.hidden:
             logger.warning(
-                "演奏中 %d 次看不到暂停按钮（暂停按钮匹配度很低），这段时间没发送触控：%s",
+                "演奏中 %d 次看不到暂停按钮（暂停按钮匹配度很低）：%s",
                 len(guard.hidden),
                 "，".join(
-                    f"谱面 {chart_ms(h.start):.0f}~{'' if h.end is None else f'{chart_ms(h.end):.0f}'}ms（{h.score:.2f}）"
+                    f"谱面 {chart_ms(h.start):.0f}~{'' if h.end is None else f'{chart_ms(h.end):.0f}'}ms"
+                    f"（{h.score:.2f}，{'没发送触控' if h.held else '照常触控'}）"
                     for h in guard.hidden
                 ),
             )
