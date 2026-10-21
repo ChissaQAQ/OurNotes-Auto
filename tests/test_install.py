@@ -215,6 +215,13 @@ def test_release_writes_release_json(tmp_path, monkeypatch, project, kind):
     assert info["top"] == sorted({p.name for p in out.iterdir()} - release.USER_DIRS)
     assert {release.RELEASE_FILE, install.PY_DIR, install.UIS[kind][0], f"LICENSE-{kind.upper()}", "lib", "agent", "resource"} <= set(info["top"])
     assert {"config", "cache"}.isdisjoint(info["top"])
+    # MFAA 首次启动用的预设配置：关掉不支持的资源更新检查；放在用户数据目录里，不在更新的文件清单和运行环境指纹里
+    template = out / "config" / "config.template.json"
+    if kind == "mfaa":
+        assert json.loads(template.read_text(encoding="utf-8")) == {"EnableCheckVersion": False, "EnableAutoUpdateResource": False}
+    else:
+        assert not template.exists()
+    assert (out / "config/config.yaml").read_text(encoding="utf-8") == "x"
 
 
 def test_release_files_same_for_both_uis(tmp_path, monkeypatch, project):

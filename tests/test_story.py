@@ -378,6 +378,16 @@ def test_pov_page_helpers():
     assert selected_pov(load_items("story_episodes")) is None
 
 
+def test_same_name_tolerates_one_misread():
+    # 简介里「千樱梨视角Ver.」读成「干樱梨」，卡片上读对了：仍是同一个人
+    assert story._same_name("干樱梨", "千樱梨")
+    assert story._same_name("灯", "灯") and story._same_name("爱音", "爱音Ver")
+    # 两个字的名字错一个字、三个字错两个字都不算
+    assert not story._same_name("灯音", "爱音")
+    assert not story._same_name("干樱子", "千樱梨")
+    assert not story._same_name(None, "千樱梨")
+
+
 def test_bond_page_helpers():
     members = load_items("bond_members")
     assert story_title(members) == BOND_MEMBERS_TITLE
@@ -473,3 +483,26 @@ def test_story_band_then_bond(clock):
     assert nav.run_daily(["story"]) == []
     assert game.watched == ["第2话", "爱音视角", "灯&爱音·第1话"]
     assert game.state == "home"
+
+
+class BlurredHomeGame(StoryGame):
+    """羁绊故事的成员页背景虚化，左上角的主页图标 OCR 读不出来（实机上看完羁绊故事后回不去主界面）。"""
+
+    def read_items(self):
+        items = super().read_items()
+        if self.state == "bond_members":
+            items = [it for it in items if not daily.home_icon([it])]
+        return items
+
+
+def test_story_home_from_bond_without_icon(clock):
+    game = BlurredHomeGame(read=("第1话", "第2话", "第3话"), max_unlocked=3, bond=("灯&爱音",))
+    assert daily.home_icon(load_items("bond_members"))
+    game.state = "bond_members"
+    assert not daily.home_icon(game.read_items())
+    game.state = "home"
+    nav = story_nav(game, clock)
+    assert nav.run_daily(["story"]) == []
+    assert game.watched == ["灯&爱音·第1话"]
+    assert game.state == "home"
+    assert any(s == "bond_members" and near(p, daily.BTN_HOME, 12) for s, p in game.taps)

@@ -100,6 +100,13 @@ _TITLES = {
     "演出首页": Screen.LIVE_TOP,
     "设置": Screen.SETTINGS,
 }
+# 故事的各个页面（左上角是返回、主页按钮）
+CHAPTERS_TITLE = "乐队故事章节选择"
+EPISODES_TITLE = "乐队故事话数选择"
+BOND_MEMBERS_TITLE = "羁绊故事"
+BOND_PAIRS_TITLE = "羁绊故事选择"
+EVENT_EPISODES_TITLE = "活动故事话数选择"
+STORY_TITLES = (CHAPTERS_TITLE, EPISODES_TITLE, BOND_MEMBERS_TITLE, BOND_PAIRS_TITLE, EVENT_EPISODES_TITLE)
 # 自由演出的乐曲选择页才有的：顶栏的 HIGH SCORE RATING（常读成 HGHSCORERATNG）和排序「默认」、「随机选曲」
 # （筛选面板里也有）、左侧分类按钮。挑战演出的选曲页这些都没有；页面还在淡入时也可能都没读到，
 # 所以还要右下角的「确定」和右侧的 HIGH SCORE 已经出来
@@ -237,6 +244,13 @@ def find(items: list[OcrItem], text: str, roi: Rect | None = None, exact: bool =
 
 def center(item: OcrItem) -> tuple[int, int]:
     return round(item.x + item.w / 2), round(item.cy)
+
+
+def story_title(items: list[OcrItem]) -> str | None:
+    for title in STORY_TITLES:
+        if find(items, title, TITLE_ROI, exact=True):
+            return title
+    return None
 
 
 def sdk_logo(items: list[OcrItem]) -> OcrItem | None:

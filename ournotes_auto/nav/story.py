@@ -33,7 +33,21 @@ import numpy as np
 
 from ..result_reader import OcrItem
 from .daily import BOTTOM_ROI, has_confirm
-from .screens import CLOSE_ROI, PLAYER_MENU_ROI, TITLE_ROI, Rect, Screen, center, find, in_roi
+from .screens import (
+    BOND_MEMBERS_TITLE,
+    BOND_PAIRS_TITLE,
+    CHAPTERS_TITLE,
+    CLOSE_ROI,
+    EPISODES_TITLE,
+    EVENT_EPISODES_TITLE,
+    PLAYER_MENU_ROI,
+    Rect,
+    Screen,
+    center,
+    find,
+    in_roi,
+    story_title,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +63,6 @@ STORY_MENU_BUTTON_OFFSET = (-5, -66)  # 按钮中心相对文字中心
 # 红点相对文字中心约 (+64, -111)。日服的文字常读得不全（「バンドスト」），中心偏左，所以横向在一段范围里找
 STORY_MENU_BADGE_DX = range(56, 100, 4)
 STORY_MENU_BADGE_DY = -111
-CHAPTERS_TITLE = "乐队故事章节选择"
-EPISODES_TITLE = "乐队故事话数选择"
-BOND_MEMBERS_TITLE = "羁绊故事"
-BOND_PAIRS_TITLE = "羁绊故事选择"
 BTN_STORY_BACK = (58, 38)  # 左上角返回上一页（右边是主页按钮）
 
 # 章节选择：左侧 ALL 下面的乐队分页。点了只列出这个乐队的章节，选中的在中间
@@ -140,7 +150,6 @@ EVENT_SELECT_TITLE_ROI: Rect = (440, 95, 400, 55)
 EVENT_SELECT_ROI: Rect = (357, 157, 562, 336)
 EVENT_SELECT_CARD_DY = -52  # 从横幅下的文字到横幅中间
 EVENT_SELECT_CLOSE = (640, 571)
-EVENT_EPISODES_TITLE = "活动故事话数选择"
 EVENT_TAB_BADGE = (877, 16)  # 「活动故事」分页的红点（视角故事分页的是 POV_TAB_BADGE）
 # 活动故事话数选择：底部卡片右下角是时长「04:46」，左下角是这话的标题，左侧简介里是选中那话的标题。
 # 两个分页的卡片一样（视角故事的卡片上没有「第N话」「视角Ver.」），所以按时长认卡片。
@@ -162,13 +171,6 @@ EVENT_DRAG = ((850, 630), (250, 630))
 EPISODE_TIMEOUT_S = 180.0  # 一话从点观看到回到话数选择（含下载）
 MAX_EPISODES = 60  # 一个章节 / 组合最多看这么多话（防止认错了一直循环）
 BADGE_RADIUS = 10
-
-
-def story_title(items: list[OcrItem]) -> str | None:
-    for title in (CHAPTERS_TITLE, EPISODES_TITLE, BOND_MEMBERS_TITLE, BOND_PAIRS_TITLE, EVENT_EPISODES_TITLE):
-        if find(items, title, TITLE_ROI, exact=True):
-            return title
-    return None
 
 
 def story_menu_open(items: list[OcrItem]) -> bool:
@@ -260,7 +262,12 @@ def ongoing_event(items: list[OcrItem]) -> OcrItem | None:
 
 
 def _same_name(a: str | None, b: str) -> bool:
-    return bool(a) and (a in b or b in a)
+    """简介里的名字和卡片上的是不是同一个人。三个字以上的名字错一个字也算（简介里「千樱梨」读成「干樱梨」）。"""
+    if not a:
+        return False
+    if a in b or b in a:
+        return True
+    return len(a) == len(b) >= 3 and sum(x != y for x, y in zip(a, b)) == 1
 
 
 def member_names(items: list[OcrItem]) -> list[tuple[str, tuple[int, int]]]:

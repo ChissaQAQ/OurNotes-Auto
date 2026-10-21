@@ -111,6 +111,7 @@ def parse_live_score(
 
     clock = TickClock((data.get("tickSegments") or {}).get("bpm") or [])
     by_id: dict[int, Mapping[str, Any]] = {n["id"]: n for n in data.get("notes", [])}
+    order = {i: k for k, i in enumerate(by_id)}  # 音符 id → 在 notes 里的位置（游戏按这个顺序更新音符）
     mismatched: dict[Any, float] = {}  # 音符 id → tick 换算与 timeMs 之差（同一音符会被多次换算）
 
     def time_of(note: Mapping[str, Any]) -> float:
@@ -180,6 +181,7 @@ def parse_live_score(
                 critical=bool(head_raw.get("critical")),
                 checkpoints=checkpoints,
                 guide=kind == "guide",
+                order=order[head_raw["id"]],
             )
         )
         judged_ids.update(n["id"] for n in raw_nodes if n.get("judgement"))
@@ -206,6 +208,7 @@ def parse_live_score(
                 span=_span(n),
                 direction=_direction(n),
                 critical=bool(n.get("critical")),
+                order=order[n["id"]],
             )
         )
         judged_ids.add(n["id"])

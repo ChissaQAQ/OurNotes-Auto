@@ -198,7 +198,7 @@ class FilesApply:
     def run(self) -> None:
         root, new = self.root, self.manifest["files"]
         # 和磁盘上的实际内容比（上次换到一半中断、用户改过的也会换回来）
-        changed = [rel for rel, digest in new.items() if not (root / rel).is_file() or release.file_digest(root / rel, rel) != digest]
+        changed = [rel for rel, digest in new.items() if _disk_digest(root, rel) != digest]
         removed = [rel for rel in self.local["files"] if rel not in new and (root / rel).is_file()]
         logger.info("替换 %d 个文件，删除 %d 个", len(changed), len(removed))
         if self.backup.exists():
@@ -212,7 +212,7 @@ class FilesApply:
             (root / rel).unlink()
         # interface.json 每次都按本地的界面重新生成（版本号、Agent 启动命令、MXU 的设置分组）
         data = json.loads((self.stage / "interface.json").read_text(encoding="utf-8"))
-        data = release.render_interface(data, self.local["ui"], self.manifest["version"])
+        data = release.render_interface(keep_user_fields(data, root / "interface.json"), self.local["ui"], self.manifest["version"])
         (root / "interface.json").write_text(release.dump_json(data), encoding="utf-8")
         top = set(self.local.get("top") or ()) | {rel.split("/")[0] for rel in new}
         info = {**self.local, "version": self.manifest["version"], "files": new, "top": sorted(top)}
@@ -265,12 +265,46 @@ class FullApply:
             for d in old_ocr.iterdir():
                 if d.is_dir() and not (new_ocr / d.name).exists():
                     shutil.copytree(d, new_ocr / d.name)
+        iface = root / "interface.json"
+        if "interface.json" in self.moved_in and iface.is_file():
+            try:
+                data = json.loads(iface.read_text(encoding="utf-8"))
+                kept = keep_user_fields(data, self.backup / "interface.json")
+                if kept != data:
+                    release.write_json(iface, kept)
+            except (OSError, ValueError) as e:  # 只是没保留住用户的字段，不影响更新
+                logger.warning("interface.json 没能保留用户加的字段：%s", e)
 
     def rollback(self) -> None:
         for name in self.moved_in:
             _remove(self.root / name)
         for name in self.moved_out:
             _rename(self.backup / name, self.root / name)
+
+
+def _disk_digest(root: Path, rel: str) -> str | None:
+    """磁盘上 ``rel`` 的摘要；没有或读不了（如 interface.json 被改坏）时为 None，当作要换。"""
+    try:
+        return release.file_digest(root / rel, rel) if (root / rel).is_file() else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def keep_user_fields(data: dict, old: Path) -> dict:
+    """新的 interface.json ``data`` 补上旧文件 ``old`` 里用户自己加的顶层字段（新版本里没有的，如 ``github``）。
+
+    新版本里有的字段和打包时生成的 MXU 设置分组用新的；旧文件读不了时原样返回 ``data``。
+    """
+    try:
+        local = json.loads(old.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return data
+    if not isinstance(local, dict):
+        return data
+    extra = {k: v for k, v in local.items() if k not in data and k != "setting"}
+    if extra:
+        logger.info("interface.json 保留用户加的字段：%s", "、".join(extra))
+    return {**data, **extra}
 
 
 def clear_pycache(root: Path) -> None:

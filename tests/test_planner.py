@@ -346,6 +346,20 @@ def test_simultaneous_presses_share_noise():
     assert len({round(by_id[2 * i].start - (1000 + i * 300.0), 3) for i in range(100)}) > 50
 
 
+@pytest.mark.parametrize("jitter", [0, 16])
+def test_simultaneous_presses_follow_game_order(jitter):
+    # 真夜中游园地 EXPERT（#90）：两条长条同时按下、起点互在对方判定区里，先发的触点给游戏先更新的那条。
+    # 先更新的 A 结束得晚，以前按结束时刻排在后面发，两条手指互换
+    a = Slide(43, [PathNode(1000, Span(8, 20)), PathNode(1500, Span(14, 22))], head=SlideHead.TAP, order=311)
+    b = Slide(44, [PathNode(1000, Span(4, 16)), PathNode(1300, Span(0, 8))], head=SlideHead.TAP, order=312)
+    tap = PointNote(1, 1000, NoteKind.TAP, Span(22, 24), order=313)
+    plan = _seeded(5, jitter_ms=jitter).plan(Chart(1, "expert", notes=[tap], slides=[b, a]))
+    downs = [e for e in plan.events if e.action is Action.DOWN]
+    finger = {g.source.split("@")[0]: g.finger for g in plan.gestures}
+    assert [e.finger for e in downs] == [finger["slide#43"], finger["slide#44"], finger["tap#1"]]
+    assert len({e.t_ms for e in downs}) == 1
+
+
 def _great_chart():
     notes = [PointNote(i, 1000 + i * 500.0, NoteKind.TAP, Span(8, 12)) for i in range(40)]
     notes += [
