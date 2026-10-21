@@ -37,7 +37,7 @@ import numpy as np
 from ..logfile import log_image
 from ..result_reader import OcrItem
 from ..runner import NavigationError, ServerMaintenance
-from .screens import RELOGIN_SCREENS, TITLE_ROI, Rect, Screen, center, find, in_roi, skip_button
+from .screens import RELOGIN_SCREENS, TITLE_ROI, Rect, Screen, center, find, in_roi, skip_button, story_title
 from .song_select import filter_open
 
 logger = logging.getLogger(__name__)
@@ -708,7 +708,10 @@ class DailyMixin:
                 self._leave_page(title)
             elif screen is Screen.SONG_SELECT and filter_open(items):
                 self._close_filter()
-            elif screen in HOME_BUTTON_SCREENS or (screen is Screen.UNKNOWN and home_icon(items)):
+            elif screen in HOME_BUTTON_SCREENS or (
+                # 故事的页面按标题也认：羁绊故事的成员页背景虚化，主页图标常读不出来
+                screen is Screen.UNKNOWN and (home_icon(items) or story_title(items) is not None)
+            ):
                 self.tap(BTN_HOME, "主页")
                 self._sleep(1.5)
             elif screen is not Screen.UNKNOWN and self._common_step(screen, items):

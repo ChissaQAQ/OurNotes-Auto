@@ -105,6 +105,23 @@ def test_slide_end_keeps_tick_order():
     assert s.nodes[-1].span == Span(7, 12)
     assert [n.time_ms for n in s.nodes] == sorted(n.time_ms for n in s.nodes)
 
+def test_update_order_follows_notes_array():
+    # 游戏按 notes 的排列顺序更新音符：长条取起点的位置，与 id 和 lineId 大小无关
+    notes = [
+        note(30, "Normal", 0, 0, 3),
+        note(21, "SlideBegin", 0, 8, 11, lineIds=[9]),
+        note(20, "SlideBegin", 0, 4, 7, lineIds=[2]),
+        note(22, "SlideEnd", 480, 8, 11, lineIds=[9]),
+        note(23, "SlideEnd", 480, 4, 7, lineIds=[2]),
+    ]
+    lines = [
+        {"lineId": 2, "type": "long", "noteIds": [20, 23], "comboIds": []},
+        {"lineId": 9, "type": "long", "noteIds": [21, 22], "comboIds": []},
+    ]
+    chart = parse_live_score(score(notes, lines))
+    assert [n.order for n in chart.notes] == [0]
+    assert {s.id: s.order for s in chart.slides} == {2: 2, 9: 1}
+
 def test_guide_line_first_judged():
     notes = [
         note(1, "GuideBegin", 0, 0, 3, lineIds=[7], judgement=False),

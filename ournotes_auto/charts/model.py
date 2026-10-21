@@ -79,6 +79,7 @@ class PointNote:
     span: Span
     direction: FlickDirection = FlickDirection.UP
     critical: bool = False
+    order: int = 0  # 在谱面 notes 里的位置，即游戏更新音符的先后
 
 
 @dataclass
@@ -119,6 +120,7 @@ class Slide:
     # 路径中途的判定点时刻（Combo / SlideConnection / SlideConnectionTrace）
     checkpoints: list[float] = field(default_factory=list)
     guide: bool = False  # 引导线（不可见路径，只有中途追踪判定点）
+    order: int = 0  # 起点在谱面 notes 里的位置，即游戏更新音符的先后
 
     def __post_init__(self) -> None:
         self.nodes.sort(key=lambda n: n.time_ms)

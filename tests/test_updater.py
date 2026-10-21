@@ -278,6 +278,47 @@ def test_full_apply_preserves_user_settings_across_updates(tmp_path):
         assert (root / "appsettings.json").read_text(encoding="utf-8") == "user"
 
 
+def _user_iface(**extra):
+    return json.dumps({**release.render_interface(IFACE, "mxu", "v0.1.0"), **extra})
+
+
+@pytest.mark.parametrize("full", [False, True])
+def test_update_keeps_user_interface_fields(tmp_path, full):
+    """用户在 interface.json 里加的顶层字段（如 MFAA 的更新源 github，#91）更新后还在；
+    新版本里有的字段、Agent 启动命令和 MXU 的设置分组照常用新的。"""
+    root = tmp_path / "pkg"
+    local = _package(root, {**OLD, "interface.json": _user_iface(github="https://example.com/x", name="改过", setting=[])})
+    if full:
+        iface = json.dumps(release.render_interface({**IFACE, "global_option": ["CheckUpdate", "AutoUpdate"]}, "mxu", "v0.2.0"))
+        _package(stage := tmp_path / "stage", {**NEW, "interface.json": iface, "mxu.exe": "ui2"}, version="v0.2.0")
+        job = FullApply(root, stage, local, tmp_path / "backup")
+    else:
+        stage = _tree(tmp_path / "stage", NEW)
+        job = FilesApply(root, stage, local, {"version": "v0.2.0", "files": release.manifest_files(stage)}, tmp_path / "backup")
+    job.run()
+    after = json.loads((root / "interface.json").read_text(encoding="utf-8"))
+    assert after["github"] == "https://example.com/x"
+    assert after["name"] == "OurNotes" and after["version"] == "v0.2.0"
+    assert after["setting"][0]["option"] == ["CheckUpdate", "AutoUpdate"]
+    assert after["agent"]["child_exec"] == release.AGENT_EXEC
+    job.rollback()
+    assert json.loads((root / "interface.json").read_text(encoding="utf-8"))["name"] == "改过"
+
+
+@pytest.mark.parametrize("old", ["{", "[]", None])
+def test_update_ignores_unreadable_old_interface(tmp_path, old):
+    """保底：旧的 interface.json 坏了、不是对象或者没有时，照常用新的。"""
+    root, stage = tmp_path / "pkg", _tree(tmp_path / "stage", NEW)
+    local = _package(root)
+    if old is None:
+        (root / "interface.json").unlink()
+    else:
+        _write(root, "interface.json", old)
+    FilesApply(root, stage, local, {"version": "v0.2.0", "files": release.manifest_files(stage)}, tmp_path / "backup").run()
+    after = json.loads((root / "interface.json").read_text(encoding="utf-8"))
+    assert after == release.render_interface(json.loads(NEW["interface.json"]), "mxu", "v0.2.0")
+
+
 # ---------------------------------------------------------------- 试运行
 
 

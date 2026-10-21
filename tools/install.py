@@ -55,6 +55,10 @@ UIS = {
 }
 RENAME = {"LICENSE": "LICENSE-{kind}"}  # 界面自带的许可证改名保留，不和本项目的 LICENSE 冲突
 ICON = ROOT / "docs" / "ui" / "logo.ico"  # 由 tools/make_icon.py 生成
+# MFAA 首次启动（config 下还没有用户配置）时把它改名成 config/config.json，已有配置时不用。
+# 关掉启动时的资源更新检查：本项目不接 MFAA 的资源更新（四段版本号它会认成 0.0.0，
+# 接了 GitHub 源反而把旧版当新版），每次启动都报「该资源操作暂不支持 Mirror酱」；更新走全局选项「检查更新」
+MFAA_CONFIG_TEMPLATE = {"EnableCheckVersion": False, "EnableAutoUpdateResource": False}
 
 
 def _remove(path: Path) -> None:
@@ -232,6 +236,8 @@ def main() -> int:
                 place(ROOT / name, out / name, link=False)
         install_python(args.python, out)
         write_interface(out, kind, args.version, release.AGENT_EXEC, list(release.AGENT_ARGS))
+        if kind == "mfaa":
+            release.write_json(out / "config" / "config.template.json", MFAA_CONFIG_TEMPLATE)
         # 自动更新按它判断能不能只换文件（tools/make_update.py 读它生成 update.json）
         release.write_json(out / release.RELEASE_FILE, release.release_info(out, kind, args.version or "", runtime_info(out, kind)))
     print(f"已组装 {kind} 到 {out}（MaaFramework {maafw}，{'开发' if args.dev else '发布'}模式）")

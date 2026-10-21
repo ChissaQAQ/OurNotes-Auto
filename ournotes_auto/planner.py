@@ -73,6 +73,7 @@ class Gesture:
     points: list[tuple[float, float, float]]  # (t_ms, x, y)
     source: str = ""
     finger: int = -1
+    order: int = 0  # 音符在游戏里的更新先后，同时按下时按这个顺序发送
 
     @property
     def start(self) -> float:
@@ -406,7 +407,7 @@ class Planner:
             pts = [(t - p.trace_lead_ms - lead, x, y), (t + p.trace_hold_ms, x, y)]
         else:
             pts = [(t, x, y), (t + p.tap_hold_ms, x, y)]
-        return Gesture(pts, source=f"{note.kind.value}#{note.id}@{note.time_ms:.0f}")
+        return Gesture(pts, source=f"{note.kind.value}#{note.id}@{note.time_ms:.0f}", order=note.order)
 
     def _slide_gesture(
         self, slide: Slide, lift_early_ms: float = 0.0, lead: float = 0.0, off: tuple[float, float] = NO_OFFSET
@@ -469,7 +470,7 @@ class Planner:
                 pts.append((end + p.slide_release_ms, ex, ey))
         if lead > 0:
             pts.insert(0, (pts[0][0] - lead, pts[0][1], pts[0][2]))
-        return Gesture(pts, source=f"slide#{slide.id}@{start:.0f}-{end:.0f}")
+        return Gesture(pts, source=f"slide#{slide.id}@{start:.0f}-{end:.0f}", order=slide.order)
 
     def gestures(self, chart: Chart) -> list[Gesture]:
         p = self.p
@@ -513,7 +514,10 @@ class Planner:
                     j = self._rng.uniform(-noise, noise)
                 last = g.start
                 g.points = [(t + drift(t) + j, x, y) for t, x, y in g.points]
-        out.sort(key=lambda g: (g.start, g.end))
+        # 同时按下的按游戏更新音符的先后发送：游戏把新触点交给最先更新、判定区里有它的音符，
+        # 两条长条的起点互在对方判定区里时，先发后更新的那个会被前一条认领，两条手指互换，
+        # 分开后一条的第一个中继 MISS（真夜中游园地 EXPERT #90）
+        out.sort(key=lambda g: (g.start, g.order, g.end))
         return out
 
     # —— 触点分配 ——
