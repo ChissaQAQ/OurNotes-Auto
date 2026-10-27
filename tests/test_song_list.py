@@ -49,6 +49,7 @@ class ListGame:
         self.category = "原创"
         self.taps = []
         self.drags = 0
+        self.blank = 0  # 接下来几帧列表还在加载：封面都没画出来
         self._items = []
         self._rng = np.random.default_rng(0)
 
@@ -58,9 +59,11 @@ class ListGame:
 
     def grab(self):
         frame = self._rng.integers(20, 70, (720, 1280, 3), dtype=np.uint8)
+        loaded = self.blank <= 0
+        self.blank -= 1
         for k in range(-4, 5):
             i = self.index + k
-            if k == 0 or not 0 <= i < len(self.order):
+            if not loaded or k == 0 or not 0 <= i < len(self.order):
                 continue
             y = row_y(k)
             if y + LIST_THUMB <= 0 or y >= 720:
@@ -74,7 +77,8 @@ class ListGame:
         big = cv2.resize(JACKETS[self.selected], (w, h), interpolation=cv2.INTER_AREA)
         if self.selected in self.locked:
             big[: h // 2, : w // 2] = 240  # 锁
-        frame[y : y + h, x : x + w] = big
+        if loaded:
+            frame[y : y + h, x : x + w] = big
         items = [it for it in load_items("song_select") if it.text not in ("原创", "随机选曲")]
         items += [item(self.category, 110, 144), item("随机选曲", 967, 660)]
         if self.selected in self.locked:
@@ -223,6 +227,29 @@ def test_select_locked_song():
     nav = make_nav(game)
     assert nav.select_song(IDS[7]) == SongPick(IDS[7], locked=True)
     assert game.selected == IDS[7]
+
+
+def test_select_waits_for_list_to_load():
+    """重启游戏后列表还在加载、封面都认不出：等它加载完再找，不拖两下就当成到头了。"""
+    game = ListGame(IDS, selected=5)
+    game.blank = 10
+    nav = make_nav(game)
+    assert nav.select_song(IDS[25]) == SongPick(IDS[25])
+    assert game.blank < 0
+
+
+def test_select_gives_up_waiting_for_list(monkeypatch):
+    """一直认不出就等到时间再照常找（和以前一样拖两下没变就算没有），截图留证。"""
+    import ournotes_auto.nav.song_select as ss
+
+    monkeypatch.setattr(ss, "LIST_LOAD_S", 0.0)
+    game = ListGame(IDS, selected=5)
+    game.blank = 10**6
+    nav = make_nav(game)
+    shots = []
+    nav.save_debug = lambda name, frame=None: shots.append(name)
+    assert nav.select_song(IDS[25]) is None
+    assert shots == ["song_list"] and game.drags == 2
 
 
 def test_category_change_clears_positions():

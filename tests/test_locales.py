@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+from ournotes_auto import release
+
 ROOT = Path(__file__).resolve().parents[1]
 TEXT_FIELDS = ("label", "description", "welcome", "pattern_msg")
 CJK = re.compile(r"[぀-ヿ一-鿿가-힣]")
@@ -50,9 +52,10 @@ def test_every_language_has_same_keys():
 def test_interface_keys_translated():
     base = _load(_load("interface.json")["languages"]["zh_cn"])
     texts = _interface_texts()
+    # 组装 MXU 时加的设置页分组和「统计与成就」卡片
+    mxu = release.render_interface(_load("interface.json"), "mxu")
+    _texts([mxu["setting"], mxu["option"]], texts)
     used = {t[1:] for t in texts if t.startswith("$")}
-    # 组装 MXU 时加的 setting 分组
-    used |= {"setting.global", "setting.global.desc"}
     assert used - set(base) == set()
     assert set(base) - used == set()
     # 新加的界面文字要走翻译文件
@@ -64,8 +67,8 @@ def test_mxu_setting_uses_keys(tmp_path):
     install = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(install)
     install.write_interface(tmp_path, "mxu", None, "python.exe", [])
-    setting = json.loads((tmp_path / "interface.json").read_text(encoding="utf-8"))["setting"][0]
-    assert (setting["label"], setting["description"]) == ("$setting.global", "$setting.global.desc")
+    setting = json.loads((tmp_path / "interface.json").read_text(encoding="utf-8"))["setting"]
+    assert [(s["label"], s["description"]) for s in setting] == [(f"$setting.{s['name']}", f"$setting.{s['name']}.desc") for s in setting]
 
 
 def test_readme_language_links():

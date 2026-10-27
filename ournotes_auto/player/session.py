@@ -17,7 +17,7 @@ from ..config import Config
 from ..device.base import FrameSource, TouchBackend
 from ..geometry import Geometry
 from ..planner import Plan, Planner
-from .clock import now
+from .clock import now, raised_thread_priority
 from .executor import ExecStats, Executor
 from .guard import TEMPLATE_PATH, LifeDepleted, PlayGuard, PlayInterrupted, load_template
 from .monitor import ComboWatcher, find_breaks, report_breaks, save_samples
@@ -152,6 +152,11 @@ class PlaySession:
         """需在进入演奏画面、首音符出现之前调用（通常在点击开始后立即调用）。
 
         ``retry``：刚在暂停菜单点了重试（歌曲立即从头开始，沿用上一次的跟踪区基线，见 player/sync.py）。"""
+        # 同步和演奏用最高优先级，打完恢复：导航、文字识别用不着，一直占着会抢别的程序的 CPU
+        with raised_thread_priority():
+            return self._play(chart, stop, require_sync_ok, retry)
+
+    def _play(self, chart: Chart, stop: threading.Event | None, require_sync_ok: bool, retry: bool) -> PlayOutcome:
         plan, tracker = self.prepare(chart, retry)
         self.last_fps = None
         try:

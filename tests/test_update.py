@@ -204,6 +204,68 @@ def test_auto_off_flag(tmp_path):
     assert not flag.exists()
 
 
+def _launch(root):
+    """Agent 刚启动（还没有任务）时的 UpdateCheck；返回 (check, 记录查和启动更新器的列表)。"""
+    calls = []
+
+    def lookup():
+        calls.append("lookup")
+        return {"version": "v0.2.0", "manifest": _manifest()}
+
+    return UpdateCheck(root, lookup=lookup, spawn=lambda: calls.append("spawn")), calls
+
+
+def test_start_on_launch(tmp_path):
+    """MFAA 打开界面时按上一个任务的选项先查一次；紧接着开始的任务不重复查。"""
+    check, calls = _launch(_package(tmp_path, ui="mfaa"))
+    check.start_on_launch()
+    check.report()
+    assert calls == ["lookup", "spawn"]
+    check.start()
+    check.report()
+    assert calls == ["lookup", "spawn"]
+
+
+def _auto_off(root):
+    """上一个任务关掉了「检查更新」或「自动更新」（这时都会建立 auto_off，见 test_auto_off_flag）。"""
+    flag = root / update.AUTO_OFF_FILE
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.write_text("", encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        lambda root: _package(root, ui="mxu"),  # MXU 只在任务开始时启动 Agent，任务开始时再查
+        lambda root: _dev(root, "v0.1.0"),
+        lambda root: _auto_off(_package(root, ui="mfaa")),
+    ],
+)
+def test_no_check_on_launch(tmp_path, setup):
+    """MXU、开发环境、上一个任务关掉了「检查更新」或「自动更新」时，打开界面不查。"""
+    check, calls = _launch(setup(tmp_path))
+    check.start_on_launch()
+    check.report()
+    assert not calls
+
+
+def test_launch_check_follows_task_options(tmp_path):
+    """打开界面时按上一个任务的选项没查，这次任务开着「自动更新」就照常查；反过来，打开时启动了更新器，
+    这次任务关掉「自动更新」也会建立 auto_off，等待中的更新器看到后退出。"""
+    root = _auto_off(_package(tmp_path, ui="mfaa"))
+    check, calls = _launch(root)
+    check.start_on_launch()
+    check.start()
+    check.report()
+    assert calls == ["lookup", "spawn"]
+    check, calls = _launch(root)
+    check.start_on_launch()
+    check.report()
+    check.start(auto=False)
+    assert calls == ["lookup", "spawn"] and (root / update.AUTO_OFF_FILE).exists()
+
+
 def test_no_spawn_while_running_or_after_error(tmp_path):
     root = _package(tmp_path)
     lock = release.FileLock(root / release.UPDATER_LOCK)

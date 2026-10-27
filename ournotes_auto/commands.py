@@ -229,6 +229,7 @@ def cmd_run(cfg: Config, args) -> int:
     """全自动循环：从当前画面导航到自由演出（或挑战演出），识别曲目并连续演奏。游戏没在运行时先启动它。"""
     from .runner import NavigationError, Runner
     from .sources import make_source
+    from .stats import Library, Tracker
 
     if args.difficulty:
         cfg.game.difficulty = args.difficulty
@@ -281,13 +282,16 @@ def cmd_run(cfg: Config, args) -> int:
                     return 130
                 logger.error("%s", e)
                 return 1
-        runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source, getattr(args, "update", None))
+        tracker = Tracker("data", getattr(args, "label", None) or "命令行", cfg.loop.wait_lb, library=Library.from_catalog(ctx.catalog))
+        update = getattr(args, "update", None)
+        runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source, update, tracker)
         try:
             stats = runner.run()
         except KeyboardInterrupt:
             stop.set()
             logger.info("已中断（共演奏 %d 局）", runner.stats.plays)
             return 130
+    args.summary = stats.summary()  # 完成、出错时推送
     if stats.restart:
         return EXIT_UPDATE
     # 服务器维护时任务算失败（打过几局也一样，没打完）
@@ -508,7 +512,7 @@ def register(sub) -> None:
     sp.add_argument(
         "--lb-auto",
         action="store_true",
-        help="每局按持有数自动选 LB 消耗（能选的最大值，不够就全部消耗；每天一次的「全部消耗」在能省 2 局以上时用）",
+        help="每局按持有数自动选 LB 消耗（能选的最大值，不够就全部消耗；「全部消耗」在能省 2 局以上时用，用到今天的次数用完）",
     )
     sp.add_argument(
         "--use-skip", action="store_true", help="自由演出先用乐队确认页的「跳过」消耗 LB，跳过次数用完了再演奏"

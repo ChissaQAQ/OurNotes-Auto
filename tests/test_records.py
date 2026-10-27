@@ -1,11 +1,13 @@
 """offset 自动修正：用实测得到的判定模型检验收敛。"""
 
 import json
+import os
 import random
 from statistics import mean
 
 import pytest
 
+from ournotes_auto import release
 from ournotes_auto.config import AutoTuneConfig
 from ournotes_auto.records import PlayResult, RecordStore, suggest_offset_delta
 
@@ -135,7 +137,7 @@ def test_chart_offset_disabled():
 
 
 def test_lb_all_used_per_account(tmp_path):
-    """「全部消耗」每个账号每天一次：按「切换账号」切到的账号分开记。"""
+    """「全部消耗」今天的次数用完了：按「切换账号」切到的账号分开记。"""
     store = RecordStore(tmp_path)
     assert store.lb_all_used("pkg") is None and store.account("pkg") == ""
     store.set_lb_all_used("pkg", "2026-10-15")  # 没切换过账号
@@ -155,3 +157,55 @@ def test_lb_all_used_per_account(tmp_path):
     assert store.lb_all_used("pkg") is None
     store.set_lb_all_used("pkg", "2026-10-17")
     assert store.lb_all_used("pkg") == "2026-10-17"
+
+
+def test_lb_all_uses_per_account_and_day(tmp_path):
+    """「全部消耗」每天用了几次：按账号分开记，换了游戏日从 0 算起。"""
+    store = RecordStore(tmp_path)
+    assert store.lb_all_uses("pkg", "2026-10-26") == 0
+    assert store.add_lb_all_use("pkg", "2026-10-26") == 1
+    assert store.add_lb_all_use("pkg", "2026-10-26") == 2
+    store.set_account("pkg", "a")
+    assert store.lb_all_uses("pkg", "2026-10-26") == 0
+    assert store.add_lb_all_use("pkg", "2026-10-26") == 1
+    store.set_account("pkg", "")
+    assert RecordStore(tmp_path).lb_all_uses("pkg", "2026-10-26") == 2
+    assert store.lb_all_uses("pkg", "2026-10-27") == 0 and store.lb_all_uses("other", "2026-10-26") == 0
+    assert store.add_lb_all_use("pkg", "2026-10-27") == 1
+    assert store.lb_all_uses("pkg", "2026-10-26") == 0
+
+
+def test_history_tolerates_new_fields_and_sorts(tmp_path):
+    """新版本加的字段不认识也照常读（从新版本导入的记录）；读不了的行跳过；按时间排（导入的旧记录接在末尾）。"""
+    lines = [
+        {"music_id": 1, "difficulty": "easy", "timestamp": 300.0},
+        {"music_id": 2, "difficulty": "hard", "timestamp": 100.0, "new_field": [1, 2]},
+        {"music_id": 3, "difficulty": "easy", "timestamp": "坏了"},
+        {"difficulty": "easy", "timestamp": 50.0},
+        [1, 2],
+        {"music_id": 4, "difficulty": "expert", "timestamp": 200, "perfect": 5},
+    ]
+    text = "\n".join(json.dumps(x, ensure_ascii=False) for x in lines) + "\nnot json\n"
+    (tmp_path / "records.jsonl").write_text(text, encoding="utf-8")
+    store = RecordStore(tmp_path)
+    assert [r.music_id for r in store.history(limit=None)] == [2, 4, 1]
+    assert [r.music_id for r in store.history(limit=2)] == [4, 1]
+    assert store.history(limit=0) == [] and store.history(limit=None)[1].perfect == 5
+
+
+def test_state_saved_when_file_busy(tmp_path, monkeypatch):
+    """state.json 正被别的程序读着、替换不了时等一下再试，不报错；临时文件名带进程号，不留下。"""
+    real, calls = os.replace, []
+
+    def flaky(src, dst):
+        calls.append(dst)
+        if len(calls) < 3:
+            raise PermissionError("locked")
+        real(src, dst)
+
+    monkeypatch.setattr(release.time, "sleep", lambda s: None)
+    monkeypatch.setattr(os, "replace", flaky)
+    store = RecordStore(tmp_path)
+    store.set_account("pkg", "a")
+    assert RecordStore(tmp_path).account("pkg") == "a" and len(calls) == 3
+    assert not list(tmp_path.glob("*.tmp"))

@@ -495,7 +495,7 @@ def note_speed(items: list[OcrItem]) -> float | None:
 # LIVE BOOST消耗设置弹窗（乐队确认页「跳过」打开的跳过确认弹窗也一样）：左侧一列消耗数和单选按钮，从上到下
 # 最大消耗 … 1、0，每行 56px，同时只露出 4 行（T.G.W CARD 10 级解锁 4、14 级解锁 5，这时要上下拖才看得全）。
 # 单选按钮在消耗数左边 LB_RADIO_DX（两种弹窗、几种布局的位置不同，按读到的消耗数算），选中的圆心是白色、
-# 未选中是暗红；下方「全部消耗」复选框同理（每天一次，消耗持有的全部，最多 10）。持有数量「24/99」在弹窗底部中间
+# 未选中是暗红；下方「全部消耗」复选框同理（每天能用几次看月卡，消耗持有的全部，最多 10）。持有数量「24/99」在弹窗底部中间
 LB_MAX_COST = 5
 LB_ROW_STEP = 56
 LB_ROW_X = (415, 460)  # 消耗数中心 x 的范围（右边是奖励倍数，下面「全部消耗」那行的数字在 LB_ROWS_Y 外面）
@@ -529,13 +529,14 @@ def lb_rows(items: list[OcrItem]) -> LbRows | None:
     if not digits:
         return None
     base = median(cy + LB_ROW_STEP * v for v, _, cy in digits)  # 消耗 0 那一行的 y
-    x = median(cx for v, cx, cy in digits if abs(cy + LB_ROW_STEP * v - base) <= 12)
+    near = [cx for v, cx, cy in digits if abs(cy + LB_ROW_STEP * v - base) <= 12]  # 离大多数差太远的不要
+    x = median(near or [cx for _, cx, _ in digits])  # 只有两行、错位时可能一个都不剩：按全部算，别抛错
     rows = {v: round(base - LB_ROW_STEP * v) for v in range(LB_MAX_COST + 1)}
     return LbRows(round(x) + LB_RADIO_DX, {v: y for v, y in rows.items() if LB_ROWS_Y[0] <= y <= LB_ROWS_Y[1]})
 
 
 def lb_all_used(items: list[OcrItem]) -> bool:
-    """「全部消耗」下面写着今天的次数已用完（「今日次数已用完。」，别的语言没见过，认不出时由勾选不上兜底）。"""
+    """「全部消耗」下面写着今天的次数已用完（「今日次数已用完。」，没用完时是「今日剩余1次」；别的语言没见过，认不出时由勾选不上兜底）。"""
     return find(items, "已用完") is not None
 
 

@@ -13,10 +13,12 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import asdict, dataclass, field
+from contextlib import suppress
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from statistics import mean
 
+from . import release
 from .config import AutoTuneConfig
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,17 @@ class PlayResult:
         if self.full_combo is None or self.great is None:
             return None
         return self.full_combo and self.great == 0
+
+
+RESULT_FIELDS = frozenset(f.name for f in fields(PlayResult))
+
+
+def parse_result(line: str) -> PlayResult:
+    """``records.jsonl`` 的一行。不认识的字段（新版本加的，从新版本导入过来的记录里有）不管，其余照常读。"""
+    r = PlayResult(**{k: v for k, v in json.loads(line).items() if k in RESULT_FIELDS})
+    if isinstance(r.timestamp, bool) or not isinstance(r.timestamp, (int, float)):
+        raise ValueError(f"时间不对：{r.timestamp!r}")
+    return r
 
 
 def timing_ratio(fast: int | None, slow: int | None, cfg: AutoTuneConfig) -> float | None:
@@ -99,10 +112,7 @@ class RecordStore:
         return {}
 
     def _save_state(self, state: dict) -> None:
-        self.dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(self.state_path)
+        release.write_text(self.state_path, json.dumps(state, ensure_ascii=False, indent=2))
 
     @property
     def learned_offset_ms(self) -> float:
@@ -180,13 +190,32 @@ class RecordStore:
             self._save_state(state)
 
     def lb_all_used(self, package: str) -> str | None:
-        """这个服的当前账号（:meth:`account`）上次用「全部消耗」（每天一次）是哪个游戏日（:func:`game_day`），没记过为 None。"""
+        """这个服的当前账号（:meth:`account`）上次用完「全部消耗」当天的次数是哪个游戏日（:func:`game_day`），
+        没记过为 None。"""
         state = self._load_state()
         used = state.get("lb_all_used", {}).get(package)
         return used.get(state.get("account", {}).get(package, "")) if isinstance(used, dict) else None
 
+    def lb_all_uses(self, package: str, day: str) -> int:
+        """这个服的当前账号在游戏日 ``day`` 用了几次「全部消耗」。"""
+        state = self._load_state()
+        uses = state.get("lb_all_uses", {}).get(package)
+        got = uses.get(state.get("account", {}).get(package, "")) if isinstance(uses, dict) else None
+        return got[1] if isinstance(got, list) and len(got) == 2 and got[0] == day else 0
+
+    def add_lb_all_use(self, package: str, day: str) -> int:
+        """记下这个服的当前账号在游戏日 ``day`` 又用了一次「全部消耗」，返回当天一共用了几次。"""
+        n = self.lb_all_uses(package, day) + 1
+        state = self._load_state()
+        uses = state.setdefault("lb_all_uses", {})
+        if not isinstance(uses.get(package), dict):
+            uses[package] = {}
+        uses[package][state.get("account", {}).get(package, "")] = [day, n]
+        self._save_state(state)
+        return n
+
     def set_lb_all_used(self, package: str, day: str | None) -> None:
-        """记下（``day`` 为 None 时删掉）这个服的当前账号在游戏日 ``day`` 用过了「全部消耗」。"""
+        """记下（``day`` 为 None 时删掉）这个服的当前账号在游戏日 ``day`` 用完了当天「全部消耗」的次数。"""
         state = self._load_state()
         account = state.get("account", {}).get(package, "")
         used = state.setdefault("lb_all_used", {})
@@ -204,19 +233,15 @@ class RecordStore:
             f.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
 
     def history(self, limit: int | None = 20) -> list[PlayResult]:
-        """最近 ``limit`` 局（None 为全部），从旧到新。"""
+        """最近 ``limit`` 局（None 为全部），从旧到新。按时间排：导入的旧记录接在文件末尾。"""
         if not self.records_path.exists():
             return []
-        lines = self.records_path.read_text(encoding="utf-8").splitlines()
-        if limit is not None:
-            lines = lines[-limit:]
         out = []
-        for line in lines:
-            try:
-                out.append(PlayResult(**json.loads(line)))
-            except (TypeError, ValueError):
-                continue
-        return out
+        for line in self.records_path.read_text(encoding="utf-8").splitlines():
+            with suppress(TypeError, ValueError, AttributeError):
+                out.append(parse_result(line))
+        out.sort(key=lambda r: r.timestamp)
+        return out if limit is None else out[-limit:] if limit > 0 else []
 
     def autotune(self, result: PlayResult, cfg: AutoTuneConfig, note_speed: float = 5.0, label: str = "") -> float:
         """记录结果并按 FAST/SLOW 更新学到的 offset（全局或这张谱面的），返回修正量。"""

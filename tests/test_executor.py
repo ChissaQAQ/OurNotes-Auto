@@ -1,10 +1,15 @@
+import ctypes
+import sys
 import threading
+from types import SimpleNamespace
 
 import pytest
 
 from ournotes_auto.planner import Action, TouchEvent
-from ournotes_auto.player.clock import now
+from ournotes_auto.player import clock
+from ournotes_auto.player.clock import THREAD_PRIORITY_ERROR_RETURN, now, raised_thread_priority
 from ournotes_auto.player.executor import Executor
+from ournotes_auto.player.session import PlaySession
 
 
 class FakeBackend:
@@ -116,3 +121,96 @@ def test_executor_hold_releases_and_skips():
     stats = Executor(backend).run(events, now(), hold=Hold(False, True, False, False, False))
     assert [r[1:3] for r in backend.log] == [("down", 0), ("up", 0), ("down", 2), ("up", 2)]
     assert stats.sent == 3 and stats.held == 4 and not stats.aborted and not backend.released
+
+
+# ---------------------------------------------------------------- 线程优先级
+
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="只在 Windows 上调线程优先级")
+
+
+def _thread_priority() -> int:
+    kernel32 = ctypes.WinDLL("kernel32")
+    kernel32.GetCurrentThread.restype = ctypes.c_void_p
+    kernel32.GetThreadPriority.argtypes = [ctypes.c_void_p]
+    return kernel32.GetThreadPriority(kernel32.GetCurrentThread())
+
+
+def _in_thread(fn):
+    """在新线程里跑：新线程是普通优先级，不受前面的测试（以前打完不恢复）影响。"""
+    out = []
+    t = threading.Thread(target=lambda: out.append(fn()))
+    t.start()
+    t.join()
+    assert out, "线程里出错了"
+    return out[0]
+
+
+@windows_only
+def test_executor_priority_restored():
+    """演奏时是最高优先级，打完（包括中途停止）恢复原来的：之后的导航、文字识别不再抢别的程序的 CPU。"""
+
+    def body():
+        before, seen = _thread_priority(), []
+        backend = FakeBackend()
+        backend.down = lambda finger, x, y: seen.append(_thread_priority())
+        Executor(backend).run([TouchEvent(0, Action.DOWN, 0, 1, 1), TouchEvent(1, Action.UP, 0, 1, 1)], now())
+        after = _thread_priority()
+        stop = threading.Event()
+        stop.set()
+        assert Executor(FakeBackend()).run([TouchEvent(0, Action.DOWN, 0, 1, 1)], now(), stop=stop).aborted
+        return before, seen, after, _thread_priority()
+
+    assert _in_thread(body) == (0, [15], 0, 0)
+
+
+@windows_only
+def test_session_play_priority_restored():
+    """同步和演奏整局都是最高优先级（里面 Executor 出来时不降下来），出了 play 恢复；出错也恢复。"""
+
+    def _play(chart, stop, require_sync_ok, retry):
+        with raised_thread_priority():
+            pass
+        return _thread_priority()
+
+    def _fail(*args):
+        raise RuntimeError("boom")
+
+    def body():
+        before = _thread_priority()
+        inside = PlaySession.play(SimpleNamespace(_play=_play), None)
+        after = _thread_priority()
+        with pytest.raises(RuntimeError):
+            PlaySession.play(SimpleNamespace(_play=_fail), None)
+        return before, inside, after, _thread_priority()
+
+    assert _in_thread(body) == (0, 15, 0, 0)
+
+
+class FakeKernel32:
+    def __init__(self, current=0, set_ok=True):
+        self.current, self.set_ok, self.calls = current, set_ok, []
+        self.GetCurrentThread = lambda: 1234
+        self.GetThreadPriority = lambda thread: self.current
+        self.SetThreadPriority = lambda thread, priority: self._set(priority)
+
+    def _set(self, priority):
+        self.calls.append(priority)
+        return self.set_ok
+
+
+@pytest.mark.parametrize(
+    "current, set_ok, calls",
+    [
+        (2, True, [15, 2]),
+        (THREAD_PRIORITY_ERROR_RETURN, True, [15, 0]),  # 读不到原来的：恢复成普通
+        (0, False, [15]),  # 设不上：不用恢复
+    ],
+)
+def test_priority_fallbacks(monkeypatch, current, set_ok, calls):
+    kernel32 = FakeKernel32(current, set_ok)
+    monkeypatch.setattr(clock.sys, "platform", "win32")
+    monkeypatch.setattr(clock.ctypes, "WinDLL", lambda name: kernel32, raising=False)
+    with pytest.raises(RuntimeError):  # 出错也恢复
+        with raised_thread_priority():
+            raise RuntimeError("boom")
+    assert kernel32.calls == calls

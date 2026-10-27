@@ -222,7 +222,7 @@ def test_files_apply_and_rollback(tmp_path):
     assert "ournotes_auto/gone.py" not in after and "ournotes_auto/__pycache__/runner.cpython-314.pyc" not in after
     assert after["config/config.yaml"] == b"user" and after["mxu.exe"] == b"ui"
     iface = json.loads(after["interface.json"])
-    assert iface["version"] == "v0.2.0" and iface["setting"][0]["option"] == ["CheckUpdate", "AutoUpdate"]
+    assert iface["version"] == "v0.2.0" and iface["setting"][-1]["option"] == ["CheckUpdate", "AutoUpdate"]
     assert iface["agent"]["child_exec"] == release.AGENT_EXEC
     info = release.read_release(root)
     assert info["version"] == "v0.2.0" and info["files"] == manifest["files"] == release.manifest_files(root)
@@ -299,7 +299,8 @@ def test_update_keeps_user_interface_fields(tmp_path, full):
     after = json.loads((root / "interface.json").read_text(encoding="utf-8"))
     assert after["github"] == "https://example.com/x"
     assert after["name"] == "OurNotes" and after["version"] == "v0.2.0"
-    assert after["setting"][0]["option"] == ["CheckUpdate", "AutoUpdate"]
+    assert [s["name"] for s in after["setting"]] == ["stats", "global"] and after["setting"][1]["option"] == ["CheckUpdate", "AutoUpdate"]
+    assert after["option"] == {release.STATS_OPTION: release.render_interface(IFACE, "mxu")["option"][release.STATS_OPTION]}
     assert after["agent"]["child_exec"] == release.AGENT_EXEC
     job.rollback()
     assert json.loads((root / "interface.json").read_text(encoding="utf-8"))["name"] == "改过"
@@ -317,6 +318,17 @@ def test_update_ignores_unreadable_old_interface(tmp_path, old):
     FilesApply(root, stage, local, {"version": "v0.2.0", "files": release.manifest_files(stage)}, tmp_path / "backup").run()
     after = json.loads((root / "interface.json").read_text(encoding="utf-8"))
     assert after == release.render_interface(json.loads(NEW["interface.json"]), "mxu", "v0.2.0")
+
+
+def test_keep_user_fields_skips_generated(tmp_path, caplog):
+    """打包时生成的部分（版本号、MXU 的设置页和统计卡片）不算用户加的；项目的 interface.json 顶层没有 option。"""
+    old = _write(tmp_path, "interface.json", _user_iface(github="g"))
+    new = {k: v for k, v in IFACE.items() if k != "version"}
+    with caplog.at_level(logging.INFO, logger="ournotes_auto.updater"):
+        assert updater.keep_user_fields(new, old) == {**new, "github": "g"}
+    assert caplog.messages == ["interface.json 保留用户加的字段：github"]
+    _write(tmp_path, "interface.json", '{"option": 1}')
+    assert updater.keep_user_fields(new, old) == new
 
 
 # ---------------------------------------------------------------- 试运行

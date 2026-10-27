@@ -334,6 +334,14 @@ def test_lb_rows_missing():
     assert lb_rows(items).y == {0: 292, 1: 236, 2: 180, 3: 124}
 
 
+def test_lb_rows_misaligned():
+    """只读到两行、又对不上整列的位置（读偏、其实不是同一个列表）：按全部消耗数算，不能抛错（设置 LB 消耗时会中断）。"""
+    items = [OcrItem(430, 200, 0, 0, "0"), OcrItem(430, 300, 0, 0, "1")]
+    rows = lb_rows(items)
+    assert rows is not None and rows.x == 307
+    assert rows.y == {0: 278, 1: 222, 2: 166, 3: 110}
+
+
 def test_lb_all_used_and_skip_left():
     assert lb_all_used(load("lb_setting")) and lb_all_used(load("lb_setting_4"))
     assert not lb_all_used(load("lb_setting_event")) and not lb_all_used(load("skip_confirm"))

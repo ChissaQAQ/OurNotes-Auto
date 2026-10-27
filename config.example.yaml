@@ -14,8 +14,9 @@ game:
   # 第一局前自动在「消耗LB」弹窗里选好；LB 不够时游戏会消耗剩余全部；用完时弹出「恢复LIVE BOOST」只点取消，之后 30 分钟内改为 0
   # （loop.until_lb_empty 为 true 时则就此结束）
   lb_cost: null
-  # true：不看 lb_cost，每局按持有数选能选的最大消耗，不够就全部消耗；每天一次的「全部消耗」在持有 10 个以上、
-  # 或比一局局消耗能少打 2 局以上时用（用过记在 data/state.json，按「切换账号」切到的账号分开记，当天不再看）
+  # true：不看 lb_cost，每局按持有数选能选的最大消耗，不够就全部消耗；「全部消耗」在持有 10 个以上、
+  # 或比一局局消耗能少打 2 局以上时用，用到今天的次数用完（每天几次看月卡，一般 1 次；用完了记在 data/state.json，
+  # 按「切换账号」切到的账号分开记，当天不再看）
   lb_auto: false
   # true：每局前 LB 持有少于 lb_cost（须为 1~5，或 lb_auto）时，用道具里的 LIVE BOOST饮料补够（从「消耗LB」→「恢复」进去，
   # 只在「道具」页选，先用小型饮料；绝不用星钻、不看广告）。饮料用完或补够 lb_refill_limit 个后按上面的方式处理
@@ -57,3 +58,8 @@ loop:
   ap_first_difficulties: ""  # ap_first 依次补的难度（如 expert,hard,normal,easy），都补完了按 game.difficulty 随机；留空只补 game.difficulty
   ap_max_attempts: 3         # AP 补完 / ap_first 时同一首歌最多打几次
   ap_done_hours: 12          # ap_first 确认过某难度没有要补的歌后，这么多小时内跳过它的检查（有新曲、切换账号时照样检查）；0 为每次都检查
+
+notify:                      # 推送到手机：打歌、领取日常完成，任务出错结束，挂机遇到服务器维护时发一条消息（手动停止的不推送）
+  channel: ""                # 留空不推送；ntfy（免费，手机装 ntfy 应用订阅主题）/ serverchan（Server酱，推到微信）/ bark（Bark，推到 iPhone）/ webhook
+  target: ""                 # ntfy 的主题名（自建服务填完整网址）、Server酱的 SendKey、Bark App 里复制的网址（或只填 key）或 webhook 的网址。等于密码，别发给别人
+  events: done,error,maintenance   # 推送哪些：done 完成、error 出错、maintenance 服务器维护；设好后用 ournotes-auto notify-test 试一下

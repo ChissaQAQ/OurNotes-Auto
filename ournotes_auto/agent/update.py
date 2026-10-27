@@ -1,5 +1,5 @@
-"""自动更新（Agent 这边）：任务开始时到 GitHub 查最新 Release 的 update.json，有新版本就启动后台的更新器
-（ournotes_auto/updater.py）下载、在合适的时机换上；任务结束时在界面日志里报告进度。
+"""自动更新（Agent 这边）：任务开始时（MFAA 打开界面时也查）到 GitHub 查最新 Release 的 update.json，有新版本就
+启动后台的更新器（ournotes_auto/updater.py）下载、在合适的时机换上；任务结束时在界面日志里报告进度。
 
 更新器用复制到 cache/update/runner/ 的嵌入式 Python 运行，界面、Agent 退出或整包替换都不影响它。Agent 和更新器
 用锁配合（ournotes_auto/release.py）：演奏进程运行期间锁住 busy/<pid>.lock，更新器只在没有演奏进程时替换文件；
@@ -180,6 +180,17 @@ class UpdateCheck:
         self._hot = False
         if check:
             self._maybe_check()
+
+    def start_on_launch(self) -> None:
+        """Agent 启动时调用。MFAA 打开界面、连上模拟器就启动 Agent 并一直开着，这时按上一个任务的选项先查一次；
+        MXU 只在任务开始时启动 Agent，紧接着 ``start`` 就会查。
+
+        界面里的选项要到任务开始才拿得到，所以只看 ``start`` 留下的 auto_off：关掉「检查更新」或「自动更新」时
+        都有它，这里就不查，等任务开始再按当时的选项处理。没有它（还没运行过任务）按默认的都开着。"""
+        local = release.read_release(self.root)
+        if local is None or local.get("ui") != "mfaa" or (self.root / AUTO_OFF_FILE).exists():
+            return
+        self._maybe_check()
 
     def _maybe_check(self) -> None:
         """后台查一次；Agent 常驻（MFAA）时隔一阵再查。"""

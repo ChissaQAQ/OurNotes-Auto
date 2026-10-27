@@ -124,6 +124,7 @@ class MaaOcr:
         self._tasker = Tasker()
         if not self._tasker.bind(self._resource, self._controller) or not self._tasker.inited:
             raise OcrUnavailable("MaaFramework Tasker 初始化失败")
+        self._clear_ok = True  # 见 _clear_cache
 
     def _run(self, image: np.ndarray, roi: tuple[int, int, int, int] | None, only_rec: bool):
         results, sx, sy = self._run_model("", image, roi, only_rec)
@@ -146,7 +147,25 @@ class MaaOcr:
         job = self._tasker.post_recognition(JRecognitionType.OCR, param, np.ascontiguousarray(image)).wait()
         detail = job.get()
         reco = detail.nodes[0].recognition if detail and detail.nodes else None
-        return (reco.all_results if reco else []), sx, sy
+        results = reco.all_results if reco else []
+        self._clear_cache()
+        return results, sx, sy
+
+    def _clear_cache(self) -> None:
+        """清掉 Tasker 记下的识别详情：不清的话每次识别都留一份，挂机越久占得越多（#94）。
+
+        识别结果在这之前已经复制成 Python 对象，清掉不影响；清不了（旧版 MaaFramework 等）就不再清，照常识别。
+        """
+        if not self._clear_ok:
+            return
+        try:
+            self._clear_ok = bool(self._tasker.clear_cache())
+        except Exception as e:  # noqa: BLE001 - 只是省内存，不能影响识别
+            self._clear_ok = False
+            logger.debug("清理 OCR 缓存失败，不再清理：%s", e)
+        else:
+            if not self._clear_ok:
+                logger.debug("清理 OCR 缓存失败，不再清理")
 
     def read(self, image: np.ndarray, roi: tuple[int, int, int, int] | None = None) -> list[OcrItem]:
         """检测并识别 BGR 截图中的全部文字；``roi`` 为设计尺寸下的 (x, y, w, h)。"""

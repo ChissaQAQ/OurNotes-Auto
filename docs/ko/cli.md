@@ -58,9 +58,13 @@ ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gif
 ournotes-auto daily --jobs story   # 보지 않은 밴드 / 어나더 / 인연 스토리 스킵(명시해야 실행)
 ournotes-auto daily --jobs event   # 기간 한정 이벤트에서 보지 않은 이벤트 스토리 / 어나더 스토리 스킵(명시해야 실행)
 
-# 로컬 연주 기록 요약(총 판 수, AP한 채보, 아직 AP를 못 한 채보, 최근 몇 판)
+# 로컬 연주 기록 요약(총 판 수, AP한 채보, 아직 AP를 못 한 채보, 최근 몇 판), 통계 페이지 갱신(누적 실행 시간, 업적. 전체 페이지는 data/stats.html)
 ournotes-auto records [--recent 10]
 ournotes-auto records --clear-chart-offsets   # 채보별로 배운 오프셋 지우기(전역 학습값은 그대로)
+ournotes-auto stats-window   # 「통계 및 업적」 창 열기(이미 열려 있으면 앞으로 가져옴). 패키지 폴더의 「统计与成就」 바로 가기가 실행하는 것
+ournotes-auto backup export [--out 폴더]   # 백업 내보내기(연주 기록, 실행 기록, 업적, 학습한 오프셋). 기본 위치는 문서\OurNotes-Auto
+ournotes-auto backup import [가져올 위치]   # 백업 파일, 예전 패키지 폴더 또는 그 data 폴더에서 가져오기(합침, 기존 기록은 그대로). 생략하면 문서\OurNotes-Auto의 가장 최근 백업
+ournotes-auto notify-test   # config.yaml의 notify로 테스트 알림을 하나 보내기(휴대폰 알림: ntfy, Server酱, Bark, webhook. config.example.yaml 참고)
 
 # 현재 화면 인식(내비게이션 디버그)
 ournotes-auto look [--save] [--ocr]

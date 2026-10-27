@@ -178,8 +178,8 @@ class GameConfig:
     # 开始第一局前在乐队确认页「消耗LB」弹窗里选好并核对；null 表示不改游戏里的设置。持有数量不足时游戏会消耗剩余的全部 LB；
     # 用完时弹出「恢复LIVE BOOST」（道具/星钻/广告）只点取消，之后 30 分钟内（或到玩家升级）改为 0 继续
     lb_cost: int | None = None
-    # 自动选消耗（开了就不看 lb_cost）：每局按持有数选能选的最大消耗，持有不够就全部消耗掉；每天一次的「全部消耗」
-    # 在持有 10 个以上、或比一局局消耗能省 2 局以上时用。用完后的处理同 lb_cost 为 1~5
+    # 自动选消耗（开了就不看 lb_cost）：每局按持有数选能选的最大消耗，持有不够就全部消耗掉；「全部消耗」
+    # （每天能用的次数看月卡，一般 1 次，用到弹窗上写着今天的次数用完为止）在持有 10 个以上、或比一局局消耗能省 2 局以上时用。用完后的处理同 lb_cost 为 1~5
     lb_auto: bool = False
     # 每局开始前 LB 持有少于 lb_cost（需要为 1~5）时，用道具里的 LIVE BOOST饮料补充（从「消耗LB」→「恢复」进去，
     # 只在「道具」页选；绝不用星钻、不看广告）。道具用完或补够 lb_refill_limit 个后按上面的方式处理
@@ -248,6 +248,19 @@ class LoopConfig:
     ocr_model: str = ""  # 留空使用 resource/model/ocr 下的默认模型
 
 
+@dataclass
+class NotifyConfig:
+    """推送到手机（见 notify.py）。发送失败只记警告，不影响任务。"""
+
+    # 推送方式：留空不推送；ntfy：ntfy.sh（或自建的 ntfy 服务）；serverchan：Server酱（推到微信）；bark：Bark（推到 iPhone）；webhook：POST JSON 到一个网址
+    channel: str = ""
+    # ntfy 的主题（自建服务填完整网址 https://服务器/主题）、Server酱的 SendKey、Bark App 里复制的网址（或只填 key）或 webhook 的网址。等于密码，日志里不记
+    target: str = ""
+    # 推送哪些消息（逗号分隔）：done 打歌、领取日常完成；error 任务出错结束；maintenance 挂机遇到服务器维护、开服后继续。
+    # 手动停止的任务不推送
+    events: str = "done,error,maintenance"
+
+
 def parse_daily_time(text: str) -> tuple[int, int]:
     """解析 ``loop.daily_claim_time`` 这样的「时:分」（24 小时制，如 22:30）→ (时, 分)，格式不对时抛 ValueError。"""
     m = re.fullmatch(r"\s*(\d{1,2})\s*[:：]\s*(\d{2})\s*", str(text))
@@ -265,6 +278,7 @@ class Config:
     autotune: AutoTuneConfig = field(default_factory=AutoTuneConfig)
     charts: ChartsConfig = field(default_factory=ChartsConfig)
     loop: LoopConfig = field(default_factory=LoopConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
 
 
 def _build(cls: type, data: dict[str, Any], path: str) -> Any:

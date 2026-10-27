@@ -18,7 +18,7 @@ from maa.agent.agent_server import AgentServer
 from maa.context import Context
 from maa.custom_action import CustomAction
 
-from .. import __version__
+from .. import __version__, release, sysmem
 from ..release import EXIT_UPDATE
 from .logs import set_ui_debug, setup_logging
 from .update import UpdateBusyError, UpdateCheck
@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parents[2]
 PARAM_NODE = "OurNotesParam"  # 界面选项都覆盖到这个节点的 attach 上（和 params.PARAM_NODE 一致）
 UPDATE = UpdateCheck(ROOT)
+SECRET_KEYS = ("notify_target",)  # 等于密码的选项（推送地址），日志里不记
+
+
+def _masked(attach: Mapping[str, Any]) -> dict[str, Any]:
+    return {k: "***" if k in SECRET_KEYS and v else v for k, v in attach.items()}
 
 
 def _flag(attach: Mapping[str, Any], key: str, default: bool) -> bool:
@@ -49,7 +54,7 @@ def _controller_info(context: Context) -> Any:
 
 
 class OurNotesRun(CustomAction):
-    """``custom_action_param`` 为 ``{"task": "start" | "switch_account" | "repeat" | "clear_lb" | "idle" | "ap" | "records"}``，
+    """``custom_action_param`` 为 ``{"task": "start" | "switch_account" | "repeat" | "clear_lb" | "idle" | "ap" | "records" | "notify_test"}``，
     选项在 ``OurNotesParam`` 节点的 attach 里。"""
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
@@ -61,13 +66,14 @@ class OurNotesRun(CustomAction):
         task = param.get("task", "") if isinstance(param, dict) else ""
         attach = (context.get_node_data(PARAM_NODE) or {}).get("attach") or {}
         set_ui_debug(_flag(attach, "debug_log", False))
-        logger.debug("任务 %s，参数 %s", task, attach)
+        logger.debug("任务 %s，参数 %s", task, _masked(attach))
         if apply_proxy(attach.get("proxy")):
             logger.debug("网络代理：%s", attach.get("proxy"))
         UPDATE.start(check=_flag(attach, "check_update", True), auto=_flag(attach, "auto_update", True))
         payload = {"task": task, "attach": attach, "controller": _controller_info(context)}
         cmd = [sys.executable, "-m", "ournotes_auto", "agent-run", json.dumps(payload, ensure_ascii=False, default=str)]
-        logger.debug("启动演奏进程：%s", cmd)
+        shown = json.dumps({**payload, "attach": _masked(attach)}, ensure_ascii=False, default=str)
+        logger.debug("启动演奏进程：%s", [*cmd[:-1], shown])
 
         def stopping() -> bool:
             return context.tasker.stopping
@@ -90,8 +96,67 @@ class OurNotesRun(CustomAction):
             logger.info("已停止")
         elif result.returncode:
             logger.error("任务结束，退出码 %d（详细日志见 data/ournotes.log）", result.returncode)
+            _report_memory(result.out_of_memory)
         UPDATE.report()
         return result.returncode == 0
+
+
+def _report_memory(out_of_memory: bool) -> None:
+    """演奏进程出错退出时，若是分配不到内存（或电脑的内存快用完了）就说清楚（#94）。"""
+    status = sysmem.memory_status()
+    if not out_of_memory and not sysmem.low(status):
+        return
+    mem = sysmem.describe(status)
+    logger.error(
+        "%s%s：请关掉占内存多的程序或重启电脑后再试；任务管理器「详细信息」按「提交大小」排序能看到是谁占的",
+        "电脑内存不足，演奏进程分配不到内存退出了" if out_of_memory else "电脑内存快用完了，出错可能与此有关",
+        f"（{mem}）" if mem else "",
+    )
+
+
+PLACEHOLDERS = {
+    # 任务「打开统计窗口」的说明
+    "stats.md": "统计页还没有生成：运行一次这个任务或打完一局后，这里会显示累计运行时长、演奏数据和成就"
+    "（MFAA 点一下别的任务再点回来、MXU 打开设置再回来可以刷新）。\n",
+    # MXU 设置页「统计与成就」卡片
+    "stats_mxu.md": "还没有统计：打完一局或运行一次任务「打开统计窗口」后，这里会显示累计运行时长、演奏数据和成就"
+    "（重新打开设置可以刷新）。\n",
+}
+
+
+def _ensure_stats_page(data: Path = Path("data")) -> None:
+    """界面上显示的统计页是 ``data`` 里的几个文件（打歌、运行任务「打开统计窗口」时由 ``stats`` 生成）；
+    还没有时先放一句提示，不然界面上显示的是文件路径。"""
+    for name, text in PLACEHOLDERS.items():
+        path = data / name
+        if path.exists():
+            continue
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except OSError as e:
+            logger.debug("写入统计页提示失败：%s", e)
+
+
+def _ensure_stats_card(root: Path = ROOT) -> None:
+    """MXU 发布包的 interface.json 里没有设置页的「统计与成就」卡片时补上（下次打开界面显示）。
+
+    更新器用旧版本的 release.py 生成 interface.json，从没有这张卡片的版本更新过来时要在这里补。"""
+    info = release.read_release(root)
+    if not info or info.get("ui") != "mxu":
+        return
+    path = root / "interface.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if release.STATS_OPTION in (data.get("option") or {}):
+            return
+        agent = data.get("agent") or {}
+        fixed = release.render_interface(data, "mxu", agent_exec=agent.get("child_exec", release.AGENT_EXEC), agent_args=agent.get("child_args", release.AGENT_ARGS))
+        release.write_json(path, fixed)
+    except (OSError, ValueError, TypeError, KeyError) as e:
+        logger.debug("补设置页的统计卡片失败：%s", e)
+        return
+    logger.info("设置页加上了「统计与成就」卡片，下次打开界面时显示")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -105,9 +170,15 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("注册 Agent 动作失败")
         return 1
     logger.debug("Agent %s 启动（%s），连接标识 %s", __version__, os.environ.get("PI_CLIENT_NAME", "未知界面"), argv[-1])
+    _ensure_stats_page()
+    _ensure_stats_card()
     if not AgentServer.start_up(argv[-1]):
         logger.error("Agent 服务启动失败")
         return 1
+    try:
+        UPDATE.start_on_launch()  # MFAA 打开界面时也查一次更新
+    except Exception as e:  # noqa: BLE001 - 查不了等任务开始再查，不影响 Agent
+        logger.debug("检查更新失败：%s", e)
     AgentServer.join()
     AgentServer.shut_down()
     return 0

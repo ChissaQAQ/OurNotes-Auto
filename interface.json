@@ -9,7 +9,7 @@
     },
     "name": "OurNotesAuto",
     "label": "$app.label",
-    "version": "v0.1.6.6",
+    "version": "v0.2.0",
     "description": "$app.description",
     "welcome": "$app.welcome",
     "icon": "docs/ui/icon.png",
@@ -68,6 +68,9 @@
         "DebugLog",
         "CheckUpdate",
         "AutoUpdate",
-        "Proxy"
+        "Proxy",
+        "NotifyChannel",
+        "NotifyTarget",
+        "NotifyEvents"
     ]
 }

@@ -194,26 +194,11 @@ class Planner:
         # 按下时刻离音符时刻最多差时机偏移（上划、追踪等另有提前按下），再加上认领范围与余量
         reach = CLAIM_MS + self.p.claim_guard_ms + self.p.jitter_ms
 
-        def keep(span: Span, left: float, right: float, lo: float, hi: float) -> tuple[float, float]:
-            # 收窄可挪范围（占可移动范围的比例，lo ≤ 0 ≤ hi）：挪动后的位置与判定区 [left, right] 的里外关系和中心相同
-            c = span.center
-            room = span.width / 2 - POSITION_EDGE
-            if room <= 0:
-                return lo, hi
-            if c < left:
-                hi = min(hi, max(0.0, left - POSITION_GAP - c) / room)
-            elif c > right:
-                lo = max(lo, min(0.0, right + POSITION_GAP - c) / room)
-            else:
-                lo = max(lo, min(0.0, left + POSITION_GAP - c) / room)
-                hi = min(hi, max(0.0, right - POSITION_GAP - c) / room)
-            return lo, hi
-
         def pressed(t: float, span: Span, owner: object, lead: float) -> tuple[float, float]:
             lo, hi = -1.0, 1.0
             for _, left, right, _, o in claims[bisect.bisect_left(times, t - lead - reach) : bisect.bisect_right(times, t + reach)]:
                 if o is not owner:
-                    lo, hi = keep(span, left, right, lo, hi)
+                    lo, hi = _keep(span, left, right, lo, hi)
             return lo, hi
 
         def held(s: Slide, lo: float, hi: float) -> tuple[float, float]:
@@ -221,12 +206,10 @@ class Planner:
                 a, b = max(s.start_ms, o.start_ms), min(s.end_ms, o.end_ms)
                 if o is s or a > b:
                     continue
-                ts = {a, b, *(n.time_ms for n in (*s.nodes, *o.nodes) if a <= n.time_ms <= b)}
-                ts.update(a + i * HELD_STEP_MS for i in range(1, int((b - a) // HELD_STEP_MS) + 1))
                 ext = AREA_CRITICAL if o.critical else AREA_SLIDE_BEGIN
-                for t in ts:
+                for t in _held_times(s, o, a, b):
                     span = o.span_at(t)
-                    lo, hi = keep(s.span_at(t), span.left - ext, span.right + ext, lo, hi)
+                    lo, hi = _keep(s.span_at(t), span.left - ext, span.right + ext, lo, hi)
             return lo, hi
 
         def rand(bounds: tuple[float, float]) -> tuple[float, float]:
@@ -245,6 +228,69 @@ class Planner:
             )
             for s in chart.slides
         }
+        return notes, slides
+
+    def _press_apart(self, chart: Chart) -> tuple[dict[int, float], dict[int, float]]:
+        """同时按下的点击类音符（同一个起点分出的几条长条不算）中心落在对方区间里时，两边都按在远离对方的一侧，
+        返回按下点（偏离中心的比例 ±1），分别按音符 id、长条 id。
+
+        真夜中游园地 EXPERT（#90）：长条起点 [8,20]、[4,16] 同时按下，每局都在这里断一次连击，全部谱面只有这一处
+        同时按下的两个音符区间重叠。按下点只是互在对方外扩的判定区里、谁的触点先发都没有问题（对照实验：
+        挪进对方判定区、交换两条的手指，各打几局都没漏），所以挪出对方的区间（隔 ``POSITION_GAP``）。
+        挪开后对别的点击类音符、同时按住的别的长条的判定区，里外关系仍和中心相同（同 ``_touch_offsets``），
+        做不到就不挪；长条在下一个判定（中继或终点）前逐渐回到原来的位置上。
+        """
+        claims = self._claims(chart)
+        times = [c[0] for c in claims]
+        j = self.p.jitter_ms
+        # 早于这次按下的音符：按帧取样只会让按下更晚，只算认领范围加上这次按下的时机偏移；
+        # 晚于这次按下的同 _touch_offsets 另加余量
+        before = CLAIM_MS + j + min(MAX_NOISE_MS, j / 4)
+        after = CLAIM_MS + self.p.claim_guard_ms + j
+        notes: dict[int, float] = {}
+        slides: dict[int, float] = {}
+        for t, _, _, _, owner in claims:
+            span = _head_span(owner)
+            c = span.center
+            near = claims[bisect.bisect_left(times, t - 1.0) : bisect.bisect_right(times, t + 1.0)]
+            partners = [
+                o for *_, o in near if o.order != owner.order and _head_span(o).left < c < _head_span(o).right
+            ]
+            if not partners:
+                continue
+            sides = {(c > _head_span(o).center) - (c < _head_span(o).center) for o in partners}
+            u = float(sides.pop()) if len(sides) == 1 else 0.0
+            x = _unit_x(span, u)
+            what = f"{'slide' if isinstance(owner, Slide) else 'tap'}#{owner.id}@{t:.0f}"
+            if u == 0 or any(
+                _head_span(o).left - POSITION_GAP < x < _head_span(o).right + POSITION_GAP for o in partners
+            ):
+                logger.debug("%s 和同时按下的音符区间重叠，挪不出对方的区间，照常按下", what)
+                continue
+            skip = {id(owner), *map(id, partners)}
+            lo, hi = -1.0, 1.0
+            for _, left, right, _, o in claims[bisect.bisect_left(times, t - before) : bisect.bisect_right(times, t + after)]:
+                if id(o) not in skip:
+                    lo, hi = _keep(span, left, right, lo, hi)
+            if isinstance(owner, Slide):
+                back = min([k for k in owner.checkpoints if k > t] + [owner.end_ms])
+                for o in chart.slides:
+                    a, b = max(t, o.start_ms), min(back, o.end_ms)
+                    if o is owner or a > b:
+                        continue
+                    ext = AREA_CRITICAL if o.critical else AREA_SLIDE_BEGIN
+                    for t2 in _held_times(owner, o, a, b):
+                        own, other = owner.span_at(t2), o.span_at(t2)
+                        left, right = other.left - ext, other.right + ext
+                        # 对方的判定区本来就盖着中心时不管（按下时就是要挪出去），离开以后不能再挪进去
+                        if id(o) in skip and left <= own.center <= right:
+                            continue
+                        lo, hi = _keep(own, left, right, lo, hi)
+            if not lo - 1e-9 <= u <= hi + 1e-9:
+                logger.debug("%s 和同时按下的音符区间重叠，挪开会进别的音符的判定区，照常按下", what)
+                continue
+            (slides if isinstance(owner, Slide) else notes)[owner.id] = u
+            logger.debug("%s 和同时按下的音符区间重叠，按在远离对方的一侧（%.1f）", what, x)
         return notes, slides
 
     def _press_leads(
@@ -410,15 +456,23 @@ class Planner:
         return Gesture(pts, source=f"{note.kind.value}#{note.id}@{note.time_ms:.0f}", order=note.order)
 
     def _slide_gesture(
-        self, slide: Slide, lift_early_ms: float = 0.0, lead: float = 0.0, off: tuple[float, float] = NO_OFFSET
+        self,
+        slide: Slide,
+        lift_early_ms: float = 0.0,
+        lead: float = 0.0,
+        off: tuple[float, float] = NO_OFFSET,
+        press_u: float | None = None,
     ) -> Gesture:
         p = self.p
         u, dy = off
         y = self.geo.touch_y + dy
         start, end = slide.start_ms, slide.end_ms
+        # 按下点另有位置（见 _press_apart）：到下一个判定（中继或终点）前逐渐回到 u
+        back = min([c for c in slide.checkpoints if c > start] + [end])
 
         def at(t: float) -> tuple[float, float, float]:
-            return t, self.geo.x_at(_unit_x(slide.span_at(t), u)), y
+            v = u if press_u is None or t >= back else press_u + (u - press_u) * (t - start) / (back - start)
+            return t, self.geo.x_at(_unit_x(slide.span_at(t), v)), y
 
         times = {start, end}
         times.update(n.time_ms for n in slide.nodes)
@@ -475,6 +529,9 @@ class Planner:
     def gestures(self, chart: Chart) -> list[Gesture]:
         p = self.p
         note_off, slide_off = self._touch_offsets(chart)
+        note_apart, slide_apart = self._press_apart(chart)
+        for i, u in note_apart.items():
+            note_off[i] = (u, note_off.get(i, NO_OFFSET)[1])
         # 时机随机偏移：每组同时按下的手势共用一个 ±noise 的独立抖动，漂移在相距 200ms 以内最多差 0.27 倍幅度
         noise = min(MAX_NOISE_MS, p.jitter_ms / 4)
         slack = 2 * noise + 0.3 * p.jitter_ms
@@ -490,7 +547,9 @@ class Planner:
         # 故意打成 GREAT 的点击不再加时机偏移，免得超出 GREAT 的范围
         fixed = {id(g) for g, n in zip(out, chart.notes) if n.id in greats}
         slides = [
-            self._slide_gesture(s, lead=slide_leads.get(s.id, 0.0), off=slide_off.get(s.id, NO_OFFSET))
+            self._slide_gesture(
+                s, lead=slide_leads.get(s.id, 0.0), off=slide_off.get(s.id, NO_OFFSET), press_u=slide_apart.get(s.id)
+            )
             for s in chart.slides
         ]
         if p.handover_release_ms > 0:
@@ -501,7 +560,11 @@ class Planner:
             for i, s in enumerate(chart.slides):
                 if s.tail is SlideTail.RELEASE and _has_near(starts, s.end_ms, 1.0):
                     slides[i] = self._slide_gesture(
-                        s, p.handover_release_ms + 2 * noise, slide_leads.get(s.id, 0.0), slide_off.get(s.id, NO_OFFSET)
+                        s,
+                        p.handover_release_ms + 2 * noise,
+                        slide_leads.get(s.id, 0.0),
+                        slide_off.get(s.id, NO_OFFSET),
+                        slide_apart.get(s.id),
                     )
         out += slides
         if p.jitter_ms > 0 and out:
@@ -514,9 +577,8 @@ class Planner:
                     j = self._rng.uniform(-noise, noise)
                 last = g.start
                 g.points = [(t + drift(t) + j, x, y) for t, x, y in g.points]
-        # 同时按下的按游戏更新音符的先后发送：游戏把新触点交给最先更新、判定区里有它的音符，
-        # 两条长条的起点互在对方判定区里时，先发后更新的那个会被前一条认领，两条手指互换，
-        # 分开后一条的第一个中继 MISS（真夜中游园地 EXPERT #90）
+        # 同时按下的按游戏更新音符的先后发送。发送先后其实不影响判定（#90 的对照实验，见 _press_apart），
+        # 但改回去会让很多谱面分到的手指又变一次
         out.sort(key=lambda g: (g.start, g.order, g.end))
         return out
 
@@ -572,3 +634,30 @@ def _has_near(sorted_times: list[float], t: float, tol: float) -> bool:
 def _unit_x(span: Span, u: float) -> float:
     """区间 ``span`` 里的触控横向位置（单位）：``u``（-1~1）为偏离中心的比例，两侧至少留出 ``POSITION_EDGE``。"""
     return span.center + u * max(0.0, span.width / 2 - POSITION_EDGE)
+
+
+def _keep(span: Span, left: float, right: float, lo: float, hi: float) -> tuple[float, float]:
+    """收窄 ``span`` 里可挪的范围（占可移动范围的比例，lo ≤ 0 ≤ hi）：挪动后的位置与判定区 [left, right] 的里外关系和中心相同。"""
+    c = span.center
+    room = span.width / 2 - POSITION_EDGE
+    if room <= 0:
+        return lo, hi
+    if c < left:
+        hi = min(hi, max(0.0, left - POSITION_GAP - c) / room)
+    elif c > right:
+        lo = max(lo, min(0.0, right + POSITION_GAP - c) / room)
+    else:
+        lo = max(lo, min(0.0, left + POSITION_GAP - c) / room)
+        hi = min(hi, max(0.0, right - POSITION_GAP - c) / room)
+    return lo, hi
+
+
+def _held_times(s: Slide, o: Slide, a: float, b: float) -> set[float]:
+    """检查同时按住的长条 ``s``、``o`` 在 [a, b] 里相对位置的采样时刻：两头、两条的节点、每隔 ``HELD_STEP_MS``。"""
+    ts = {a, b, *(n.time_ms for n in (*s.nodes, *o.nodes) if a <= n.time_ms <= b)}
+    ts.update(a + i * HELD_STEP_MS for i in range(1, int((b - a) // HELD_STEP_MS) + 1))
+    return ts
+
+
+def _head_span(o: PointNote | Slide) -> Span:
+    return o.span if isinstance(o, PointNote) else o.nodes[0].span

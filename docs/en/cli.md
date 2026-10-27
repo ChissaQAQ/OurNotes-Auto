@@ -58,9 +58,13 @@ ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gif
 ournotes-auto daily --jobs story   # skip unread Band / Another / Bond Story episodes (only when specified explicitly)
 ournotes-auto daily --jobs event   # skip unread Event Story / Another Story episodes of the limited-time event (only when specified explicitly)
 
-# Summarize local play records (total rounds, charts AP'd, charts not yet AP, recent rounds)
+# Summarize local play records (total rounds, charts AP'd, charts not yet AP, recent rounds) and update the stats page (run time, achievements; full page: data/stats.html)
 ournotes-auto records [--recent 10]
 ournotes-auto records --clear-chart-offsets   # clear the per-chart learned offsets (the global learned offset stays)
+ournotes-auto stats-window   # open the Stats & Achievements window (or bring it to the front); the 「统计与成就」 shortcut in the package folder runs this
+ournotes-auto backup export [--out FOLDER]   # export a backup (play records, run history, achievements, learned offsets), by default to Documents\OurNotes-Auto
+ournotes-auto backup import [SOURCE]   # import from a backup file, an old package folder or its data folder (merged, existing records stay); without SOURCE, the newest backup in Documents\OurNotes-Auto
+ournotes-auto notify-test   # send a test notification with notify in config.yaml (push notifications: ntfy, ServerChan, Bark, webhook; see config.example.yaml)
 
 # Recognize the current screen (for debugging navigation)
 ournotes-auto look [--save] [--ocr]

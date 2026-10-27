@@ -58,9 +58,13 @@ ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gif
 ournotes-auto daily --jobs story   # 跳過沒看過的樂團 / 側寫 / 羈絆故事（要明確指定才做）
 ournotes-auto daily --jobs event   # 跳過限時活動沒看過的活動故事 / 側寫故事（要明確指定才做）
 
-# 彙總本機演奏紀錄（總局數、AP 過的譜面、還沒 AP 的譜面、最近幾局）
+# 彙總本機演奏紀錄（總局數、AP 過的譜面、還沒 AP 的譜面、最近幾局），更新統計頁（累計時長、成就，完整頁面是 data/stats.html）
 ournotes-auto records [--recent 10]
 ournotes-auto records --clear-chart-offsets   # 清除按譜面學到的 offset（全域學習值不變）
+ournotes-auto stats-window   # 開啟「統計與成就」視窗（已經開著就切到前面），套件目錄裡的「统计与成就」捷徑執行的就是這個
+ournotes-auto backup export [--out 資料夾]   # 匯出備份（演奏紀錄、執行紀錄、成就、學到的 offset），預設放在「文件\OurNotes-Auto」
+ournotes-auto backup import [來源]   # 從備份檔、舊的套件目錄或它的 data 資料夾匯入（合併，已有的紀錄不變）；不寫時用「文件\OurNotes-Auto」裡最新的一份
+ournotes-auto notify-test   # 依 config.yaml 的 notify 發一則測試推播（推播到手機：ntfy、Server醬、Bark、webhook，見 config.example.yaml）
 
 # 辨識目前畫面（偵錯導航）
 ournotes-auto look [--save] [--ocr]
