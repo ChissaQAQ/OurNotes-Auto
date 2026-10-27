@@ -234,8 +234,10 @@ def test_ensure_shortcut(package, monkeypatch):
 
     lnk.unlink()
     mark.unlink()
-    monkeypatch.setattr(stats_window.subprocess, "run", lambda cmd, env, **kw: SimpleNamespace(returncode=1, stderr="拒绝访问".encode("mbcs")))
-    with pytest.raises(OSError, match="拒绝访问"):
+    # PowerShell 的报错按系统代码页（mbcs）输出；用 ASCII 的消息，不是中文代码页的机器（CI）上也编得出来
+    denied = "Access is denied.".encode("mbcs")
+    monkeypatch.setattr(stats_window.subprocess, "run", lambda cmd, env, **kw: SimpleNamespace(returncode=1, stderr=denied))
+    with pytest.raises(OSError, match="Access is denied"):
         stats_window.ensure_shortcut(package)
     assert not mark.exists()
 
