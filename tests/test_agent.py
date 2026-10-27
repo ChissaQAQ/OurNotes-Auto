@@ -375,6 +375,8 @@ def test_worker_args_start():
     with pytest.raises(ParamError, match="未知任务"):
         worker_args("nope", ATTACH, device)
     assert worker_args("records", {}, {}) == ["records"]  # 不需要设备和选项
+    with pytest.raises(ParamError, match="未知任务"):
+        worker_args("backup", {}, {})  # 导出、导入在统计窗口里做，不是任务
 
 
 def test_worker_args_game_language():
@@ -431,6 +433,30 @@ def test_worker_args_daily():
         worker_args("daily", {"touch": "mumu", **{f"daily_{j}": False for j in DAILY_JOBS}}, {})
     with pytest.raises(SystemExit):
         build_parser().parse_args(["daily", "--jobs", "studio,shop"])
+
+
+def test_worker_args_notify():
+    """「推送到手机」：每个任务都带上推送设置；选不推送时清掉 config.yaml 里的；旧资源没有这几项时不改。"""
+    from ournotes_auto.cli import build_parser
+    from ournotes_auto.config import Config, apply_override
+
+    attach = {"touch": "mumu", "notify_channel": "ServerChan", "notify_target": " SCT1 ", "notify_events": "problems"}
+    args = worker_args("start", attach, {})
+    assert args == [
+        "--set", "device.touch=mumu", "--set", "notify.channel=serverchan", "--set", "notify.target=SCT1",
+        "--set", "notify.events=error,maintenance", "start",
+    ]
+    assert "notify.events=done,error,maintenance" in worker_args("repeat", {**ATTACH, **attach, "notify_events": "all"}, {})
+    assert worker_args("start", {**attach, "notify_channel": "off"}, {})[-3:] == ["--set", "notify.channel=", "start"]
+    assert worker_args("notify_test", attach, {})[-1] == "notify-test"
+    assert worker_args("notify_test", {}, {}) == ["notify-test"]
+    cfg = Config()
+    for item in build_parser().parse_args(worker_args("notify_test", attach, {})).set:
+        apply_override(cfg, *item.split("=", 1))
+    assert (cfg.notify.channel, cfg.notify.target, cfg.notify.events) == ("serverchan", "SCT1", "error,maintenance")
+    assert "notify.channel=bark" in worker_args("start", {**attach, "notify_channel": "Bark"}, {})
+    with pytest.raises(ParamError, match="notify_channel"):
+        worker_args("start", {**attach, "notify_channel": "telegram"}, {})
 
 
 def test_global_args():
@@ -591,7 +617,7 @@ def test_interface_tasks_match_agent():
     for path in sorted((ROOT / "resource" / "pipeline").glob("*.json")):
         pipeline.update(json.loads(path.read_text(encoding="utf-8")))
     defaults = pipeline[PARAM_NODE]["attach"]
-
+    zh = json.loads((ROOT / "locales" / "zh_cn.json").read_text(encoding="utf-8"))
     def overrides(option):
         cases = option.get("cases", [])
         return [c["pipeline_override"] for c in cases] or [option["pipeline_override"]]
@@ -612,7 +638,8 @@ def test_interface_tasks_match_agent():
         param = pipeline[task["entry"]]["action"]["param"]
         assert param["custom_action"] == "OurNotesRun"
         agent_task = param["custom_action_param"]["task"]
-        assert TASKS[agent_task] == task["name"]
+        # 日志里的任务名 = 界面上显示的中文名；name 是界面保存任务列表用的，改名时不动（「打开统计窗口」原名「记录汇总」）
+        assert TASKS[agent_task] == zh[task["label"].removeprefix("$")], task["name"]
         worker_args(agent_task, {**defaults, "account": "user_1"}, {})  # 切换账号的账号名没有默认值
         seen.add(agent_task)
     assert seen == set(TASKS)
@@ -717,7 +744,7 @@ def test_agent_run_bad_payload(cli_main, capsys):
 
 
 def test_agent_run_local_task(cli_main, capsys, monkeypatch):
-    """本地任务（记录汇总）不需要控制器；开始、完成各在界面上显示一行，命令拿到停止 / 更新两个事件。"""
+    """本地任务（打开统计窗口）不需要控制器；开始、完成各在界面上显示一行，命令拿到停止 / 更新两个事件和任务名。"""
     from ournotes_auto import cli
 
     main, watches = cli_main
@@ -726,10 +753,11 @@ def test_agent_run_local_task(cli_main, capsys, monkeypatch):
     assert main(["agent-run", json.dumps({"task": "records", "attach": {}, "controller": {}})]) == 0
     [args] = seen
     assert (args.command, args.json_log, args.stdin_stop, args.verbose) == ("records", True, True, 0)
+    assert args.label == "打开统计窗口"
     assert watches == [(args.stop, args.update)]
     assert not args.stop.is_set() and not args.update.is_set()
     msgs = _ui_lines(capsys, logging.INFO)
-    assert msgs[0] == "开始记录汇总" and msgs[-1] == "记录汇总完成"
+    assert msgs[0] == "开始打开统计窗口" and msgs[-1] == "打开统计窗口完成"
 
 
 def test_agent_run_device_task(cli_main, capsys, monkeypatch, mumu_root):
@@ -765,6 +793,67 @@ def test_agent_run_device_task(cli_main, capsys, monkeypatch, mumu_root):
     assert "开始启动游戏" in msgs and "启动游戏完成" not in msgs
 
 
+NOTIFY = {"notify_channel": "ntfy", "notify_target": "secret-topic_42", "notify_events": "all"}
+
+
+def test_agent_run_notify_test(cli_main, capsys, monkeypatch, tmp_path):
+    """推送测试：按界面上的设置发一条；推送地址不进日志文件和界面。没选推送方式、发送失败时报错。"""
+    from ournotes_auto import notify
+
+    main, watches = cli_main
+    posted = []
+    monkeypatch.setattr(notify, "_post", lambda url, body, ctype: posted.append((url, json.loads(body))) or b"{}")
+    payload = {"task": "notify_test", "attach": {**NOTIFY, "debug_log": True}, "controller": {}}
+    assert main(["agent-run", json.dumps(payload)]) == 0
+    [(url, body)] = posted
+    assert url == "https://ntfy.sh/" and body["topic"] == "secret-topic_42" and body["title"] == "OurNotes-Auto：推送测试"
+    out = capsys.readouterr().out
+    log = (tmp_path / "data" / "ournotes.log").read_text(encoding="utf-8")
+    assert "notify.target=***" in log  # 记了参数，只是没记推送地址
+    assert "secret-topic_42" not in log and "secret-topic_42" not in out
+
+    payload["attach"]["notify_channel"] = "off"
+    assert main(["agent-run", json.dumps(payload)]) == 1
+    assert _ui_lines(capsys, logging.ERROR)[0].startswith("没有设置推送方式")
+
+    def unreachable(url, body, ctype):
+        raise notify.NotifyError("连不上推送服务器：timed out")
+
+    monkeypatch.setattr(notify, "_post", unreachable)
+    payload["attach"]["notify_channel"] = "ntfy"
+    assert main(["agent-run", json.dumps(payload)]) == 1
+    assert set(_ui_lines(capsys, logging.ERROR)) == {"推送失败：连不上推送服务器：timed out"}  # 每次 main 都加一个输出，会重复
+    assert len(posted) == 1  # 测试命令自己不触发任务结束的推送
+
+
+def test_agent_run_notify_task_end(cli_main, capsys, monkeypatch, mumu_root):
+    """任务出错结束时推送最后一条错误日志；完成了的启动游戏、手动停止的、为更新退出的不推送。"""
+    from ournotes_auto import commands, notify
+    from ournotes_auto.release import EXIT_UPDATE
+
+    main, watches = cli_main
+    pushed = []
+    monkeypatch.setattr(notify, "send", lambda cfg, event, title, text: pushed.append((cfg.target, event, title, text)))
+    controller = adb_info("127.0.0.1:16416", str(mumu_root / "nx_main" / "adb.exe"))
+    payload = json.dumps({"task": "start", "attach": {"touch": "mumu", **NOTIFY}, "controller": controller})
+
+    def failing(cfg, args):
+        logging.getLogger("ournotes_auto.nav").error("画面 60s 没有变化")
+        return 1
+
+    def stopped(cfg, args):
+        args.stop.set()
+        return failing(cfg, args)
+
+    for cmd, code in ((failing, 1), (lambda cfg, args: 0, 0), (stopped, 1), (lambda cfg, args: EXIT_UPDATE, EXIT_UPDATE)):
+        monkeypatch.setattr(commands, "cmd_start", cmd)
+        assert main(["agent-run", payload]) == code
+    [(target, event, title, text)] = pushed
+    assert (target, event, title) == ("secret-topic_42", "error", "启动游戏出错")
+    assert text.splitlines()[0] == "画面 60s 没有变化" and text.splitlines()[-1] == notify.LOG_HINT
+    assert not any(isinstance(h, notify.LastError) for h in logging.getLogger().handlers)
+
+
 # ---------------------------------------------------------------- 子进程
 
 CHILD = r"""
@@ -782,6 +871,10 @@ if "lines" in sys.argv:  # 每行都回显，读到 stop 或输入结束为止�
             break
 if "hang" in sys.argv:
     time.sleep(60)
+if "openblas" in sys.argv:  # OpenBLAS 分配不到内存时直接 exit(1)
+    print("OpenBLAS error: Memory allocation still failed after 10 retries, giving up.", flush=True)
+if "memerr" in sys.argv:
+    raise MemoryError
 sys.exit(int(sys.argv[1]))
 """
 
@@ -805,6 +898,14 @@ def test_run_worker_relays_output(tmp_path):
     result, lines = _run(tmp_path, "3")
     assert (result.returncode, result.stopped, result.killed) == (3, False, False)
     assert lines == [(logging.INFO, "child", "开始"), (logging.WARNING, WORKER_LOGGER, "not json")]
+
+
+@pytest.mark.parametrize("arg", ["openblas", "memerr"])
+def test_run_worker_out_of_memory(tmp_path, arg):
+    """输出里有分配不到内存的报错（#94）：标出来，Agent 好提示电脑内存不足。"""
+    result, _ = _run(tmp_path, "1", arg)
+    assert result.returncode == 1 and result.out_of_memory
+    assert not _run(tmp_path, "1")[0].out_of_memory
 
 
 def test_run_worker_stop(tmp_path):

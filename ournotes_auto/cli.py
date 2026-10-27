@@ -9,13 +9,15 @@ import os
 import platform
 import sys
 import threading
+import time
 from pathlib import Path
 
-from . import __version__
+from . import __version__, sysmem
 from .config import Config, apply_override, load_config, save_config
 from .logfile import file_handler
 
 logger = logging.getLogger("ournotes_auto")
+SECRET_SETTING = "notify.target="  # 推送地址等于密码，日志里不记
 
 
 class JsonLineFormatter(logging.Formatter):
@@ -55,14 +57,20 @@ def _cpu_name() -> str:
 
 def _log_environment(argv: list[str]) -> None:
     """版本和运行环境记一行日志（模拟器设备的信息在连接时另记一行，见 context.open_device）。"""
+    mem = sysmem.describe()
     logger.debug(
-        "OurNotes-Auto %s（Python %s，%s，%s）：%s",
+        "OurNotes-Auto %s（Python %s，%s，%s%s）：%s",
         __version__,
         platform.python_version(),
         platform.platform(),
         _cpu_name(),
-        " ".join(argv),
+        f"，{mem}" if mem else "",
+        " ".join(_masked(argv)),
     )
+
+
+def _masked(argv: list[str]) -> list[str]:
+    return [a[: a.index(SECRET_SETTING) + len(SECRET_SETTING)] + "***" if SECRET_SETTING in a else a for a in argv]
 
 
 # ---------------------------------------------------------------- 谱面
@@ -149,22 +157,116 @@ def cmd_records(cfg: Config, args) -> int:
         logger.info("已清除 %d 张谱面的 offset（全局学习值 %+.1fms 不变）", count, store.learned_offset_ms)
         return 0
     results = store.history(limit=None)
+    library = _library(cfg)
+    lines = report_lines(results, library.title, recent=args.recent, not_ap=args.not_ap, chart_offsets=store.chart_offsets())
+    show = (lambda line: logger.info("%s", line)) if args.json_log else print  # 界面里只看得到日志
+    for line in lines:
+        show(line)
+    _show_stats(library, show, open_page=args.json_log)
+    return 0
+
+
+def _library(cfg: Config):
+    """曲名、乐队、等级（:class:`.stats.Library`）。"""
+    from .stats import Library
+
     try:
         _, catalog = _catalog(cfg)
     except Exception as e:  # 离线又没有缓存：只显示 ID
         logger.warning("读取曲目目录失败（%s），只显示曲目 ID", e)
         catalog = None
+    return Library.from_catalog(catalog)
 
-    def title(mid: int) -> str:
-        song = catalog.songs.get(mid) if catalog else None
-        return song.display_title() if song else str(mid)
 
-    lines = report_lines(results, title, recent=args.recent, not_ap=args.not_ap, chart_offsets=store.chart_offsets())
-    for line in lines:
-        if args.json_log:  # 界面里只看得到日志
-            logger.info("%s", line)
+OPENED = {"focused": "统计窗口已经开着，已切到前面", "window": "已打开统计窗口（打完一局自动刷新）"}
+
+
+def _show_stats(library, show, open_page: bool) -> None:
+    """更新统计页、显示累计时长和成就；从界面运行时打开「统计与成就」窗口。出错只记警告。"""
+    from . import stats
+
+    try:
+        view = stats.refresh("data", library=library)
+        for line in stats.summary_lines(view):
+            show(line)
+        page = Path("data", stats.PAGE_HTML).resolve()
+        if open_page:
+            show(OPENED.get(stats.open_page(page), f"已在浏览器里打开统计页：{page}"))
         else:
-            print(line)
+            show(f"完整的统计页：{page}")
+    except Exception as e:  # noqa: BLE001 - 统计页只是给人看的
+        logger.warning("更新统计页失败：%s", e)
+
+
+def cmd_backup(cfg: Config, args) -> int:
+    """导出备份，或从备份、旧的包导入（见 backup.py）。"""
+    from . import backup
+
+    data, root = Path("data"), Path.cwd()
+    try:
+        if args.backup_cmd == "export":
+            path, b = backup.export_bundle(data, root, Path(args.out) if args.out else None)
+            logger.info("已导出 %s 局演奏记录、%s 次运行记录、%d 个成就：%s", f"{len(b.records):,}", f"{len(b.sessions):,}", len(b.unlocked), path)
+            logger.info("换了新的包以后，用 backup import 导入就能恢复（招募截图不在备份里）")
+            return 0
+        src = Path(args.source) if args.source else backup.latest(root)
+        if src is None:
+            logger.error("没找到备份：%s 里没有导出的备份文件，请指定备份文件或旧的包目录", backup.backup_dirs(root)[0])
+            return 1
+        b = backup.read_source(src, data)
+        result = backup.import_bundle(data, b)
+    except (backup.BackupError, OSError) as e:
+        logger.error("%s", e)
+        return 1
+    if result.bad:
+        logger.warning("%s 里有 %d 行演奏记录读不了，跳过了", b.name, result.bad)
+    if result.backup is None:
+        logger.info("%s 里的记录这边都有了，没有改动", b.name)
+        return 0
+    parts = [f"{result.records:,} 局演奏记录"] if result.records else []
+    parts += [f"{result.sessions:,} 次运行记录"] if result.sessions else []
+    parts += [f"{result.achievements} 个成就"] if result.achievements else []
+    parts += ["学到的 offset"] if result.offsets else []
+    known = f"（另有 {result.known:,} 局这边已经有了）" if result.known else ""
+    logger.info("已从 %s 导入%s%s；导入前的记录复制到了 %s", b.name, "、".join(parts) or "成就的解锁时间", known, result.backup)
+    _show_stats(_library(cfg), print, open_page=False)
+    return 0
+
+
+def cmd_stats_serve(cfg: Config, args) -> int:
+    """「统计与成就」窗口背后的本机服务（见 stats_server.py），窗口关掉后退出。"""
+    from . import stats, stats_server
+
+    stats_server.serve(Path("data"), Path(args.ready), refresh=lambda: stats.refresh("data", library=_library(cfg)))
+    return 0
+
+
+def cmd_stats_window(cfg: Config, args) -> int:
+    """双击包目录里的「统计与成就」快捷方式：打开统计窗口（已经开着时切到前面），再重新统计一遍
+    （窗口看到页面变了会自己刷新）。没有控制台，不输出。"""
+    from . import stats
+
+    page = Path("data", stats.PAGE_HTML).resolve()
+    existed = page.exists()
+    if existed:
+        stats.open_page(page)
+    _show_stats(_library(cfg), lambda line: None, open_page=not existed)
+    return 0
+
+
+def cmd_notify_test(cfg: Config, args) -> int:
+    """按 notify 的设置发一条测试推送。"""
+    from . import notify
+
+    if not cfg.notify.channel.strip():
+        logger.error("没有设置推送方式：在设置里选「推送到手机」并填写推送地址（命令行运行时在 config.yaml 的 notify 里设置）")
+        return 1
+    try:
+        notify.send(cfg.notify, "test", "推送测试", "收到这条消息，说明推送设置好了")
+    except notify.NotifyError as e:
+        logger.error("推送失败：%s", e)
+        return 1
+    logger.info("已发出测试推送（%s），看看手机收到没有", cfg.notify.channel.strip())
     return 0
 
 
@@ -219,6 +321,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--not-ap", type=int, default=10, help="「还没 AP」「按谱面修正的 offset」最多列几张（默认 10）")
     sp.add_argument("--clear-chart-offsets", action="store_true", help="清除按谱面学到的 offset（全局的不变）")
     sp.set_defaults(func=cmd_records)
+    sp = sub.add_parser("stats-window", help="打开「统计与成就」窗口（包目录里「统计与成就」快捷方式运行的就是这个）")
+    sp.set_defaults(func=cmd_stats_window)
+    sp = sub.add_parser("stats-serve", help="「统计与成就」窗口背后的本机服务（打开窗口时自动启动，窗口关掉后退出）")
+    sp.add_argument("--ready", required=True, help="起来后把端口和密钥写进这个文件")
+    sp.set_defaults(func=cmd_stats_serve)
+    backup = sub.add_parser("backup", help="备份与恢复：导出演奏记录、运行记录、成就和学到的 offset，或者导入")
+    backup = backup.add_subparsers(dest="backup_cmd", required=True)
+    sp = backup.add_parser("export", help="导出备份（默认放在「文档\\OurNotes-Auto」）")
+    sp.add_argument("--out", help="放到这个文件夹")
+    sp.set_defaults(func=cmd_backup)
+    sp = backup.add_parser("import", help="从备份文件、旧的包目录或它的 data 文件夹导入（合并，已有的记录不变）")
+    sp.add_argument("source", nargs="?", default="", help="不填时用默认位置里最新的备份")
+    sp.set_defaults(func=cmd_backup)
+    sp = sub.add_parser("notify-test", help="按配置的 notify（推送到手机）发一条测试推送")
+    sp.set_defaults(func=cmd_notify_test)
 
     from . import commands
 
@@ -254,6 +371,20 @@ def start_stdin_watch(stop: threading.Event, update: threading.Event | None = No
     threading.Thread(target=_watch_stdin, args=(stop, src, update), name="stdin-stop", daemon=True).start()
 
 
+def _ensure_shortcut() -> None:
+    """从界面运行任务时，发布包目录里还没有「统计与成就」快捷方式就建一个（后台做，不耽误任务）。"""
+    from . import stats_window
+
+    def run() -> None:
+        try:
+            if stats_window.ensure_shortcut(Path.cwd()):
+                logger.debug("已在包目录里建快捷方式「%s」", stats_window.SHORTCUT)
+        except Exception as e:  # noqa: BLE001 - 快捷方式只是方便打开统计窗口
+            logger.debug("建快捷方式失败：%s", e)
+
+    threading.Thread(target=run, name="stats-shortcut", daemon=True).start()
+
+
 def _agent_run(rest: list[str]) -> int:
     """``agent-run <JSON>``：Agent 交来的任务（任务名、界面选项、控制器信息）换成命令行参数执行，
     开始和完成各在界面上显示一行。"""
@@ -277,10 +408,12 @@ def main(argv: list[str] | None = None) -> int:
 
 def _main(argv: list[str], label: str | None = None) -> int:
     args = build_parser().parse_args(argv)
+    args.label = label  # 界面上的任务名（记进统计页的运行记录）
     _setup_logging(args.verbose, json_log=args.json_log)
     _log_environment(argv)
     if label:
         logger.info("开始%s", label)
+        _ensure_shortcut()
     cfg = load_config(args.config)
     for item in args.set:
         key, sep, value = item.partition("=")
@@ -295,21 +428,31 @@ def _main(argv: list[str], label: str | None = None) -> int:
     args.update = threading.Event()  # 挂机收到它后在安全的时机退出（退出码 EXIT_UPDATE），换上新版本再继续
     if args.stdin_stop:
         start_stdin_watch(args.stop, args.update)
+    from . import notify
     from .context import SetupError
+    from .release import EXIT_UPDATE
 
+    errors = notify.LastError()
+    logging.getLogger().addHandler(errors)
+    started = time.monotonic()
+    args.summary = ""  # 连续演奏的局数、FC、AP，完成时推送
     try:
         code = int(args.func(cfg, args) or 0)
     except SetupError as e:
         logger.error("%s", e)
-        return 2
+        code = 2
     except KeyboardInterrupt:
         logger.warning("已中断")
         return 130
     except Exception:
         logger.exception("意外错误")
-        return 1
+        code = 1
+    finally:
+        logging.getLogger().removeHandler(errors)
     if label and code == 0 and not args.stop.is_set():
         logger.info("%s完成", label)
+    if not args.stop.is_set() and code != EXIT_UPDATE:  # 手动停止的不推送；为更新退出的马上接着运行
+        notify.task_end(cfg.notify, args.command, label, code, args.summary, errors.last, time.monotonic() - started)
     return code
 
 

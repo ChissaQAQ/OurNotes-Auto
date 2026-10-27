@@ -77,7 +77,8 @@ def _written(tmp_path: Path, kind: str) -> dict:
 
 def test_setting_only_for_mxu(tmp_path):
     mxu = _written(tmp_path, "mxu")
-    assert mxu["setting"][0]["option"] == mxu["global_option"]
+    assert [s["name"] for s in mxu["setting"]] == ["stats", "global"]
+    assert mxu["setting"][1]["option"] == mxu["global_option"]
     assert (mxu["version"], mxu["agent"]["child_exec"], mxu["agent"]["child_args"]) == (
         "v9.9.9",
         "./python/python.exe",

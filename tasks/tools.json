@@ -8,6 +8,15 @@
                 "tools"
             ],
             "description": "$task.Records.desc"
+        },
+        {
+            "name": "推送测试",
+            "label": "$task.NotifyTest",
+            "entry": "OurNotes_NotifyTest",
+            "group": [
+                "tools"
+            ],
+            "description": "$task.NotifyTest.desc"
         }
     ]
 }

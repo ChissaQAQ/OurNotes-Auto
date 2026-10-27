@@ -210,7 +210,7 @@ LB_EMPTY_RETRY_S = 30 * 60
 LB_AUTO_COST = 1
 # 不用解锁就能选的最大消耗（T.G.W CARD 10 级解锁 4、14 级解锁 5）
 LB_BASE_COST = 3
-# 「全部消耗」（每天一次）一次最多消耗这么多；持有这么多以上，或者比一局局消耗能省这么多局以上时用（game.lb_auto）
+# 「全部消耗」（每天能用的次数看月卡，一般 1 次）一次最多消耗这么多；持有这么多以上，或者比一局局消耗能省这么多局以上时用（game.lb_auto）
 LB_ALL_MAX = 10
 LB_ALL_SAVE = 2
 # 乐队确认页「跳过」：确认跳过弹窗左「关闭」右「跳过」；跳过结果页右下「下一步」，活动pt页右下「OK」
@@ -297,7 +297,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
             raise ValueError(f"game.lb_cost 应为 0~{LB_MAX_COST} 或 null，而不是 {lb!r}")
         self._lb_cost: int | None = None  # 本次运行已在游戏里设置并核对过的 LB 消耗
         self._lb_all = False  # 上面设置时勾了「全部消耗」（开始演出后记下今天用过了）
-        self._lb_all_out = False  # 本次运行「全部消耗」勾不上（今天用过了）
+        self._lb_all_out = False  # 本次运行「全部消耗」勾不上（今天的次数用完了？）
         self._lb_top: int | None = None  # 消耗设置里最大能选几个（看过之后）
         self._lb_capped = False  # 已经提示过 game.lb_cost 超过了能选的最大值
         # 挑战演出：要去的乐曲选择、乐队确认页换成挑战演出的，另一种（自由演出的）就退回演出首页
@@ -840,24 +840,32 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         return self._lb_cost
 
     def _lb_all_ok(self) -> bool:
-        """「全部消耗」（每天一次）今天还能用：本次运行没发现勾不上，也没记下今天用过。"""
+        """「全部消耗」今天还能用：本次运行没发现勾不上，也没记下今天的次数用完了。"""
         if self._lb_all_out:
             return False
         return self.store is None or self.store.lb_all_used(self.cfg.device.package) != game_day()
 
     def _lb_all_used(self) -> None:
-        """记下今天用过了「全部消耗」（之后不再尝试，到游戏日期变更为止）。"""
+        """记下今天的「全部消耗」次数用完了（之后不再尝试，到游戏日期变更为止）。"""
         self._lb_all_out = True
         if self.store is not None and self.store.lb_all_used(self.cfg.device.package) != game_day():
             self.store.set_lb_all_used(self.cfg.device.package, game_day())
 
+    def _lb_all_spent(self) -> None:
+        """用了一次「全部消耗」：记下今天用了几次。每天能用几次看月卡（一般 1 次，最高档的 5 次），这里不判断用完没有，
+        之后的弹窗上写着「今日次数已用完」、或者勾不上时才记下用完了。"""
+        if self.store is None:
+            logger.info("用了一次「全部消耗」")
+            return
+        n = self.store.add_lb_all_use(self.cfg.device.package, game_day())
+        logger.info("用了一次「全部消耗」（今天第 %d 次）", n)
+
     def _lb_started(self) -> None:
-        """演出开始了：勾了「全部消耗」的话记下今天用过了，下一局重新核对消耗设置。"""
+        """演出开始了：勾了「全部消耗」的话记下用了一次，下一局重新核对消耗设置。"""
         if self._lb_all:
-            logger.info("今天的「全部消耗」用掉了")
             self._lb_all = False
             self._lb_cost = None
-            self._lb_all_used()
+            self._lb_all_spent()
 
     def skip_live(self, lb_short: str = "zero", timeout_s: float = 30.0) -> bool:
         """自由演出乐队确认页的「跳过」（``loop.use_skip``）跳过一次，回到乐队确认页，返回是否跳过了。
@@ -946,7 +954,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
         )
         self._lb_cost = None  # 跳过时选的消耗可能改了游戏里的设置，下一局演奏前重新核对
         if use_all:
-            self._lb_all_used()
+            self._lb_all_spent()
 
     def start_live(self, lb_short: str = "zero") -> None:
         """（按配置设好 LB 消耗后）点击 LIVE START，处理演出前选项设置弹窗后立即返回（弹窗关闭后才开始加载）。
@@ -1224,8 +1232,13 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Acc
             return None
         if use_all:
             if pick.all_taps >= 2:
-                logger.info("「全部消耗」勾不上（今天用过了？），这局消耗 %d 个", cost)
-                self._lb_all_out = True
+                if self.store is not None and self.store.lb_all_uses(self.cfg.device.package, game_day()):
+                    # 今天用过了：多半是次数用完了（没认出「今日次数已用完」），记下来，今天不再试
+                    logger.info("「全部消耗」勾不上（今天的次数用完了？），这局消耗 %d 个", cost)
+                    self._lb_all_used()
+                else:
+                    logger.info("「全部消耗」勾不上（今天的次数在别处用完了？），这局消耗 %d 个", cost)
+                    self._lb_all_out = True
                 return cost, False
             self.tap(check, "全部消耗")
             pick.all_taps += 1

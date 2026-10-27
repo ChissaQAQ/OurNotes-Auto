@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
+from . import notify, sysmem
 from .charts.bdon import BdonClient, ChartNotFound
 from .charts.catalog import Catalog, Song
 from .charts.model import Chart
@@ -26,6 +27,7 @@ from .result_reader import ResultCounts, timing_counts
 
 if TYPE_CHECKING:
     from .sources import SongSource
+    from .stats import Tracker
 
 logger = logging.getLogger(__name__)
 
@@ -203,8 +205,13 @@ class RunStats:
     all_perfect: int = 0
     failures: int = 0
     skips: int = 0  # 用「跳过」消耗 LB 的次数（不算在 plays 里）
+    lb_wait_s: float = 0.0  # 挂机时等 LB 恢复的时间
     maintenance: bool = False  # 因服务器维护停止
     restart: bool = False  # 为换上新版本退出（挂机），Agent 换完后用同样的参数重新启动
+
+    def summary(self) -> str:
+        skips = f"；跳过 {self.skips} 次" if self.skips else ""
+        return f"共演奏 {self.plays} 局：FC {self.full_combo}，AP {self.all_perfect}，失败 {self.failures}{skips}"
 
 
 class FrameRateWatch:
@@ -253,6 +260,7 @@ class Runner:
         stop: threading.Event | None = None,
         source: SongSource | None = None,
         update: threading.Event | None = None,
+        tracker: Tracker | None = None,
     ):
         from .sources import make_source
 
@@ -265,7 +273,9 @@ class Runner:
         self.stop = stop or threading.Event()
         self.update = update or threading.Event()  # 新版本已下载（Agent 经标准输入通知）
         self.source = source or make_source(config, catalog, store)
+        self.tracker = tracker  # 统计页（出错只记警告）
         self.stats = RunStats()
+        self._maintenance_pushed = False  # 这次维护推送过了（重新登录出错回到这里时不再推送）
         self.clock = time.monotonic  # 定时领取录音室练习用（测试里换成假时钟）
         self.wall_clock = time.time  # 每天定时领取日常用（按电脑的本地时间）
         self._next_claim = 0.0  # 下次领取录音室练习的时刻：开始时先领一次
@@ -282,6 +292,7 @@ class Runner:
         self._next_daily: float | None = None  # 下次领取日常的时刻：开始后第一次到点时领
         self._daily_tries = 0
         self.frame_rate = FrameRateWatch(lc.min_fps)
+        self._warned_memory = False  # 这次运行提醒过电脑内存快用完了
 
     def _identify(self):
         label = self.nav.selected_song()
@@ -309,6 +320,8 @@ class Runner:
             while not self.stop.is_set() and self.nav.skip_live(lb_short):
                 self.stats.skips += 1
         song, diff = self._identify()
+        level = song.level(diff)
+        self._status("play", f"{song.display_title()} · {diff.upper()}{f' {level}' if level else ''}")
         try:
             chart = self.client.chart(song.music_id, diff, song.display_title())
         except ChartNotFound as e:
@@ -328,8 +341,38 @@ class Runner:
             self.stats.plays += 1
             self.stats.full_combo += bool(result.full_combo)
             self.stats.all_perfect += bool(result.all_perfect)
+            self._track()
+            self._maintenance_over()  # 维护后重新登录出了别的问题、下一局的导航自己进了游戏
+        self._log_memory()
         self.nav.leave_result()
         return result
+
+    def _log_memory(self) -> None:
+        """每局记一行内存，看是本程序越用越多还是电脑的内存被占满了（#94）；电脑内存快用完时提醒一次。"""
+        status = sysmem.memory_status()
+        if status is None:
+            return
+        own = sysmem.process_private_bytes()
+        logger.debug("本进程 %s MB，电脑%s", "?" if own is None else f"{own / sysmem.MB:.0f}", sysmem.describe(status))
+        if sysmem.low(status) and not self._warned_memory:
+            self._warned_memory = True
+            logger.warning(
+                "电脑内存快用完了（%s）：可能变卡或闪退，请关掉占内存多的程序；"
+                "任务管理器「详细信息」按「提交大小」排序能看到是谁占的",
+                sysmem.describe(status),
+            )
+
+    def _track(self) -> None:
+        if self.tracker is not None:
+            self.tracker.update(self.stats)
+
+    def _status(self, kind: str, detail: str = "", **extra) -> None:
+        """统计页上显示正在做什么（见 :meth:`.stats.Tracker.status`）；每天定时领取日常时附上下次领取的时刻。"""
+        if self.tracker is None:
+            return
+        if self._daily_at is not None:
+            extra.setdefault("daily", self._daily_due())
+        self.tracker.status(kind, detail, **extra)
 
     def _chart_offset(self, chart: Chart) -> float:
         at = self.cfg.autotune
@@ -442,6 +485,7 @@ class Runner:
 
     def _advance(self, first: bool) -> bool:
         """换到下一局的曲目；换歌失败只记录（下一局的 ensure_band_confirm 会从任意画面恢复，只是这次没换成歌）。"""
+        self._status("select")
         try:
             more = self.source.advance(self.nav, first)
         except (ScreenFrozen, ServerMaintenance):
@@ -468,6 +512,7 @@ class Runner:
         if hours <= 0 or self.clock() < self._next_claim:
             return
         logger.info("领取录音室练习（收获）")
+        self._status("studio")
         try:
             ok = not self.nav.run_daily(["studio"])  # 领取时出的错 run_daily 自己记了
         except (ScreenFrozen, ServerMaintenance):
@@ -503,6 +548,7 @@ class Runner:
             return
         self._daily_tries += 1
         logger.info("领取日常（每天 %d:%02d）", *at)
+        self._status("daily")
         try:
             ok = not self.nav.run_daily(IDLE_DAILY_JOBS)  # 领取时出的错 run_daily 自己记了
         except (ScreenFrozen, ServerMaintenance):
@@ -529,6 +575,7 @@ class Runner:
             return
         logger.warning("最近几局游戏只有 %.0ffps（连续运行太久会越来越卡，容易同步失败、打错），重启游戏", fps)
         self.frame_rate.restarted()  # 重启后没能回到游戏（抛异常）时交给下一局的导航，不接着重启
+        self._status("restart", f"游戏只有 {fps:.0f}fps")
         if not self.nav.restart_game():
             self.frame_rate.enabled = False
 
@@ -574,15 +621,26 @@ class Runner:
                 last = held
             else:
                 logger.debug("LB 持有 %s 个，%.0fs 后再看", held, wait)
-            if self.stop.wait(wait):
+            have = "?" if held is None else held
+            self._status("lb", f"持有 {have} 个，每局消耗 {need} 个", eta=None if left is None else self.wall_clock() + left)
+            waited = self.clock()
+            stopped = self.stop.wait(wait)
+            self.stats.lb_wait_s += self.clock() - waited
+            if stopped:
                 raise NavigationError("已停止")
+            self._track()  # 等很久时统计页上的运行时长也跟着走
 
     def _wait_maintenance(self, e: ServerMaintenance) -> None:
         """挂机遇到服务器维护：每隔 MAINTENANCE_POLL_S 回到标题画面重新登录一次，开服、进到游戏后返回。
         重新登录遇到别的问题时也返回，交给下一局开头的导航（还在维护会再回到这里）。"""
         logger.warning("%s，每 %.3g 分钟回到标题画面看一次开服没有", e, MAINTENANCE_POLL_S / 60)
+        if not self._maintenance_pushed:
+            self._maintenance_pushed = True
+            self._push("maintenance", "服务器维护中", f"{e}，挂机每 {MAINTENANCE_POLL_S / 60:.3g} 分钟看一次开服没有，开服后自动继续")
+        self._status("maintenance", str(e))
         while not self.stop.wait(MAINTENANCE_POLL_S):
             self._check_update()
+            self._track()
             try:
                 self.nav.relogin()
             except ServerMaintenance:
@@ -595,7 +653,18 @@ class Runner:
                     logger.warning("维护后重新登录：%s", e)
                 return
             logger.info("已开服，继续挂机")
+            self._maintenance_over()
             return
+
+    def _maintenance_over(self) -> None:
+        """推送过服务器维护的，开服后推送一次。"""
+        if self._maintenance_pushed:
+            self._maintenance_pushed = False
+            self._push("maintenance", "已开服", "挂机已继续")
+
+    def _push(self, event: str, title: str, text: str) -> None:
+        """演奏中途的推送在后台发，不耽误打歌。"""
+        notify.push(self.cfg.notify, event, title, text, wait=False)
 
     def _check_update(self) -> None:
         """挂机（不限局数）收到更新请求时，在两局之间、等 LB、等开服这些安全的时机退出，
@@ -604,6 +673,16 @@ class Runner:
             raise RestartForUpdate
 
     def run(self) -> RunStats:
+        if self.tracker is not None:
+            self.tracker.start()
+        try:
+            self._run()
+        finally:  # Ctrl+C 中断时也记下这次运行
+            if self.tracker is not None:
+                self.tracker.finish(self.stats)
+        return self.stats
+
+    def _run(self) -> None:
         try:
             self._loop()
         except RestartForUpdate:
@@ -620,15 +699,7 @@ class Runner:
                     self.source.close(self.nav)
                 except (NavigationError, TimeoutError) as e:
                     logger.warning("恢复选曲页的设置失败：%s", e)
-        logger.info(
-            "共演奏 %d 局：FC %d，AP %d，失败 %d%s",
-            self.stats.plays,
-            self.stats.full_combo,
-            self.stats.all_perfect,
-            self.stats.failures,
-            f"；跳过 {self.stats.skips} 次" if self.stats.skips else "",
-        )
-        return self.stats
+        logger.info("%s", self.stats.summary())
 
     def _loop(self) -> None:
         lc = self.cfg.loop

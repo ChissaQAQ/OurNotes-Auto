@@ -17,8 +17,10 @@ import hashlib
 import json
 import os
 import re
+import time
 import zipfile
 from collections.abc import Iterable, Mapping
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +49,7 @@ SHELL = frozenset(
         "ournotes_auto/agent/worker.py",
         "ournotes_auto/logfile.py",
         "ournotes_auto/release.py",
+        "ournotes_auto/sysmem.py",
     }
 )
 RESTART_PREFIXES = ("tasks/", "locales/", "resource/")  # 界面启动或加载资源时读，另外还有 interface.json
@@ -80,8 +83,12 @@ def is_newer(latest: str | None, current: str | None) -> bool:
 # ---------------------------------------------------------------- interface.json
 
 
+STATS_OPTION = "StatsView"  # MXU 设置页「统计与成就」卡片：没有可选项的多选框，只为显示说明（data/stats_mxu.md）
+
+
 def render_interface(data: Mapping[str, Any], kind: str, version: str | None = None, agent_exec: str = AGENT_EXEC, agent_args: Iterable[str] = AGENT_ARGS) -> dict:
-    """项目的 interface.json → 界面 ``kind``（mfaa / mxu）用的：写版本号和 Agent 启动命令，MXU 另加设置页的选项分组。"""
+    """项目的 interface.json → 界面 ``kind``（mfaa / mxu）用的：写版本号和 Agent 启动命令，MXU 另加设置页的
+    「统计与成就」卡片和全局选项分组。"""
     data = dict(data)
     if version:
         data["version"] = version
@@ -89,13 +96,24 @@ def render_interface(data: Mapping[str, Any], kind: str, version: str | None = N
     data.pop("setting", None)
     if kind == "mxu":
         # MXU 把全局选项放进设置页的分组；MFAA 2.16.2 读到 setting 会连接卡住
+        data["option"] = {
+            **data.get("option", {}),
+            STATS_OPTION: {"type": "checkbox", "label": f"$opt.{STATS_OPTION}", "description": f"$opt.{STATS_OPTION}.desc", "cases": []},
+        }
         data["setting"] = [
+            {
+                "name": "stats",
+                "label": "$setting.stats",
+                "description": "$setting.stats.desc",
+                "icon": "docs/ui/icon.png",
+                "option": [STATS_OPTION],
+            },
             {
                 "name": "global",
                 "label": "$setting.global",
                 "description": "$setting.global.desc",
                 "option": data["global_option"],
-            }
+            },
         ]
     return data
 
@@ -104,12 +122,19 @@ def dump_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=4) + "\n"
 
 
-def interface_digest(data: Mapping[str, Any]) -> str:
-    """interface.json 去掉打包时写的部分（版本号、Agent 启动命令、MXU 的分组）后的哈希：只改版本号不算改动。"""
+def strip_generated(data: Mapping[str, Any]) -> dict:
+    """interface.json 去掉打包时写的部分：版本号、Agent 启动命令、MXU 的设置页和「统计与成就」卡片。"""
     data = {k: v for k, v in data.items() if k not in ("version", "setting")}
-    agent = {k: v for k, v in data.get("agent", {}).items() if k not in ("child_exec", "child_args")}
-    data["agent"] = agent
-    return hashlib.sha256(json.dumps(data, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    data["agent"] = {k: v for k, v in data.get("agent", {}).items() if k not in ("child_exec", "child_args")}
+    option = {k: v for k, v in data.pop("option", {}).items() if k != STATS_OPTION}
+    if option:
+        data["option"] = option
+    return data
+
+
+def interface_digest(data: Mapping[str, Any]) -> str:
+    """interface.json 去掉打包时写的部分后的哈希：只改版本号不算改动。"""
+    return hashlib.sha256(json.dumps(strip_generated(data), ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------- 文件清单
@@ -231,12 +256,26 @@ def read_release(root: Path) -> dict | None:
     return data
 
 
-def write_json(path: Path, data: Any) -> None:
-    """先写临时文件再替换，别的进程不会读到写了一半的内容。"""
+def write_text(path: Path, text: str, tries: int = 20) -> None:
+    """先写临时文件再替换，别的进程不会读到写了一半的内容（临时文件名带进程号，多开时不互相覆盖）。
+    文件正被别的程序（浏览器、杀毒软件）读着时替换会失败，等一下再试；一直不行就报错，不留临时文件。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(dump_json(data), encoding="utf-8")
-    os.replace(tmp, path)
+    tmp.write_text(text, encoding="utf-8")
+    for attempt in range(tries):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == tries - 1:
+                with suppress(OSError):
+                    tmp.unlink()
+                raise
+            time.sleep(0.05)
+
+
+def write_json(path: Path, data: Any) -> None:
+    write_text(path, dump_json(data))
 
 
 def read_json(path: Path) -> Any:

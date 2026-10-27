@@ -21,6 +21,16 @@ _LEVELS = logging.getLevelNamesMapping()
 # requests 按这几个环境变量走代理（小写的优先）。设在 Agent 进程里，检查更新、更新程序和演奏进程都会继承
 PROXY_ENV = ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")
 _ORIGINAL_PROXY = {k: os.environ.get(k) for k in PROXY_ENV}
+# 子进程输出里有这些就是分配不到内存（#94：OpenBLAS 在 C 里直接 exit(1)，Python 接不住）；大小写照原样
+OOM_MARKS = (
+    b"Memory allocation",  # OpenBLAS error: Memory allocation still failed after 10 retries, giving up.
+    b"MemoryError",  # Python、numpy（_ArrayMemoryError）、OpenCV（OutOfMemoryError）
+    b"Insufficient memory",  # OpenCV
+    b"bad_alloc",  # C++
+    b"bad allocation",  # MSVC 的 std::bad_alloc
+    b"[WinError 1455]",  # 页面文件太小，无法完成操作
+    b"[WinError 8]",  # 内存资源不足，无法处理此命令
+)
 
 
 @dataclass
@@ -28,6 +38,7 @@ class WorkerResult:
     returncode: int
     stopped: bool  # 是否发出过停止请求
     killed: bool  # 停止请求后没有按时退出、被强制结束
+    out_of_memory: bool = False  # 输出里有分配不到内存的报错（见 OOM_MARKS）
 
 
 def apply_proxy(value: object, environ=None, original: dict[str, str | None] | None = None) -> str:
@@ -118,6 +129,7 @@ def run_worker(
     exited_at: float | None = None
     killed = False
     update_sent = False
+    oom = False
     try:
         while True:
             try:
@@ -128,6 +140,7 @@ def run_worker(
                 break
             if raw:
                 on_line(raw)
+                oom = oom or any(m in raw for m in OOM_MARKS)
             now = time.monotonic()
             if proc.poll() is not None:
                 # 子进程启动的程序（如 adb 服务）可能继承了输出管道，退出后不一定读得到 EOF
@@ -146,7 +159,7 @@ def run_worker(
                 logger.warning("演奏进程 %.0f 秒内没有退出，强制结束", grace_s)
                 proc.kill()
                 killed = True
-        return WorkerResult(proc.wait(), stop_at is not None, killed)
+        return WorkerResult(proc.wait(), stop_at is not None, killed, oom)
     finally:
         if proc.poll() is None:  # on_line / should_stop 出错
             proc.kill()

@@ -43,7 +43,10 @@
             "daily_beginner": true,
             "daily_tgw": true,
             "daily_recruit": true,
-            "daily_gifts": true
+            "daily_gifts": true,
+            "notify_channel": "off",
+            "notify_target": "",
+            "notify_events": "all"
         }
     },
     "OurNotes_Start": {
@@ -141,6 +144,17 @@
                 "custom_action": "OurNotesRun",
                 "custom_action_param": {
                     "task": "records"
+                }
+            }
+        }
+    },
+    "OurNotes_NotifyTest": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "notify_test"
                 }
             }
         }

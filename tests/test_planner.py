@@ -348,8 +348,7 @@ def test_simultaneous_presses_share_noise():
 
 @pytest.mark.parametrize("jitter", [0, 16])
 def test_simultaneous_presses_follow_game_order(jitter):
-    # 真夜中游园地 EXPERT（#90）：两条长条同时按下、起点互在对方判定区里，先发的触点给游戏先更新的那条。
-    # 先更新的 A 结束得晚，以前按结束时刻排在后面发，两条手指互换
+    # 同时按下的按游戏更新音符的先后发送（先更新的 A 结束得晚，以前按结束时刻排在后面发）
     a = Slide(43, [PathNode(1000, Span(8, 20)), PathNode(1500, Span(14, 22))], head=SlideHead.TAP, order=311)
     b = Slide(44, [PathNode(1000, Span(4, 16)), PathNode(1300, Span(0, 8))], head=SlideHead.TAP, order=312)
     tap = PointNote(1, 1000, NoteKind.TAP, Span(22, 24), order=313)
@@ -358,6 +357,74 @@ def test_simultaneous_presses_follow_game_order(jitter):
     finger = {g.source.split("@")[0]: g.finger for g in plan.gestures}
     assert [e.finger for e in downs] == [finger["slide#43"], finger["slide#44"], finger["tap#1"]]
     assert len({e.t_ms for e in downs}) == 1
+
+
+def _apart_chart(*extra, fork=False):
+    # 真夜中游园地 EXPERT（#90）：两条长条的起点 [8,20]、[4,16] 同时按下，中心互在对方的区间里，150ms 后的中继分到两边
+    a = Slide(
+        43,
+        [PathNode(1000, Span(8, 20)), PathNode(1150, Span(15, 23.5)), PathNode(2000, Span(16, 24))],
+        head=SlideHead.TAP,
+        checkpoints=[1150],
+        order=311,
+    )
+    b = Slide(
+        44,
+        [PathNode(1000, Span(4, 16)), PathNode(1150, Span(0.5, 9)), PathNode(1800, Span(0, 8))],
+        head=SlideHead.TAP,
+        checkpoints=[1150],
+        order=311 if fork else 312,
+    )
+    notes = [n for n in extra if isinstance(n, PointNote)]
+    return Chart(1, "expert", notes=notes, slides=[a, b, *(s for s in extra if isinstance(s, Slide))])
+
+
+def _presses(planner, chart):
+    geo = planner.geo
+    return {i: (g.points[0][1] - geo.x_at(0)) / geo.unit_px for i, g in _by_id(planner.plan(chart)).items()}
+
+
+def test_overlapping_simultaneous_heads_press_apart():
+    chart = _apart_chart()
+    planner = make_planner(slide_sample_ms=10)
+    geo = planner.geo
+    by_id = _by_id(planner.plan(chart))
+    for s, press in ((chart.slides[0], 19), (chart.slides[1], 5)):
+        xs = [(t, (x - geo.x_at(0)) / geo.unit_px) for t, x, _ in by_id[s.id].points]
+        # 按在远离对方的一侧（两侧留出 1 个单位），出了对方的区间和判定区
+        assert xs[0] == (1000, pytest.approx(press))
+        # 一直在自己的区间里，到中继时回到中心
+        assert all(s.span_at(t).left + 1 - 1e-6 <= u <= s.span_at(t).right - 1 + 1e-6 for t, u in xs)
+        assert all(u == pytest.approx(s.span_at(t).center) for t, u in xs if t >= 1150)
+    # 拟人化不影响按下点
+    for seed in range(10):
+        presses = _presses(_seeded(seed, jitter_ms=20, position_jitter=1.0), chart)
+        assert (presses[43], presses[44]) == (pytest.approx(19), pytest.approx(5))
+    # 两个点击也一样
+    taps = [PointNote(1, 1000, NoteKind.TAP, Span(8, 20), order=1), PointNote(2, 1000, NoteKind.TAP, Span(4, 16), order=2)]
+    assert _presses(make_planner(), Chart(1, "expert", notes=taps)) == {1: pytest.approx(19), 2: pytest.approx(5)}
+
+
+def test_press_apart_keeps_other_claims_or_stays():
+    planner = make_planner()
+    # 同一个起点分出的两条（游戏里是同一个音符）、只是区间相接或稍有重叠的同时按下：不挪
+    assert _presses(planner, _apart_chart(fork=True)) == pytest.approx({43: 14, 44: 10})
+    side = [Slide(1, [PathNode(1000, Span(0, 8)), PathNode(1500, Span(0, 8))], order=1)]
+    side.append(Slide(2, [PathNode(1000, Span(6, 14)), PathNode(1500, Span(6, 14))], order=2))
+    assert _presses(planner, Chart(1, "expert", slides=side)) == pytest.approx({1: 4, 2: 10})
+    # 挪过去会进 100ms 前后点击的判定区 [16,20]、同时按住的长条的判定区 [18,26]：那一条不挪，另一条照常挪开
+    for extra in (
+        PointNote(1, 1100, NoteKind.TAP, Span(17, 19)),
+        PointNote(1, 900, NoteKind.TAP, Span(17, 19)),
+        Slide(1, [PathNode(500, Span(20, 24)), PathNode(1300, Span(20, 24))], head=SlideHead.TRACE),
+    ):
+        presses = _presses(planner, _apart_chart(extra))
+        assert (presses[43], presses[44]) == (pytest.approx(14), pytest.approx(5))
+    # 154ms 前的点击早被自己的按下判掉了，开了时机偏移也认领不到这次按下：照常挪
+    early = PointNote(1, 846, NoteKind.TAP, Span(16, 22))
+    for p in (planner, _seeded(0, jitter_ms=20)):
+        presses = _presses(p, _apart_chart(early))
+        assert (presses[43], presses[44]) == (pytest.approx(19), pytest.approx(5))
 
 
 def _great_chart():

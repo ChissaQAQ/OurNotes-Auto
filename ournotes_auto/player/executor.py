@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 
 from ..device.base import TouchBackend
 from ..planner import Action, TouchEvent
-from .clock import high_resolution_timer, now, raise_thread_priority, sleep_until
+from .clock import high_resolution_timer, now, raised_thread_priority, sleep_until
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,7 @@ class Executor:
         i = 0
         down: set[int] = set()  # 按着的触点
         dropped: set[int] = set()  # 按下没发（或暂停时抬起了）的触点：它之后的移动、抬起也不发
-        with high_resolution_timer():
-            raise_thread_priority()
+        with high_resolution_timer(), raised_thread_priority():
             try:
                 while i < n:
                     if stop is not None and stop.is_set():

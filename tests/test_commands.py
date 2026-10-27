@@ -79,10 +79,21 @@ def test_run_passes_update_event(monkeypatch):
     """args.update 作为第 9 个参数传给 Runner；没有它时（不是从命令行入口来的）传 None。"""
     update = threading.Event()
     fake_run(monkeypatch, launched=False, update=update)
-    assert len(runner.Runner.args) == 9 and runner.Runner.args[8] is update
+    assert len(runner.Runner.args) == 10 and runner.Runner.args[8] is update
     assert not hasattr(build_parser().parse_args(["run"]), "update")
     fake_run(monkeypatch, launched=False)
-    assert len(runner.Runner.args) == 9 and runner.Runner.args[8] is None
+    assert len(runner.Runner.args) == 10 and runner.Runner.args[8] is None
+
+
+def test_run_passes_tracker(monkeypatch):
+    """统计页的运行记录：任务名用界面上的任务名（命令行里是「命令行」），挂机看 --wait-lb。"""
+    from ournotes_auto.stats import Tracker
+
+    fake_run(monkeypatch, launched=False, label="挂机", wait_lb=True, lb_auto=True)
+    tracker = runner.Runner.args[9]
+    assert isinstance(tracker, Tracker) and (tracker.session.task, tracker.session.idle) == ("挂机", True)
+    fake_run(monkeypatch, launched=False)
+    assert (runner.Runner.args[9].session.task, runner.Runner.args[9].session.idle) == ("命令行", False)
 
 
 def test_switch_account_intl_packages(monkeypatch, caplog):

@@ -293,15 +293,13 @@ def _disk_digest(root: Path, rel: str) -> str | None:
 def keep_user_fields(data: dict, old: Path) -> dict:
     """新的 interface.json ``data`` 补上旧文件 ``old`` 里用户自己加的顶层字段（新版本里没有的，如 ``github``）。
 
-    新版本里有的字段和打包时生成的 MXU 设置分组用新的；旧文件读不了时原样返回 ``data``。
+    新版本里有的字段和打包时生成的部分（MXU 设置分组、统计卡片等）用新的；旧文件读不了时原样返回 ``data``。
     """
     try:
-        local = json.loads(old.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        local = release.strip_generated(json.loads(old.read_text(encoding="utf-8")))
+    except (OSError, ValueError, AttributeError, TypeError):  # 读不了或不是 JSON 对象
         return data
-    if not isinstance(local, dict):
-        return data
-    extra = {k: v for k, v in local.items() if k not in data and k != "setting"}
+    extra = {k: v for k, v in local.items() if k not in data}
     if extra:
         logger.info("interface.json 保留用户加的字段：%s", "、".join(extra))
     return {**data, **extra}

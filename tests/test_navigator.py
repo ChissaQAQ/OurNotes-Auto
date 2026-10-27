@@ -415,8 +415,9 @@ def test_stray_retry_confirm_is_cancelled(monkeypatch):
 
 class LbGame(FakeGame):
     """乐队确认页 + LB 消耗设置弹窗 / 跳过确认弹窗：消耗数列表只露出 4 行（``top`` 为最大能选几个，超过 3 时上下拖
-    才看得全，``scroll`` 为露出的最小一行），按当前选中项画出白色单选按钮，勾上「全部消耗」（``all_on``，今天用过了
-    ``all_used`` 或持有不到 4 个时勾不上）也画白色。``held`` 为 0 且消耗不为 0 时 LIVE START 弹出恢复 LIVE BOOST
+    才看得全，``scroll`` 为露出的最小一行），按当前选中项画出白色单选按钮，勾上「全部消耗」（``all_on``，今天的次数 ``all_left``
+    用完了或持有不到 4 个时勾不上）也画白色，用完了时弹窗上写着「今日次数已用完」（``used_text`` 为 False 时不写，
+    像别的语言那样认不出）。``held`` 为 0 且消耗不为 0 时 LIVE START 弹出恢复 LIVE BOOST
     （``popup``，实机大多直接开始、不消耗），开始的局记在 ``starts``（消耗, 全部消耗）。顶栏和弹窗上的持有数按 ``held``
     改写，``bar`` 指定顶栏的识别结果（模拟读错），``timer`` 为顶栏下一行的恢复倒计时（LB 没满时才有），
     ``setting`` 为弹窗用的截图（活动期间每行还写着「活动pt」「挑战pt」）。``skips`` 为还能跳过几次，跳过消耗的 LB
@@ -435,7 +436,8 @@ class LbGame(FakeGame):
         setting: str = "lb_setting",
         top: int = 3,
         skips: int = 0,
-        all_used: bool = False,
+        all_left: int = 1,
+        used_text: bool = True,
     ):
         super().__init__("band_confirm")
         self.cost = cost
@@ -447,7 +449,8 @@ class LbGame(FakeGame):
         self.top = top
         self.scroll = 0
         self.skips = skips
-        self.all_used = all_used
+        self.all_left = all_left
+        self.used_text = used_text
         self.all_on = False
         self.starts: list[tuple[int, bool]] = []
         self.skipped: list[int] = []
@@ -485,14 +488,14 @@ class LbGame(FakeGame):
             if self.timer is not None:
                 items.append(OcrItem(1037, 46, 73, 28, self.timer))
             return items
-        # 弹窗：消耗数按露出的行重写，「今日次数已用完」按 all_used
+        # 弹窗：消耗数按露出的行重写，「今日次数已用完」按 all_left
         items = [
             it
             for it in items
             if "已用完" not in it.text and not (re.fullmatch(r"\d", it.text) and 400 < it.x + it.w / 2 < 470 and 95 < it.cy < 320)
         ]
         items += [OcrItem(424, y - 17, 28, 34, str(c)) for c, y in self.rows().items()]
-        if self.all_used:
+        if not self.all_left and self.used_text:
             items.append(OcrItem(572, 419, 130, 17, "今日次数已用完"))
         return items
 
@@ -505,7 +508,7 @@ class LbGame(FakeGame):
 
         nxt = None
         if here in self.DIALOGS:
-            if near(self.DIALOGS[here], 20) and not self.all_used and self.held >= 4:
+            if near(self.DIALOGS[here], 20) and self.all_left and self.held >= 4:
                 self.all_on = not self.all_on
             self.cost = next((c for c, y in self.rows().items() if near((self.RADIO_X, y), 20)), self.cost)
         if here == "band_confirm":
@@ -519,7 +522,7 @@ class LbGame(FakeGame):
                 else:
                     self.starts.append((self.cost, self.all_on))
                     if self.all_on:
-                        self.all_used, self.all_on = True, False
+                        self.all_left, self.all_on = self.all_left - 1, False
         elif here == "skip_confirm":
             if near((497, 657)):
                 nxt = "band_confirm"
@@ -529,7 +532,7 @@ class LbGame(FakeGame):
                 self.skips -= 1
                 self.skipped.append(spent)
                 if self.all_on:
-                    self.all_used, self.all_on = True, False
+                    self.all_left, self.all_on = self.all_left - 1, False
                 nxt = "skip_result"
         elif here == "skip_result" and near((1126, 659)):
             nxt = "band_confirm"
@@ -1062,18 +1065,20 @@ def test_set_lb_cost_capped_when_locked(monkeypatch):
     assert game.starts == [(3, False)] and nav._lb_top == 3
 
 
-def test_lb_auto_picks_max_and_all_once_a_day(monkeypatch, tmp_path):
-    """自动选消耗：持有 10 个以上时用一次「全部消耗」（记在 state.json，当天不再用），之后按能选的最大值消耗；
-    顶栏的持有数算出来的选择和现在的一样就不开弹窗。"""
+def test_lb_auto_picks_max_and_all_until_used_up(monkeypatch, tmp_path):
+    """自动选消耗：持有 10 个以上时用「全部消耗」（每次记在 state.json），弹窗上写着今天的次数用完了就记下来、
+    当天不再用，按能选的最大值消耗；顶栏的持有数算出来的选择和现在的一样就不开弹窗。"""
     store = RecordStore(tmp_path)
     game = LbGame(cost=0, held=24, top=4)
     nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    pkg = nav.cfg.device.package
     nav.start_live()
-    assert game.starts == [(4, True)] and game.all_used
-    assert store.lb_all_used(nav.cfg.device.package) == game_day()
+    assert game.starts == [(4, True)] and game.all_left == 0
+    assert store.lb_all_uses(pkg, game_day()) == 1 and store.lb_all_used(pkg) is None
     next_live(game, held=14)
     nav.start_live()
     assert game.starts[-1] == (4, False) and not tapped(game, LB_ALL_CHECK)
+    assert store.lb_all_used(pkg) == game_day()
     next_live(game, held=10)
     nav.start_live()
     assert game.starts[-1] == (4, False) and not tapped(game, (920, 665))  # 没打开弹窗
@@ -1098,11 +1103,57 @@ def test_lb_auto_follows_held_and_stops_when_empty(monkeypatch):
 def test_lb_auto_all_used_elsewhere(monkeypatch, tmp_path):
     """弹窗上写着今天的「全部消耗」已用完（别处用过了）：不勾，记下来。"""
     store = RecordStore(tmp_path)
-    game = LbGame(cost=0, held=10, top=3, all_used=True)
+    game = LbGame(cost=0, held=10, top=3, all_left=0)
     nav = lb_nav(monkeypatch, game, store, lb_auto=True)
     nav.start_live()
     assert game.starts == [(3, False)] and not tapped(game, LB_ALL_CHECK)
     assert store.lb_all_used(nav.cfg.device.package) == game_day()
+
+
+def test_lb_auto_all_several_times_a_day(monkeypatch, tmp_path):
+    """「全部消耗」每天能用几次看月卡（最高档 5 次，#93）：用到弹窗上写着今天的次数用完为止。"""
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=24, top=4, all_left=5)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    pkg = nav.cfg.device.package
+    for n in range(1, 6):
+        next_live(game, held=24)
+        nav.start_live()
+        assert game.starts[-1] == (4, True) and store.lb_all_uses(pkg, game_day()) == n
+    assert store.lb_all_used(pkg) is None
+    next_live(game, held=24)
+    nav.start_live()
+    assert game.starts[-1] == (4, False) and not tapped(game, LB_ALL_CHECK)
+    assert store.lb_all_used(pkg) == game_day() and store.lb_all_uses(pkg, game_day()) == 5
+
+
+def test_lb_auto_all_cannot_tick_after_use(monkeypatch, tmp_path):
+    """认不出「今日次数已用完」（别的语言）：今天用过之后勾不上，当作次数用完了记下来，下次运行也不再试。"""
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=24, top=4, used_text=False)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    nav.start_live()
+    next_live(game, held=24)
+    nav.start_live()
+    assert game.starts == [(4, True), (4, False)] and len(tapped(game, LB_ALL_CHECK)) == 2
+    assert store.lb_all_used(nav.cfg.device.package) == game_day()
+    next_live(game, held=24)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    nav.start_live()
+    assert game.starts[-1] == (4, False) and not tapped(game, LB_ALL_CHECK)
+
+
+def test_lb_auto_all_cannot_tick_unused(monkeypatch, tmp_path):
+    """今天没用过就勾不上（在游戏里手动用完了，又认不出那行字）：这次运行不再试，不记下来。"""
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=24, top=4, all_left=0, used_text=False)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    nav.start_live()
+    assert game.starts == [(4, False)] and len(tapped(game, LB_ALL_CHECK)) == 2
+    assert store.lb_all_used(nav.cfg.device.package) is None
+    next_live(game, held=24)
+    nav.start_live()
+    assert game.starts[-1] == (4, False) and not tapped(game, LB_ALL_CHECK)
 
 
 def test_lb_auto_skips_check_when_used_today(monkeypatch, tmp_path):
@@ -1150,7 +1201,7 @@ def test_skip_live_auto_uses_all(monkeypatch, tmp_path):
     nav = lb_nav(monkeypatch, game, store, lb_auto=True)
     assert nav.skip_live() and game.skipped == [10] and game.held == 0
     assert tapped(game, SKIP_ALL_CHECK) == ["skip_confirm"]
-    assert store.lb_all_used(nav.cfg.device.package) == game_day()
+    assert store.lb_all_uses(nav.cfg.device.package, game_day()) == 1
     assert not nav.skip_live() and game.skips == 1  # LB 用完了：关闭，不跳过
 
 

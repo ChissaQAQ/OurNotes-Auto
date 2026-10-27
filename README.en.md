@@ -43,7 +43,7 @@ This software is free and open source; please read the [Terms of Service](TERMS_
    Both require the [VC++ 2015–2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 2. Run `MFAAvalonia.exe` or `mxu.exe`, and read through the instructions shown on first launch.
 3. In the connection settings, choose "MuMu Emulator" and the instance to use (the adb address of instance n is `127.0.0.1:16384+32n`).
-4. Check the tasks, set the options and start. The game just needs to be on the Home screen or the Free LIVE Select Song screen, and it doesn't even need to be running: every task except "Records Summary" starts it first (if it is already running, that instance is used), then waits through the title screen, login bonus and notices to get into the game.
+4. Check the tasks, set the options and start. The game just needs to be on the Home screen or the Free LIVE Select Song screen, and it doesn't even need to be running: every task except "Open Stats Window" and "Test Notification" starts it first (if it is already running, that instance is used), then waits through the title screen, login bonus and notices to get into the game.
 
 Before use, make sure of the following:
 
@@ -52,7 +52,7 @@ Before use, make sure of the following:
 - In-game "Notes Speed" at **5.00** (be sure to keep it when "Random GREAT" is on; other speeds shift all presses and turn GREATs into GOODs); MV / background off, or switched to a dark, static background; turning down effect and performance levels is recommended
 - Internet access: charts are downloaded at runtime from the chart site `assets.bdon.moe`
 
-Tasks: Start Game, Switch Account (accounts in the International server's bilibili login history, no password needed), Repeat Play, Use Up LB, AFK Farming (waits for LB to recover after running out, then keeps playing), AP Completion, Challenge LIVE (during events), Claim Dailies, Records Summary. For details on each task and option, see the [Usage Guide](docs/en/usage.md); for command-line usage, see [Command Line](docs/en/cli.md).
+Tasks: Start Game, Switch Account (accounts in the International server's bilibili login history, no password needed), Repeat Play, Use Up LB, AFK Farming (waits for LB to recover after running out, then keeps playing), AP Completion, Challenge LIVE (during events), Claim Dailies, Open Stats Window (total run time, play stats and achievements; export your records from its window before switching packages and import them in the new one), Test Notification (checks the "Push Notifications" setting, which sends a message to your phone when playing finishes, on errors and when AFK Farming runs into server maintenance; ntfy, ServerChan, Bark and webhook are supported). For details on each task and option, see the [Usage Guide](docs/en/usage.md); for command-line usage, see [Command Line](docs/en/cli.md).
 
 ## Measured Results and Known Limitations
 

@@ -58,9 +58,13 @@ ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gif
 ournotes-auto daily --jobs story   # 未読のバンド / アナザー / 絆ストーリーをスキップ（明示したときだけ実行）
 ournotes-auto daily --jobs event   # 期間限定イベントの未読のイベントストーリー / アナザーストーリーをスキップ（明示したときだけ実行）
 
-# ローカルの演奏記録をまとめる（総プレイ回数、AP した譜面、まだ AP していない譜面、直近の数回）
+# ローカルの演奏記録をまとめる（総プレイ回数、AP した譜面、まだ AP していない譜面、直近の数回）、統計ページを更新（累計稼働時間・実績。完全なページは data/stats.html）
 ournotes-auto records [--recent 10]
 ournotes-auto records --clear-chart-offsets   # 譜面ごとに学習したオフセットを消す（全体の学習値はそのまま）
+ournotes-auto stats-window   # 「統計と実績」ウィンドウを開く（開いていれば前面に出す）。パッケージフォルダーの「统计与成就」ショートカットが実行するのはこれ
+ournotes-auto backup export [--out フォルダー]   # バックアップを書き出す（演奏記録・実行記録・実績・学習したオフセット）。既定の保存先は「ドキュメント\OurNotes-Auto」
+ournotes-auto backup import [インポート元]   # バックアップファイル、古いパッケージのフォルダーまたはその data フォルダーからインポート（統合、既存の記録はそのまま）。省略すると「ドキュメント\OurNotes-Auto」の最新のバックアップ
+ournotes-auto notify-test   # config.yaml の notify でテスト通知を 1 件送る（スマホに通知：ntfy、Server酱、Bark、webhook。config.example.yaml を参照）
 
 # 現在の画面を認識（ナビゲーションのデバッグ）
 ournotes-auto look [--save] [--ocr]

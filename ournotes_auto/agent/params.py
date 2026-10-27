@@ -10,6 +10,7 @@ from typing import Any
 from ..config import JP_PACKAGE, parse_daily_time
 from ..device.mumu_ipc import find_dll
 from ..nav.screens import LB_MAX_COST
+from ..notify import CHANNELS as NOTIFY_CHANNELS
 from ..sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
 
 PARAM_NODE = "OurNotesParam"  # 界面选项都覆盖到这个节点的 attach 上
@@ -22,9 +23,10 @@ TASKS = {
     "idle": "挂机",
     "ap": "AP补完",
     "challenge": "挑战演出",
-    "records": "记录汇总",
+    "records": "打开统计窗口",
+    "notify_test": "推送测试",
 }
-LOCAL_TASKS = {"records"}  # 不需要连接模拟器
+LOCAL_TASKS = {"records", "notify_test"}  # 不需要连接模拟器
 RUN_TASKS = ("repeat", "clear_lb", "idle", "ap", "challenge")  # 连续演奏（``run``）的任务
 # 领取日常的各项（与 ``daily --jobs`` 一致），界面上的开关是 attach 里的 ``daily_<项目>``
 DAILY_JOBS = ("studio", "story", "event", "missions", "pass", "limited", "beginner", "tgw", "recruit", "gifts")
@@ -33,6 +35,7 @@ LOOP_SONG_MODES = ("current", "random", "ap_first", "list")  # 重复刷歌 / �
 # 重复刷歌 / 清体力 / 挂机的难度：优先高难度（high_first）在「优先没 AP 的歌」时从高到低依次补，其他选曲方式按 EXPERT
 LOOP_DIFFICULTIES = (*DIFFICULTIES, "high_first")
 AP_ORDERS = ("hard_first", "easy_first")
+NOTIFY_EVENTS = {"all": "done,error,maintenance", "problems": "error,maintenance"}  # 界面选项「推送哪些消息」→ notify.events
 TOUCH_MODES = ("minitouch", "mumu")
 
 # MuMu 12 第 n 个实例的 adb 端口
@@ -336,10 +339,34 @@ def _game_language(attach: Mapping[str, Any]) -> dict[str, str]:
     return {**({"loop.ocr_model": model} if model else {}), **({"device.package": package} if package else {})}
 
 
+def _notify(attach: Mapping[str, Any]) -> dict[str, str]:
+    """``notify_channel``（off 或推送方式）、``notify_target``（推送地址）、``notify_events``（all / problems）；
+    资源是旧版、attach 里没有这几项时不改（用 config.yaml 里的）。"""
+    if "notify_channel" not in attach:
+        return {}
+    channel = _choice(attach, "notify_channel", ("off", *NOTIFY_CHANNELS))
+    if channel == "off":
+        return {"notify.channel": ""}
+    return {
+        "notify.channel": channel,
+        "notify.target": str(_get(attach, "notify_target")).strip(),
+        "notify.events": NOTIFY_EVENTS[_choice(attach, "notify_events", tuple(NOTIFY_EVENTS))],
+    }
+
+
+def _set_args(sets: Mapping[str, str]) -> list[str]:
+    args: list[str] = []
+    for key, value in sets.items():
+        args += ["--set", f"{key}={value}"]
+    return args
+
+
 def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str]) -> list[str]:
     """``python -m ournotes_auto`` 之后的参数（不含日志 / 停止相关的全局参数，见 ``global_args``）。"""
     if task == "records":
         return ["records"]
+    if task == "notify_test":
+        return [*_set_args(_notify(attach)), "notify-test"]
     language = _game_language(attach)
     if task == "start":
         sets = {**device, "device.touch": _choice(attach, "touch", TOUCH_MODES)}
@@ -359,10 +386,8 @@ def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str])
         sets = {**device, **run_settings(task, attach)}
         tail = ["run", *(["--watch-combo"] if _bool(attach, "watch_combo") else [])]
     sets.update(language)
-    args: list[str] = []
-    for key, value in sets.items():
-        args += ["--set", f"{key}={value}"]
-    return args + tail
+    sets.update(_notify(attach))
+    return _set_args(sets) + tail
 
 
 def agent_argv(payload: Any) -> tuple[str, list[str]]:

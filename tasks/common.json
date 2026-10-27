@@ -299,6 +299,76 @@
                 }
             ],
             "pipeline_override": { "OurNotesParam": { "attach": { "proxy": "{proxy}" } } }
+        },
+        "NotifyChannel": {
+            "type": "select",
+            "label": "$opt.NotifyChannel",
+            "description": "$opt.NotifyChannel.desc",
+            "cases": [
+                {
+                    "name": "off",
+                    "label": "$opt.NotifyChannel.off",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "notify_channel": "off" } } }
+                },
+                {
+                    "name": "ntfy",
+                    "label": "ntfy",
+                    "description": "$opt.NotifyChannel.ntfy.desc",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "notify_channel": "ntfy" } } }
+                },
+                {
+                    "name": "serverchan",
+                    "label": "$opt.NotifyChannel.serverchan",
+                    "description": "$opt.NotifyChannel.serverchan.desc",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "notify_channel": "serverchan" } } }
+                },
+                {
+                    "name": "bark",
+                    "label": "Bark",
+                    "description": "$opt.NotifyChannel.bark.desc",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "notify_channel": "bark" } } }
+                },
+                {
+                    "name": "webhook",
+                    "label": "Webhook",
+                    "description": "$opt.NotifyChannel.webhook.desc",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "notify_channel": "webhook" } } }
+                }
+            ],
+            "default_case": "off"
+        },
+        "NotifyTarget": {
+            "type": "input",
+            "label": "$opt.NotifyTarget",
+            "description": "$opt.NotifyTarget.desc",
+            "inputs": [
+                {
+                    "name": "target",
+                    "label": "$opt.NotifyTarget.target",
+                    "default": "",
+                    "pipeline_type": "string",
+                    "verify": "^\\S*$",
+                    "pattern_msg": "$opt.NotifyTarget.target.msg"
+                }
+            ],
+            "pipeline_override": { "OurNotesParam": { "attach": { "notify_target": "{target}" } } }
+        },
+        "NotifyEvents": {
+            "type": "select",
+            "label": "$opt.NotifyEvents",
+            "cases": [
+                {
+                    "name": "all",
+                    "label": "$opt.NotifyEvents.all",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "notify_events": "all" } } }
+                },
+                {
+                    "name": "problems",
+                    "label": "$opt.NotifyEvents.problems",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "notify_events": "problems" } } }
+                }
+            ],
+            "default_case": "all"
         }
     }
 }

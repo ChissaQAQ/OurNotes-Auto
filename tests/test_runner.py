@@ -5,6 +5,7 @@ from datetime import datetime
 
 import pytest
 
+from ournotes_auto import sysmem
 from ournotes_auto.charts.catalog import Catalog, Song
 from ournotes_auto.charts.model import Chart
 from ournotes_auto.config import Config
@@ -136,6 +137,24 @@ def test_runner_plays_and_autotunes(tmp_path):
     assert store.learned_offset_ms < 0
     assert hist[0].offset_ms == 3.0 and hist[1].offset_ms < 3.0
     assert hist[0].stalls is None
+
+
+@pytest.mark.parametrize("commit_avail, warnings", [(sysmem.GB // 2, 1), (8 * sysmem.GB, 0)])
+def test_runner_logs_memory(tmp_path, monkeypatch, caplog, commit_avail, warnings):
+    """每局记一行内存（#94）；电脑内存快用完了只提醒一次，读不到就不记，照常打。"""
+    status = sysmem.MemoryStatus(16 * sysmem.GB, sysmem.GB, 24 * sysmem.GB, commit_avail)
+    monkeypatch.setattr(sysmem, "memory_status", lambda: status)
+    runner, _, _ = make(tmp_path)
+    with caplog.at_level("DEBUG", logger="ournotes_auto.runner"):
+        assert runner.run().plays == 2
+    assert sum(r.getMessage().startswith("本进程 ") for r in caplog.records) == 2
+    assert sum(r.getMessage().startswith("电脑内存快用完了（") for r in caplog.records) == warnings
+    monkeypatch.setattr(sysmem, "memory_status", lambda: None)
+    caplog.clear()
+    runner, _, _ = make(tmp_path / "none")
+    with caplog.at_level("DEBUG", logger="ournotes_auto.runner"):
+        assert runner.run().plays == 2
+    assert not any(r.getMessage().startswith(("本进程 ", "电脑内存")) for r in caplog.records)
 
 
 def test_runner_uses_skips_first(tmp_path):
@@ -510,6 +529,75 @@ def test_stop_while_waiting_lb_is_not_a_failure(tmp_path):
     stats = runner.run()
     assert stats.plays == 1 and stats.failures == 0 and len(starts) == 2
 
+
+class FakeTracker:
+    def __init__(self):
+        self.calls = []
+        self.statuses = []  # 统计页上的「正在做什么」，和 calls 分开看（已有的断言只认 calls）
+
+    def start(self):
+        self.calls.append("start")
+
+    def update(self, stats):
+        self.calls.append(("update", stats.plays))
+
+    def finish(self, stats):
+        self.calls.append(("finish", stats.plays))
+
+    def status(self, kind, detail="", **extra):
+        self.statuses.append((kind, detail, extra))
+
+
+def test_runner_updates_tracker(tmp_path):
+    """统计页：开始、每局后、结束时更新；中途出错退出时也记下这次运行。"""
+    runner, nav, store = make(tmp_path)
+    runner.tracker = FakeTracker()
+    assert runner.run() is runner.stats
+    assert runner.tracker.calls == ["start", ("update", 1), ("update", 2), ("finish", 2)]
+
+    def interrupted():
+        raise KeyboardInterrupt
+
+    runner, nav, store = make(tmp_path)
+    runner.tracker = FakeTracker()
+    runner._loop = interrupted
+    with pytest.raises(KeyboardInterrupt):
+        runner.run()
+    assert runner.tracker.calls == ["start", ("finish", 0)]
+
+
+def test_wait_lb_counted(tmp_path):
+    """挂机等 LB 恢复的时间记进统计，等的时候也更新统计页。"""
+    seq = [(0, 120), (None, None), (3, 1700), (2, None), (3, 1500), (3, None)]
+    runner, nav, starts, statuses = idle(tmp_path, seq)
+    runner.clock = lambda: runner.stop.now
+    runner.tracker = FakeTracker()
+    T = 1790600000.0
+    runner.wall_clock = lambda: T + runner.stop.now
+    stats = runner.run()
+    assert stats.lb_wait_s == sum(runner.stop.waits) > 0
+    assert runner.tracker.calls == ["start", *[("update", 1)] * 4, ("update", 2), ("update", 3), ("finish", 3)]
+    # 统计页上的「正在做什么」：每局前换歌、演奏；等 LB 时每次醒来报一遍持有几个、下一个什么时候恢复
+    kinds = [k for k, _, _ in runner.tracker.statuses]
+    assert kinds == ["select", "play", "select", "play", "lb", "lb", "lb", "play", "select", "play"]
+    lb = [(d, e) for k, d, e in runner.tracker.statuses if k == "lb"]
+    assert lb == [
+        ("持有 0 个，每局消耗 3 个", {"eta": T + 120}),
+        ("持有 ? 个，每局消耗 3 个", {"eta": None}),
+        ("持有 2 个，每局消耗 3 个", {"eta": T + sum(runner.stop.waits[:2]) + 1700}),  # 弹窗核对出来不够：按顶栏的倒计时
+    ]
+    assert runner.tracker.statuses[1][1] == "诗超绊 · EXPERT"
+
+
+def test_runner_records_session(tmp_path):
+    from ournotes_auto.stats import PAGE_MD, Tracker, load_sessions
+
+    runner, nav, store = make(tmp_path)
+    runner.tracker = Tracker(tmp_path, "重复刷歌")
+    runner.run()
+    [s] = load_sessions(tmp_path)
+    assert (s.task, s.plays, s.fc, s.ap) == ("重复刷歌", 2, 2, 0)
+    assert "| 2 局 |" in (tmp_path / PAGE_MD).read_text(encoding="utf-8")
 
 def test_wait_lb_keeps_waiting_after_navigation_error(tmp_path):
     """等待中导航失败（如日期变更后重新登录失败）算一次失败，下一轮接着等，不换歌。"""
@@ -957,6 +1045,37 @@ def test_idle_maintenance_wait_ends(tmp_path, error):
         assert stats.plays == 0 and stats.failures == 1
     else:
         assert stats.plays == 2 and stats.failures == 0 and nav.calls.count("relogin") == 1
+
+
+@pytest.mark.parametrize("second", ["maintenance", "plays"])
+def test_idle_maintenance_pushes(tmp_path, monkeypatch, second):
+    """挂机遇到维护在后台推送一次：重新登录出了别的问题、下一局又回来等时不重复推送；开服后推送一次
+    （等到开服的，或下一局的导航自己进了游戏、打完一局的）。"""
+    from ournotes_auto import notify
+    from ournotes_auto.runner import NavigationError, ServerMaintenance
+
+    pushed = []
+    monkeypatch.setattr(notify, "push", lambda cfg, event, title, text, wait=True: pushed.append((event, title, wait)))
+    runner, nav, starts, statuses = idle(tmp_path, [], exhausted_at=())
+    runner.cfg.loop.max_plays = 2
+    starts_live = nav.start_live
+    logins = [NavigationError("180s 内未能进入游戏"), None]
+
+    def start_live(lb_short="zero"):
+        starts_live(lb_short)
+        if len(starts) == 1 or (len(starts) == 2 and second == "maintenance"):
+            raise ServerMaintenance("服务器维护中")
+
+    def relogin():
+        nav.calls.append("relogin")
+        if out := logins.pop(0):
+            raise out
+
+    nav.start_live, nav.relogin = start_live, relogin
+    stats = runner.run()
+    assert stats.plays == 2 and stats.failures == 0
+    assert pushed == [("maintenance", "服务器维护中", False), ("maintenance", "已开服", False)]
+    assert nav.calls.count("relogin") == (2 if second == "maintenance" else 1)
 
 
 @pytest.mark.parametrize("plays", [0, 1])

@@ -52,8 +52,13 @@ def test_render_interface():
     data = json.loads((ROOT / "interface.json").read_text(encoding="utf-8"))
     mxu = release.render_interface(data, "mxu", "v9.9.9")
     mfaa = release.render_interface(data, "mfaa", "v9.9.9")
-    assert mxu["setting"][0]["option"] == mxu["global_option"]
+    assert [s["name"] for s in mxu["setting"]] == ["stats", "global"]
+    assert mxu["setting"][1]["option"] == mxu["global_option"]
+    # 设置页的「统计与成就」卡片：没有可选项的多选框，界面只显示它的说明（data/stats_mxu.md）
+    assert mxu["setting"][0]["option"] == [release.STATS_OPTION] and mxu["option"][release.STATS_OPTION]["cases"] == []
+    assert release.STATS_OPTION not in mfaa.get("option", {}) and release.STATS_OPTION not in data.get("option", {})
     assert "setting" not in mfaa and "setting" not in data  # MFAA 2.16.2 读到 setting 会连接卡住
+    assert release.render_interface(mxu, "mxu") == mxu  # 再生成一遍不变（Agent 补卡片时）
     assert (mfaa["version"], mfaa["agent"]["child_exec"], mfaa["agent"]["child_args"]) == ("v9.9.9", release.AGENT_EXEC, list(release.AGENT_ARGS))
     # 只差打包时写的部分，摘要一样；改了别的就不一样
     digest = release.interface_digest(data)
@@ -288,3 +293,27 @@ def test_update_options():
         option = options[name]
         default = next(c for c in option["cases"] if c["name"] == option["default_case"])
         assert default["pipeline_override"]["OurNotesParam"]["attach"] == {key: True} and attach[key] is True
+
+
+def test_write_retries_when_locked(tmp_path, monkeypatch):
+    """文件被别的程序（浏览器、杀毒软件）读着、替换不了时等一下再试；一直不行就报错，不留临时文件。"""
+    real, calls = release.os.replace, []
+
+    def flaky(src, dst):
+        calls.append(dst)
+        if len(calls) < 3:
+            raise PermissionError("locked")
+        real(src, dst)
+
+    def locked(src, dst):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(release.time, "sleep", lambda s: None)
+    monkeypatch.setattr(release.os, "replace", flaky)
+    release.write_text(tmp_path / "a.txt", "x")
+    assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "x" and len(calls) == 3
+
+    monkeypatch.setattr(release.os, "replace", locked)
+    with pytest.raises(PermissionError):
+        release.write_text(tmp_path / "b.txt", "y", tries=3)
+    assert not (tmp_path / "b.txt").exists() and not list(tmp_path.glob("*.tmp"))

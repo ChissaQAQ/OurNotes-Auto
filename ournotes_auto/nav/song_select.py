@@ -80,6 +80,7 @@ LIST_TAP_X = 450  # 点行的位置（曲名那一块）
 LIST_DRAG_DOWN = ((450, 620), (450, 620 - 4 * ROW_PITCH))  # 往列表后面滚 4 行
 LIST_DRAG_UP = ((450, 180), (450, 180 + 4 * ROW_PITCH))
 LIST_SETTLE_S = 0.6  # 拖完等列表对齐
+LIST_LOAD_S = 30.0  # 列表的封面一张都认不出时（重启游戏后还在加载）最多等多久再拖
 
 DIFFICULTY_OPTIONS = {"easy": "EASY", "normal": "NORMAL", "hard": "HARD", "expert": "EXPERT"}
 # 「游玩状况」的选项；OCR 会把 ALL PERFECT、FULL COMBO 中间的空格去掉
@@ -488,6 +489,7 @@ class SongSelectMixin:
         positions = self.list_positions
         direction, ends, drags, taps = 1, 0, 0, 0
         last = None  # 上次拖动前看到的（中间的歌, 各行的歌）：拖了没变就是到头了
+        loading = None  # 等列表加载到什么时候
         while True:
             items = self.ensure_song_select()
             if list_empty(items):
@@ -511,6 +513,14 @@ class SongSelectMixin:
                 last = None
                 continue
             view = (center, tuple(mid for _, mid in rows))
+            if view == (None, ()) and drags == 0:
+                # 重启游戏后直接回到乐曲选择页，列表还在加载、封面都认不出：拖两下没变会当成到头了，先等它加载
+                if loading is None:
+                    loading = time.monotonic() + LIST_LOAD_S
+                if time.monotonic() < loading:
+                    self._sleep(LIST_SETTLE_S)
+                    continue
+                logger.warning("乐曲列表 %.0fs 还认不出封面（截图 %s），照常找", LIST_LOAD_S, self.save_debug("song_list"))
             if view == last:
                 ends += 1
                 if ends >= 2:
