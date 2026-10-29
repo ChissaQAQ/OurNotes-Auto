@@ -9,7 +9,7 @@ import time
 from collections import Counter
 from typing import TYPE_CHECKING, Callable, Protocol
 
-from .nav.screens import same_title
+from .nav.screens import ARENA_BANDS, same_title
 from .records import chart_key
 
 if TYPE_CHECKING:
@@ -28,6 +28,7 @@ DIFFICULTIES = ("easy", "normal", "hard", "expert")
 AP_CATEGORY = "全部"  # AP 补完包括翻唱
 LIST_CATEGORY = "全部"  # 歌单里可能有翻唱
 GIVE_UP_DAYS = 3  # AP 时反复失败的谱面多少天内不再打（可能是谱面、游戏更新导致的，过几天再试）
+ARENA_BAND_MODES = ("current", *ARENA_BANDS, "rotate")  # 激奏舞台选乐队的方式（loop.arena_band）
 
 
 class SongSource(Protocol):
@@ -37,8 +38,9 @@ class SongSource(Protocol):
         """让下一局要打的曲目出现在乐队确认页（``first`` 为第一局）；没有要打的了返回 False。"""
         ...
 
-    def done(self, song: Song, difficulty: str, result: PlayResult | None, playable: bool = True) -> None:
-        """一局结束。``result`` 为 None 表示没打成；``playable`` 为 False 表示这首打不了（谱面站没有）。"""
+    def done(self, song: Song | None, difficulty: str, result: PlayResult | None, playable: bool = True) -> None:
+        """一局结束。``result`` 为 None 表示没打成；``playable`` 为 False 表示这首打不了（谱面站没有）；
+        ``song`` 只有激奏舞台认不出歌时为 None。"""
         ...
 
     def close(self, nav: Navigator) -> None:
@@ -67,7 +69,7 @@ class CurrentSong(_Source):
 
 
 class RandomSong(_Source):
-    """第一局打当前选中的曲目，之后每局在乐曲选择页点「随机选曲」。
+    """第一局打当前选中的曲目（还没解锁时随机换一首，AP 补完可能停在没解锁的歌上），之后每局在乐曲选择页点「随机选曲」。
 
     随机选曲只在筛选后的列表里抽，所以第一次换歌前把「游玩状况」筛选改回「不指定」
     （AP 补完被中途停止时会留下「未ALL PERFECT」）。
@@ -78,11 +80,14 @@ class RandomSong(_Source):
         self._checked = False
 
     def advance(self, nav: Navigator, first: bool) -> bool:
-        if not first:
-            if not self._checked:
-                nav.clear_status_filter()
-                self._checked = True
-            nav.choose_next_song("random")
+        if first:
+            if not nav.selected_locked():
+                return True
+            logger.info("选中的歌还没解锁，随机换一首")
+        if not self._checked:
+            nav.clear_status_filter()
+            self._checked = True
+        nav.choose_next_song("random")
         return True
 
 
@@ -96,6 +101,38 @@ class ChallengeRotate(_Source):
         if not first:
             nav.next_challenge_song()
         return True
+
+
+class ArenaBands(_Source):
+    """激奏舞台：转盘定歌、只有 EXPERT，这里只选乐队。``current`` 不换；指定一个乐队时每局前确认是它；
+    ``rotate`` 从当前乐队开始按首页 ▶▶ 的顺序每队打 ``games`` 局再换下一队。"""
+
+    difficulty = "expert"
+
+    def __init__(self, band: str, games: int = 1):
+        self.band = band
+        self.games = max(1, games)
+        self._current: str | None = None
+        self._played = 0
+
+    def advance(self, nav: Navigator, first: bool) -> bool:
+        if self.band == "current":
+            return True
+        if self.band != "rotate":
+            nav.arena_select_band(self.band)
+            return True
+        if self._current is None:
+            nav.ensure_band_confirm(self.difficulty)
+            self._current = nav.arena_band() or ARENA_BANDS[0]
+        elif self._played >= self.games:
+            self._current = ARENA_BANDS[(ARENA_BANDS.index(self._current) + 1) % len(ARENA_BANDS)]
+            self._played = 0
+            logger.info("激奏舞台：换到下一个乐队 %s", self._current)
+        nav.arena_select_band(self._current)
+        return True
+
+    def done(self, song: Song | None, difficulty: str, result: PlayResult | None, playable: bool = True) -> None:
+        self._played += 1  # 没打成的也算：对局照样进行了
 
 
 class ChallengeApFirst(_Source):
@@ -328,7 +365,10 @@ class ApComplete(_Source):
                 if (pick.music_id, diff) in self.skip:
                     lasting = False
                 if pick.only:
-                    logger.info("%s 没有别的歌可抽了（选中的这首：%s）", diff.upper(), why)
+                    if pick.locked:  # 游戏只在解锁了的歌里抽：一首都抽不到，就是解锁了的都 AP 了
+                        logger.info("%s 解锁了的歌都已经 AP（剩下的还没解锁）", diff.upper())
+                    else:
+                        logger.info("%s 没有别的歌可抽了（选中的这首：%s）", diff.upper(), why)
                     self._checked(diff, lasting)
                     break
                 logger.debug("重抽：%s", why)
@@ -538,6 +578,12 @@ def make_source(cfg: Config, catalog: Catalog | None = None, store: RecordStore 
     cache = None
     if catalog is not None and store is not None:
         cache = ApDoneCache(store, cfg.device.package, catalog, cfg.loop.ap_done_hours)
+    if cfg.loop.arena:
+        if cfg.loop.challenge:
+            raise ValueError("激奏舞台（loop.arena）和挑战演出（loop.challenge）不能同时打开")
+        if cfg.loop.arena_band not in ARENA_BAND_MODES:
+            raise ValueError(f"未知的激奏舞台乐队：{cfg.loop.arena_band}（可选 {'/'.join(ARENA_BAND_MODES)}）")
+        return ArenaBands(cfg.loop.arena_band, cfg.loop.arena_games_per_band)
     if cfg.loop.challenge and mode not in CHALLENGE_SONG_MODES:
         raise ValueError(f"挑战演出只能用 {'/'.join(CHALLENGE_SONG_MODES)} 选曲模式，而不是 {mode}")
     if mode == "rotate" and not cfg.loop.challenge:

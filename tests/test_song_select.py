@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from ournotes_auto.config import Config
-from ournotes_auto.nav.navigator import GameNavigator
+from ournotes_auto.nav.navigator import RANDOM_LOCKED_TRIES, GameNavigator
 from ournotes_auto.nav.screens import Screen, classify, find, in_roi
 from ournotes_auto.nav.song_select import (
     BTN_CATEGORY,
@@ -371,6 +371,39 @@ def test_random_song_empty_list():
     game.empty = True
     nav = make_nav(game)
     assert nav.random_song() == SongPick(None, empty=True)
+    assert game.taps == []
+
+
+def test_choose_random_rerolls_locked():
+    """随机选曲后选中的还是没解锁的歌：再点一次，停在解锁了的歌上（之前点一下就去确定，报「选中的歌还没解锁」）。"""
+    game = SongSelectGame(songs=[(100021, True), (100055, False)])
+    game.pick = (100034, True)
+    nav = make_nav(game)
+    nav.choose_next_song("random")
+    assert len(game.taps) == 2 and game.pick == (100055, False)
+
+
+def test_choose_random_gives_up_on_locked():
+    game = SongSelectGame(songs=[(1, True)] * 6)
+    nav = make_nav(game)
+    nav.choose_next_song("random")  # 不报错，交给确认选曲时处理
+    assert len(game.taps) == RANDOM_LOCKED_TRIES and len(game.songs) == 6 - RANDOM_LOCKED_TRIES
+
+
+def test_choose_random_stops_when_nothing_to_draw():
+    game = SongSelectGame(songs=[None])
+    game.pick = (100034, True)
+    nav = make_nav(game)
+    nav.choose_next_song("random")
+    assert len(game.taps) == 1
+
+
+@pytest.mark.parametrize("locked", [True, False])
+def test_selected_locked(locked):
+    game = SongSelectGame()
+    game.pick = (100034, locked)
+    nav = make_nav(game)
+    assert nav.selected_locked() is locked
     assert game.taps == []
 
 

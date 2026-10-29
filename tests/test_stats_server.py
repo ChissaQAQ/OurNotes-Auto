@@ -15,7 +15,7 @@ import pytest
 from ournotes_auto import backup, release, stats, stats_server, stats_window
 from ournotes_auto.runner import RunStats
 from ournotes_auto.stats import Tracker
-from test_backup import OFFSETS, STATE, T0, H, cli_main, files, make, rec, ses  # noqa: F401 - cli_main 是 fixture
+from test_backup import OFFSETS, STATE, T0, H, arena, cli_main, files, make, rec, ses  # noqa: F401 - cli_main 是 fixture
 
 PAGE = "<!doctype html><title>统计页</title>".encode()
 
@@ -129,23 +129,25 @@ def test_preview_then_import(old, new, serve):
     """选的备份文件：预览什么都不写、不重新统计；导入合并进来、重新统计；再导入一次没有改动。"""
     refreshed = []
     srv = serve(new, refresh=lambda: refreshed.append(1))
+    (old / backup.ARENA).write_text(arena("mygo", T0) + "\n", encoding="utf-8")
     _, blob, _ = backup.export_bytes(old)
     before = files(new)
     status, j = post(srv, "/api/preview", blob, "旧的 备份.zip")
     assert status == 200 and j["ok"] and j["name"] == "旧的 备份.zip"
-    assert j["total"] == {"records": 2, "sessions": 1, "achievements": 1}
-    assert (j["records"], j["known"], j["bad"], j["sessions"], j["achievements"], j["offsets"], j["changed"], j["backup"]) == (
-        1, 1, 0, 1, 1, True, True, "",
+    assert j["total"] == {"records": 2, "arena": 1, "sessions": 1, "achievements": 1}
+    assert (j["records"], j["known"], j["bad"], j["arena"], j["sessions"], j["achievements"], j["offsets"], j["changed"], j["backup"]) == (
+        1, 1, 0, 1, 1, 1, True, True, "",
     )
     assert files(new) == before and not (new / backup.SAFETY_DIR).exists() and refreshed == []
 
     status, j = post(srv, "/api/import", blob, "旧的 备份.zip")
-    assert status == 200 and (j["records"], j["changed"]) == (1, True) and refreshed == [1]
+    assert status == 200 and (j["records"], j["arena"], j["changed"]) == (1, 1, True) and refreshed == [1]
     assert j["backup"].startswith(str(new / backup.SAFETY_DIR))
     assert len((new / "records.jsonl").read_text(encoding="utf-8").splitlines()) == 2
+    assert (new / backup.ARENA).read_text(encoding="utf-8") == arena("mygo", T0) + "\n"
 
     status, j = post(srv, "/api/import", blob, "旧的 备份.zip")
-    assert status == 200 and (j["records"], j["known"], j["changed"], j["backup"]) == (0, 2, False, "") and refreshed == [1]
+    assert status == 200 and (j["records"], j["known"], j["arena"], j["changed"], j["backup"]) == (0, 2, 0, False, "") and refreshed == [1]
 
 
 def test_import_refresh_failure(old, new, serve, caplog):

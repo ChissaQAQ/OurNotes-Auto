@@ -9,6 +9,7 @@ from ournotes_auto import sources
 from ournotes_auto.records import PlayResult, RecordStore
 from ournotes_auto.sources import (
     ApComplete,
+    ArenaBands,
     ApDoneCache,
     ApFirst,
     ChallengeApFirst,
@@ -148,6 +149,9 @@ def test_random_clears_status_filter_once():
     calls = []
 
     class Nav:
+        def selected_locked(self):
+            return False
+
         def clear_status_filter(self):
             calls.append("clear")
 
@@ -158,6 +162,38 @@ def test_random_clears_status_filter_once():
     for first in (True, False, False):
         assert src.advance(Nav(), first)
     assert calls == ["clear", "random", "random"]
+
+
+def test_random_first_song_locked():
+    """第一局选中的歌还没解锁（AP 补完停在了没解锁的歌上）：先把游玩状况改回「不指定」，随机换一首，不报错。"""
+    calls = []
+
+    class Nav:
+        def selected_locked(self):
+            calls.append("locked?")
+            return True
+
+        def clear_status_filter(self):
+            calls.append("clear")
+
+        def choose_next_song(self, mode):
+            calls.append(mode)
+
+    src = RandomSong("expert")
+    for first in (True, False):
+        assert src.advance(Nav(), first)
+    assert calls == ["locked?", "clear", "random", "random"]
+
+
+def test_ap_all_unlocked_done(tmp_path, caplog):
+    """只剩没解锁的歌（游戏不抽没解锁的，提示没得抽）：日志说清楚是解锁了的都 AP 了，记作这个难度做完了。"""
+    cache = ApDoneCache(RecordStore(tmp_path), "pkg", cache_catalog(1, 2), clock=lambda: 0.0)
+    nav = PickNav({"expert": [SongPick(None, locked=True, only=True)]})
+    src = ApComplete(["expert"], cache=cache)
+    with caplog.at_level("INFO", logger="ournotes_auto.sources"):
+        assert not src.advance(nav, True)
+    assert "EXPERT 解锁了的歌都已经 AP（剩下的还没解锁）" in caplog.messages
+    assert cache.hit("expert")
 
 
 class ChooseNav(PickNav):
@@ -383,6 +419,64 @@ def test_challenge_rotate_changes_song_after_first():
     assert src.advance(nav, True) and nav.calls == 0  # 第一局打当前选中的
     assert src.advance(nav, False) and src.advance(nav, False) and nav.calls == 2
     assert src.difficulty == "expert"
+
+
+def test_make_source_arena():
+    cfg = Config()
+    cfg.loop.arena = True
+    src = make_source(cfg)
+    assert isinstance(src, ArenaBands) and (src.band, src.games, src.difficulty) == ("current", 1, "expert")
+    cfg.loop.arena_band, cfg.loop.arena_games_per_band = "rotate", 3
+    src = make_source(cfg)
+    assert (src.band, src.games) == ("rotate", 3)
+    cfg.loop.arena_band = "poppin"
+    with pytest.raises(ValueError, match="激奏舞台"):
+        make_source(cfg)
+    cfg.loop.arena_band, cfg.loop.challenge = "mygo", True
+    with pytest.raises(ValueError, match="不能同时打开"):
+        make_source(cfg)
+
+
+class BandNav:
+    def __init__(self, current):
+        self.current = current
+        self.calls = []
+
+    def ensure_band_confirm(self, difficulty=None):
+        self.calls.append("top")
+
+    def arena_band(self):
+        self.calls.append("read")
+        return self.current
+
+    def arena_select_band(self, band):
+        self.calls.append(band)
+        self.current = band
+
+
+def test_arena_bands():
+    """不切换时不碰乐队；指定乐队时每局前确认是它（被换走了也换回来）。"""
+    nav = BandNav("mygo")
+    src = ArenaBands("current")
+    assert src.advance(nav, True) and src.advance(nav, False) and nav.calls == []
+    src = ArenaBands("millsage")
+    assert src.advance(nav, True) and src.advance(nav, False) and nav.calls == ["millsage", "millsage"]
+
+
+def test_arena_bands_rotate():
+    """轮流：先回到激奏舞台首页读出现在的乐队，从它开始每队打够局数（没打成的也算）换下一队，轮完从头来。"""
+    nav = BandNav("millsage")
+    src = ArenaBands("rotate", games=2)
+    picked = []
+    for i in range(7):
+        assert src.advance(nav, i == 0)
+        picked.append(nav.current)
+        src.done(None, "expert", None, playable=i != 1)
+    assert nav.calls[:2] == ["top", "read"] and nav.calls.count("read") == 1
+    assert picked == ["millsage", "millsage", "dumbrock", "dumbrock", "mygo", "mygo", "avemujica"]
+    nav = BandNav(None)  # 认不出现在的乐队：从第一个开始
+    src = ArenaBands("rotate", games=0)
+    assert src.advance(nav, True) and nav.current == "mygo" and src.games == 1
 
 
 class ApNav:

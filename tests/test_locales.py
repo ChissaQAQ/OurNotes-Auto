@@ -49,6 +49,17 @@ def test_every_language_has_same_keys():
         assert (ROOT / data["app.welcome"]).is_file(), code
 
 
+def test_welcome_starts_with_current_version_notes():
+    # 欢迎页最上面是这个版本的更新内容：内容变了界面打开时会再弹出来，更新后不看 GitHub 的用户也知道改了什么。改版本号时要一起换
+    iface = _load("interface.json")
+    version = iface["version"]
+    for code, path in iface["languages"].items():
+        text = (ROOT / _load(path)["app.welcome"]).read_text(encoding="utf-8")
+        first = text.splitlines()[0]
+        assert first.startswith("# ") and version in first.split(), (code, first)
+        assert f"/releases/tag/{version}\n" in text, code
+
+
 def test_interface_keys_translated():
     base = _load(_load("interface.json")["languages"]["zh_cn"])
     texts = _interface_texts()

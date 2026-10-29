@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import platform
+import re
 import sys
 import threading
 import time
@@ -17,7 +18,7 @@ from .config import Config, apply_override, load_config, save_config
 from .logfile import file_handler
 
 logger = logging.getLogger("ournotes_auto")
-SECRET_SETTING = "notify.target="  # 推送地址等于密码，日志里不记
+SECRET_SETTING = re.compile(r"(notify\.target\s*=).*", re.S)  # 推送地址等于密码，日志里不记（键前后有空格也认）
 
 
 class JsonLineFormatter(logging.Formatter):
@@ -70,7 +71,7 @@ def _log_environment(argv: list[str]) -> None:
 
 
 def _masked(argv: list[str]) -> list[str]:
-    return [a[: a.index(SECRET_SETTING) + len(SECRET_SETTING)] + "***" if SECRET_SETTING in a else a for a in argv]
+    return [SECRET_SETTING.sub(r"\1***", a) for a in argv]
 
 
 # ---------------------------------------------------------------- 谱面
@@ -224,6 +225,7 @@ def cmd_backup(cfg: Config, args) -> int:
         logger.info("%s 里的记录这边都有了，没有改动", b.name)
         return 0
     parts = [f"{result.records:,} 局演奏记录"] if result.records else []
+    parts += [f"{result.arena:,} 局激奏舞台记录"] if result.arena else []
     parts += [f"{result.sessions:,} 次运行记录"] if result.sessions else []
     parts += [f"{result.achievements} 个成就"] if result.achievements else []
     parts += ["学到的 offset"] if result.offsets else []

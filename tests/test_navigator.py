@@ -17,6 +17,7 @@ from ournotes_auto.nav import navigator
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import (
+    ARENA_AP_ROI,
     CLEAR_MARK_ROI,
     CP_RADIO,
     LB_ALL_CHECK,
@@ -93,6 +94,9 @@ TRANSITIONS = {
     "band_rank_up": [((640, 660), "result_exp")],
     "daily_pass_pt": [((640, 546), "home")],  # 当作没见过、只有 OK 的弹窗
     "birthday": [((1213, 36), "home")],  # 右上角「跳过」
+    "arena_result": [((640, 660), "result")],  # 激奏舞台结果弹窗（后面的排名页略过）
+    "arena_tier_up": [((640, 600), "arena_tier_reward")],  # 升到新段位：点上面的乐队标志没反应
+    "arena_tier_reward": [((640, 658), "home")],
 }
 
 TOTALS = {"perfect": 340, "great": 2, "good": 0, "bad": 0, "miss": 0}
@@ -162,6 +166,46 @@ def test_read_result_and_leave():
     assert game.state == "result_timing"  # ⇄ 只点了一次
     nav.leave_result()
     assert game.state == "song_select"
+
+
+class ArenaResultGame(FakeGame):
+    """激奏舞台结果弹窗；``drop_total`` 时检测漏掉了加减后的段位分（一位数），只有直接识别那一块读得出。"""
+
+    def __init__(self, drop_total: bool):
+        super().__init__("arena_result")
+        self.drop_total = drop_total
+
+    def read(self, frame, roi=None):
+        items = load_items(frame)
+        return [it for it in items if it.text != "72"] if frame == "arena_result" and self.drop_total else items
+
+    def read_text(self, frame, roi):
+        if frame == "arena_result":
+            assert roi == ARENA_AP_ROI
+            return "8"
+        return super().read_text(frame, roi)
+
+
+@pytest.mark.parametrize("drop_total, total", [(True, 8), (False, 72)])
+def test_read_arena_result_one_digit_total(drop_total, total):
+    """刚开始打的乐队段位分只有一位数，检测不到：直接识别结果弹窗上那一块；检测得到时用检测的。"""
+    game = ArenaResultGame(drop_total)
+    nav = make_nav(game, game, game)
+    out = nav.read_arena_result()
+    assert (out.placement, out.ap_gain, out.ap_total) == (2, 25, total)
+    assert out.counts.counts == TOTALS
+
+
+@pytest.mark.parametrize("works, taps", [((640, 600), 1), ((640, 300), 2)])
+def test_arena_rank_up_taps_both_spots(monkeypatch, works, taps):
+    """激奏舞台段位提升没有按钮：升到新段位时点上面的乐队标志没反应、点下面空白处才行，两处轮流点，不一直点同一处；
+    之后点掉首次段位达成奖励。"""
+    monkeypatch.setitem(TRANSITIONS, "arena_tier_up", [(works, "arena_tier_reward")])
+    game = FakeGame("arena_tier_up")
+    nav = make_nav(game, game, game)
+    fake_clock(monkeypatch, nav)
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert [s for s, _ in game.taps] == ["arena_tier_up"] * taps + ["arena_tier_reward"]
 
 
 def test_bond_up_after_result():
@@ -292,6 +336,13 @@ def test_choose_random_goes_back_to_song_select():
     assert math.dist(game.taps[-1][1], (966, 660)) < 5
 
 
+def test_selected_locked_on_band_confirm():
+    """在乐队确认页：进得去的歌都解锁了，不用回乐曲选择页看。"""
+    game = FakeGame("band_confirm")
+    nav = make_nav(game, game, game)
+    assert not nav.selected_locked()
+    assert game.taps == []
+
 def test_abort_needs_second_confirm():
     """暂停 → 终止 → 二次确认里点按钮行的「终止」（不是同名的标题）。"""
     game = FakeGame("pause")
@@ -302,10 +353,10 @@ def test_abort_needs_second_confirm():
 
 
 class PlayGame(FakeGame):
-    """演奏画面（``playing``）：OCR 什么也认不出，右上角有暂停按钮。"""
+    """演奏画面（``playing``）：OCR 什么也认不出，右上角有暂停按钮；开场（``intro``，曲名卡片）也认不出，没有暂停按钮。"""
 
     def read(self, frame, roi=None):
-        return [] if frame == "playing" else super().read(frame, roi)
+        return [] if frame in ("playing", "intro") else super().read(frame, roi)
 
 
 def play_nav(monkeypatch, state="playing"):
@@ -379,6 +430,65 @@ def test_retry_live_not_in_play(monkeypatch):
     assert game.taps == []
 
 
+def test_retry_live_waits_out_intro(monkeypatch):
+    """首音符同步被开场的灯光骗了、要重试时还在开场（曲名卡片，看不到暂停按钮）：等演奏画面出来再暂停重试，
+    不是这局直接放弃、一个音符都不打。"""
+    game, nav = play_nav(monkeypatch, "intro")
+    grab, grabs = game.grab, []
+
+    def later():
+        grabs.append(game.state)
+        if len(grabs) > 5 and game.state == "intro":
+            game.state = "playing"
+        return grab()
+
+    game.grab = later
+    nav.retry_live()
+    assert game.state == "loading"
+    assert [s for s, _ in game.taps] == ["playing", "pause", "retry_confirm"]
+
+
+def test_retry_live_intro_never_ends(monkeypatch):
+    """一直等不到演奏画面：照旧报错，什么都不点。"""
+    game, nav = play_nav(monkeypatch, "intro")
+    with pytest.raises(NavigationError, match="不重试"):
+        nav.retry_live()
+    assert game.taps == []
+
+
+def test_retry_live_waits_out_slow_loading(monkeypatch):
+    """网络慢、进歌加载了很久（#98）：要重试时还在「NOW LOADING」，等完开场的时间还在加载就接着等，
+    加载完、开场过去后照常暂停重试，不是这局直接放弃。"""
+    game, nav = play_nav(monkeypatch, "loading_tip_lb")
+    polls = round(navigator.INTRO_WAIT_S / navigator.INTRO_POLL_S)
+    grab, grabs = game.grab, []
+
+    def later():
+        grabs.append(game.state)
+        if len(grabs) > polls * 1.5 and game.state == "loading_tip_lb":  # 比开场等的还久
+            game.state = "intro"
+        elif len(grabs) > polls * 2 + 5 and game.state == "intro":  # 加载完时这次快等完了，开场还没过去
+            game.state = "playing"
+        return grab()
+
+    game.grab = later
+    nav.retry_live()
+    assert game.state == "loading"
+    assert [s for s, _ in game.taps] == ["playing", "pause", "retry_confirm"]
+
+
+def test_retry_live_loading_never_ends(monkeypatch):
+    """一直在加载：等够 LOADING_WAIT_ROUNDS 次后照旧报错，什么都不点。"""
+    game, nav = play_nav(monkeypatch, "loading_tip_lb")
+    grab, grabs = game.grab, []
+    game.grab = lambda: grabs.append(1) or grab()
+    with pytest.raises(NavigationError, match="不重试"):
+        nav.retry_live()
+    assert game.taps == []
+    polls = round(navigator.INTRO_WAIT_S / navigator.INTRO_POLL_S)
+    assert len(grabs) <= (polls + 1) * navigator.LOADING_WAIT_ROUNDS + 2
+
+
 def test_retry_live_resumes_when_retry_does_nothing(monkeypatch):
     """点「重试」一直没反应：点「继续」接着放完这首歌（「终止」拿不到演出奖励），再报错。"""
     game, nav = play_nav(monkeypatch)
@@ -416,8 +526,8 @@ def test_stray_retry_confirm_is_cancelled(monkeypatch):
 class LbGame(FakeGame):
     """乐队确认页 + LB 消耗设置弹窗 / 跳过确认弹窗：消耗数列表只露出 4 行（``top`` 为最大能选几个，超过 3 时上下拖
     才看得全，``scroll`` 为露出的最小一行），按当前选中项画出白色单选按钮，勾上「全部消耗」（``all_on``，今天的次数 ``all_left``
-    用完了或持有不到 4 个时勾不上）也画白色，用完了时弹窗上写着「今日次数已用完」（``used_text`` 为 False 时不写，
-    像别的语言那样认不出）。``held`` 为 0 且消耗不为 0 时 LIVE START 弹出恢复 LIVE BOOST
+    用完了或持有不到 4 个时勾不上，``all_lock`` 时怎么点都勾不上）也画白色，复选框上面写着「今日剩余N次」、用完了时右边写着「今日次数已用完」
+    （``count_text`` 为 False 时都不写，像别的语言那样认不出）。``held`` 为 0 且消耗不为 0 时 LIVE START 弹出恢复 LIVE BOOST
     （``popup``，实机大多直接开始、不消耗），开始的局记在 ``starts``（消耗, 全部消耗）。顶栏和弹窗上的持有数按 ``held``
     改写，``bar`` 指定顶栏的识别结果（模拟读错），``timer`` 为顶栏下一行的恢复倒计时（LB 没满时才有），
     ``setting`` 为弹窗用的截图（活动期间每行还写着「活动pt」「挑战pt」）。``skips`` 为还能跳过几次，跳过消耗的 LB
@@ -437,7 +547,8 @@ class LbGame(FakeGame):
         top: int = 3,
         skips: int = 0,
         all_left: int = 1,
-        used_text: bool = True,
+        count_text: bool = True,
+        all_lock: bool = False,
     ):
         super().__init__("band_confirm")
         self.cost = cost
@@ -450,7 +561,8 @@ class LbGame(FakeGame):
         self.scroll = 0
         self.skips = skips
         self.all_left = all_left
-        self.used_text = used_text
+        self.count_text = count_text
+        self.all_lock = all_lock
         self.all_on = False
         self.starts: list[tuple[int, bool]] = []
         self.skipped: list[int] = []
@@ -488,14 +600,17 @@ class LbGame(FakeGame):
             if self.timer is not None:
                 items.append(OcrItem(1037, 46, 73, 28, self.timer))
             return items
-        # 弹窗：消耗数按露出的行重写，「今日次数已用完」按 all_left
+        # 弹窗：消耗数按露出的行重写，「今日剩余N次」「今日次数已用完」按 all_left
         items = [
             it
             for it in items
-            if "已用完" not in it.text and not (re.fullmatch(r"\d", it.text) and 400 < it.x + it.w / 2 < 470 and 95 < it.cy < 320)
+            if not re.search("已用完|今日剩余", it.text)
+            and not (re.fullmatch(r"\d", it.text) and 400 < it.x + it.w / 2 < 470 and 95 < it.cy < 320)
         ]
         items += [OcrItem(424, y - 17, 28, 34, str(c)) for c, y in self.rows().items()]
-        if not self.all_left and self.used_text:
+        if self.count_text and self.all_left:
+            items.append(OcrItem(326, 391, 103, 24, f"今日剩余{self.all_left}次"))
+        elif self.count_text:
             items.append(OcrItem(572, 419, 130, 17, "今日次数已用完"))
         return items
 
@@ -508,7 +623,7 @@ class LbGame(FakeGame):
 
         nxt = None
         if here in self.DIALOGS:
-            if near(self.DIALOGS[here], 20) and self.all_left and self.held >= 4:
+            if near(self.DIALOGS[here], 20) and self.all_left and self.held >= 4 and not self.all_lock:
                 self.all_on = not self.all_on
             self.cost = next((c for c, y in self.rows().items() if near((self.RADIO_X, y), 20)), self.cost)
         if here == "band_confirm":
@@ -1130,7 +1245,7 @@ def test_lb_auto_all_several_times_a_day(monkeypatch, tmp_path):
 def test_lb_auto_all_cannot_tick_after_use(monkeypatch, tmp_path):
     """认不出「今日次数已用完」（别的语言）：今天用过之后勾不上，当作次数用完了记下来，下次运行也不再试。"""
     store = RecordStore(tmp_path)
-    game = LbGame(cost=0, held=24, top=4, used_text=False)
+    game = LbGame(cost=0, held=24, top=4, count_text=False)
     nav = lb_nav(monkeypatch, game, store, lb_auto=True)
     nav.start_live()
     next_live(game, held=24)
@@ -1146,7 +1261,7 @@ def test_lb_auto_all_cannot_tick_after_use(monkeypatch, tmp_path):
 def test_lb_auto_all_cannot_tick_unused(monkeypatch, tmp_path):
     """今天没用过就勾不上（在游戏里手动用完了，又认不出那行字）：这次运行不再试，不记下来。"""
     store = RecordStore(tmp_path)
-    game = LbGame(cost=0, held=24, top=4, all_left=0, used_text=False)
+    game = LbGame(cost=0, held=24, top=4, all_left=0, count_text=False)
     nav = lb_nav(monkeypatch, game, store, lb_auto=True)
     nav.start_live()
     assert game.starts == [(4, False)] and len(tapped(game, LB_ALL_CHECK)) == 2
@@ -1157,12 +1272,45 @@ def test_lb_auto_all_cannot_tick_unused(monkeypatch, tmp_path):
 
 
 def test_lb_auto_skips_check_when_used_today(monkeypatch, tmp_path):
+    """记着今天用完了、弹窗上又认不出还剩几次（别的语言）：不去勾。"""
     store = RecordStore(tmp_path)
-    game = LbGame(cost=0, held=7, top=3)
+    game = LbGame(cost=0, held=7, top=3, count_text=False)
     nav = lb_nav(monkeypatch, game, store, lb_auto=True)
     store.set_lb_all_used(nav.cfg.device.package, game_day())
     nav.start_live()
     assert game.starts == [(3, False)] and not tapped(game, LB_ALL_CHECK)
+
+
+def test_lb_auto_all_left_overrides_stale_used(monkeypatch, tmp_path):
+    """记着今天用完了（旧版本按 23:00 换日记的），弹窗上却写着「今日剩余1次」：记录不算数，照样勾上。"""
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=24, top=4)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    pkg = nav.cfg.device.package
+    store.set_lb_all_used(pkg, game_day())
+    nav.start_live()
+    assert game.starts == [(4, True)] and game.all_left == 0
+    assert store.lb_all_uses(pkg, game_day()) == 1
+    next_live(game, held=14)
+    nav.start_live()  # 这回真用完了：弹窗上写着「今日次数已用完」，重新记下
+    assert game.starts[-1] == (4, False) and not tapped(game, LB_ALL_CHECK)
+    assert store.lb_all_used(pkg) == game_day()
+
+
+def test_lb_auto_all_left_but_cannot_tick(monkeypatch, tmp_path):
+    """弹窗上写着还剩次数却勾不上：不当成次数用完了记下来，这次运行也不每局都去点。"""
+    store = RecordStore(tmp_path)
+    game = LbGame(cost=0, held=24, top=4, all_lock=True)
+    nav = lb_nav(monkeypatch, game, store, lb_auto=True)
+    pkg = nav.cfg.device.package
+    store.set_lb_all_used(pkg, game_day())
+    nav.start_live()
+    assert game.starts == [(4, False)] and len(tapped(game, LB_ALL_CHECK)) == 2
+    assert store.lb_all_used(pkg) is None
+    for held in (20, 16):
+        next_live(game, held=held)
+        nav.start_live()
+        assert game.starts[-1] == (4, False) and not tapped(game, LB_ALL_CHECK)
 
 
 def test_skip_live_until_used_up(monkeypatch):
@@ -1688,6 +1836,130 @@ def test_stuck_screen_restarts_are_limited(monkeypatch, moving, error):
     assert len(game.restarts) == navigator.MAX_RESTARTS
 
 
+class DeafGame(StuckGame):
+    """停在认得出的画面上，怎么点都没反应（重启游戏后照常登录，``again`` 时还是停在原来的画面上）。"""
+
+    def tap(self, x, y):
+        if self.state == self.stuck:
+            self.taps.append((self.state, (x, y)))
+        else:
+            FakeGame.tap(self, x, y)
+
+
+@pytest.mark.parametrize("again", [False, True])
+def test_unresponsive_screen_restarts_game(monkeypatch, again):
+    """认出了画面、点了也没反应（点的位置不对等）：画面 FROZEN_S 没变就重启游戏，不一直点到超时（后面的任务也跟着
+    卡在这里）；重启后还是这样，重启 MAX_RESTARTS 次后报错停下。"""
+    game = DeafGame("arena_tier_up", again=again)
+    nav, now = frozen_nav(monkeypatch, game)
+    nav.restart_app = game.restart
+    start = now[0]
+    if again:
+        with pytest.raises(ScreenFrozen, match=r"点了 \d+ 次"):
+            nav.ensure_in_game(timeout_s=1000)
+        assert len(game.restarts) == navigator.MAX_RESTARTS
+    else:
+        assert nav.ensure_in_game() == navigator.Screen.HOME
+        assert len(game.restarts) == 1 and navigator.FROZEN_S <= game.restarts[0] - start < navigator.FROZEN_S + 5
+
+
+def test_waiting_screen_is_not_unresponsive(monkeypatch):
+    """认出了画面、不用点的时候（成员已确定，等转盘）画面不动不算卡住，不重启游戏。"""
+    game = FrozenGame("arena_members")
+    nav, _ = frozen_nav(monkeypatch, game)
+    nav.restart_app = lambda: pytest.fail("不该重启游戏")
+    with pytest.raises(NavigationError, match="未能进入游戏") as e:
+        nav.ensure_in_game(timeout_s=150)
+    assert not isinstance(e.value, ScreenFrozen) and game.taps == []
+
+
+class UnknownPopup(FrozenGame):
+    """停在认不出的画面上（多出 ``extra`` 这些字），点到 ``target``（设计坐标）附近才回到主界面。记下点的设计坐标和时刻。"""
+
+    def __init__(self, extra=(), target=navigator.TAP_RECOVER):
+        super().__init__("intro_card")
+        self.extra, self.target = [OcrItem(*e) for e in extra], target
+        self.times: list[float] = []
+
+    def read(self, frame, roi=None):
+        return load_items(self.state) + (self.extra if self.state == "intro_card" else [])
+
+    def tap(self, x, y):
+        p = (round(x * 1280 / self.size[0]), round(y * 720 / self.size[1]))
+        self.taps.append((self.state, p))
+        self.times.append(navigator.time.monotonic())
+        if self.state == "intro_card" and math.dist(p, self.target) < 20:
+            self.state = "home"
+
+
+def recover_nav(monkeypatch, game, front=True):
+    nav, now = frozen_nav(monkeypatch, game)
+    nav.app_in_front = lambda: front
+    return nav, now
+
+
+@pytest.mark.parametrize(
+    "extra, target",
+    [
+        ((), navigator.TAP_RECOVER),  # 没有按钮：点下方空白处
+        (((1150, 80, 60, 30, "关闭"),), (1180, 95)),
+        (((460, 640, 80, 30, "取消"), (300, 600, 80, 30, "星钻")), (500, 655)),  # 关闭、取消什么时候都能点
+        (((1060, 640, 80, 30, "下一步"),), (1100, 655)),
+    ],
+)
+def test_unknown_still_screen_taps_to_recover(monkeypatch, extra, target):
+    """认不出的画面停住 RECOVER_S 就先点一下试试（关闭、取消、下一步，都没有就点下方空白处），恢复了就接着走，
+    不等到 FROZEN_S 重启游戏、也不报错停下。"""
+    game = UnknownPopup(extra, target)
+    nav, now = recover_nav(monkeypatch, game)
+    nav.restart_app = lambda: pytest.fail("不该重启游戏")
+    start = now[0]
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert game.taps == [("intro_card", target)]
+    assert navigator.RECOVER_S <= game.times[0] - start < navigator.RECOVER_S + 3
+
+
+@pytest.mark.parametrize(
+    "extra, front",
+    [
+        (((300, 600, 80, 30, "星钻"),), True),  # 可能点到用星钻上：不点空白处
+        (((1060, 640, 80, 30, "下一步"), (300, 600, 80, 30, "购买")), True),
+        (((500, 650, 200, 30, "NOW LOADING"),), True),
+        ((), False),  # 游戏不在前台（模拟器桌面）
+    ],
+)
+def test_unknown_still_screen_unsafe_to_tap(monkeypatch, extra, front):
+    """画面上有购买、星钻这类字（又没有关闭、取消）、在加载、或者游戏不在前台时不点，照旧到 FROZEN_S 停下。"""
+    game = UnknownPopup(extra)
+    nav, now = recover_nav(monkeypatch, game, front)
+    start = now[0]
+    with pytest.raises(ScreenFrozen, match="没有变化"):
+        nav.ensure_in_game()
+    assert game.taps == [] and navigator.FROZEN_S <= now[0] - start < navigator.FROZEN_S + 5
+
+
+def test_unknown_still_screen_recover_taps_are_limited(monkeypatch):
+    """点了没用：每停住 RECOVER_S 再点一次，最多 RECOVER_TAPS 次，到 FROZEN_S 照常重启游戏（这里不能重启，报错停下）。"""
+    game = UnknownPopup(target=(0, 0))
+    nav, now = recover_nav(monkeypatch, game)
+    start = now[0]
+    with pytest.raises(ScreenFrozen, match="没有变化"):
+        nav.ensure_in_game()
+    assert game.taps == [("intro_card", navigator.TAP_RECOVER)] * navigator.RECOVER_TAPS
+    for i, t in enumerate(game.times, 1):
+        assert navigator.RECOVER_S * i <= t - start < navigator.RECOVER_S * i + 3
+    assert navigator.FROZEN_S <= now[0] - start < navigator.FROZEN_S + 5
+
+
+def test_read_result_does_not_tap_still_screen(monkeypatch):
+    """等结算时（同步失败时歌还在放）画面不动也不点。"""
+    game = UnknownPopup()
+    nav, _ = recover_nav(monkeypatch, game)
+    with pytest.raises(NavigationError, match="没有出现结算页"):
+        nav.read_result(timeout_s=100)
+    assert game.taps == []
+
+
 def test_loading_screen_is_not_stuck(monkeypatch):
     """下载、加载中的画面（一直在动）不算卡住，照常等到超时。"""
     game = StuckGame("intro_card", moving=True)
@@ -2034,15 +2306,26 @@ def ocr():
     return MaaOcr("resource")
 
 
-class ImageSource:
-    """结算页截图；点击 ⇄ 时切换到 FAST/SLOW 那张。"""
+def shift_score(img, dx: int):
+    """把大号分数整串往左挪 ``dx``（设计尺寸），空出来的地方用分数右边的背景补上。"""
+    if not dx:
+        return img
+    y0, y1, x0, x1, d = (round(v * img.shape[1] / 1280) for v in (160, 233, 860, 1240, dx))
+    out = img.copy()
+    out[y0:y1, x0:x1 - d] = img[y0:y1, x0 + d:x1]
+    out[y0:y1, x1 - d:x1] = img[y0:y1, x1:x1 + 1]
+    return out
 
-    def __init__(self, totals: str, timing: str, scale: float = 1.0):
+
+class ImageSource:
+    """结算页截图；点击 ⇄ 时切换到 FAST/SLOW 那张（``shift`` 时那张上的分数往左挪）。"""
+
+    def __init__(self, totals: str, timing: str, scale: float = 1.0, shift: int = 0):
         def load(name):
             img = cv2.imdecode(np.fromfile(next((FIXTURES / "results").glob(f"{name}.*")), np.uint8), cv2.IMREAD_COLOR)
             return cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale != 1 else img
 
-        self.images = [load(totals), load(timing)]
+        self.images = [load(totals), shift_score(load(timing), shift)]
         self.index = 0
         h, w = self.images[0].shape[:2]
         self.size = (w, h)
@@ -2084,6 +2367,18 @@ def test_read_result_four_digits(ocr):
     assert (rc.fast["perfect"], rc.slow["perfect"]) == (72, 675)
     assert rc.score == 1330139  # 整屏识别会读成 330139
     assert rc.combo == 1188  # 整屏识别会读成 188
+
+
+@needs_ocr
+@pytest.mark.parametrize(
+    "totals, timing, total, score",
+    [("totals_1188", "timing_1188", 1188, 1330139), ("totals_expert", "timing_expert", 768, 1400102)],
+)
+def test_read_result_wide_score(ocr, totals, timing, total, score):
+    """分数右对齐，7 位里没有 1 时（3438301）整串更宽，开头那位伸到原来的框外，读丢开头一到三位（438301、5463）。
+    截图上把分数往左挪，模拟更宽的分数。"""
+    src = ImageSource(totals, timing, shift=40)
+    assert make_nav(src, src, ocr).read_result(expected_total=total).score == score
 
 
 @needs_ocr

@@ -33,6 +33,8 @@
             "ap_max_attempts": 3,
             "challenge_song_mode": "rotate",
             "challenge_cost": 200,
+            "arena_band": "current",
+            "arena_games_per_band": 1,
             "account": "",
             "daily_studio": true,
             "daily_story": false,
@@ -133,6 +135,28 @@
                 "custom_action": "OurNotesRun",
                 "custom_action_param": {
                     "task": "challenge"
+                }
+            }
+        }
+    },
+    "OurNotes_Arena": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "arena"
+                }
+            }
+        }
+    },
+    "OurNotes_ArenaIdle": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "arena_idle"
                 }
             }
         }

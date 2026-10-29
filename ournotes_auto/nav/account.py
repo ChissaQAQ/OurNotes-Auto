@@ -46,6 +46,12 @@ LIST_DRAG = ((600, 520), (600, 340))
 MAX_LIST_DRAGS = 5
 LOGOUT_WAIT_S = 20.0  # 退出登录后登录记录多久没出来就报错
 LOGIN_RETAP_S = 5.0  # 点了登录多久还在登录记录上就再点一次
+# 重启游戏后账号还没自动登录好时用户中心是灰的，菜单开着一直点不开（#97）：点了这么久还在菜单上就关掉菜单，
+# 在标题画面等一会儿（看到「欢迎回来」就不等）再打开
+USER_CENTER_TRY_S = 6.0
+MENU_REOPEN_S = 8.0
+# 关闭在用户中心弹窗的范围里（「退出登录」下面）：最后一次点用户中心之后过这么久还在菜单上才点，免得点进刚打开的弹窗
+MENU_CLOSE_AFTER_S = 3.0
 ACCOUNT_SCREENS = frozenset((Screen.TITLE, Screen.TITLE_MENU, Screen.USER_CENTER, Screen.LOGIN_HISTORY))
 
 
@@ -68,6 +74,9 @@ class AccountMixin:
         restarted = False
         drags = 0
         seen_rows: tuple[str, ...] | None = None
+        center_since: float | None = None  # 这次打开菜单后第一次点用户中心的时刻
+        center_at = 0.0  # 最后一次点用户中心的时刻
+        reopen_at: float | None = None  # 用户中心点不开、关掉菜单后，到这个时刻再打开
         while True:
             if time.monotonic() > deadline:
                 raise self._fail(f"{timeout_s:.0f}s 内没能切换到账号 {name}")
@@ -82,22 +91,33 @@ class AccountMixin:
                 if screen is Screen.TITLE and title_startable(items):
                     logger.info("已切换到账号 %s", name)  # 没赶上顶部的提示
                     return
+            elif reopen_at is not None and find(items, "欢迎回来"):
+                reopen_at = None  # 自动登录好了，不用再等
             if screen is Screen.TITLE:
                 if logout_at is not None:
                     if login_at is None and now - logout_at > LOGOUT_WAIT_S:
                         raise self._fail(f"退出登录后 {LOGOUT_WAIT_S:.0f}s 没出现登录记录")
-                elif title_startable(items):
+                elif title_startable(items) and (reopen_at is None or now >= reopen_at):
                     self.tap(BTN_TITLE_MENU, "标题菜单")
+                    center_since = reopen_at = None
                     self._sleep(self.settle_s)
                     continue
             elif screen is Screen.TITLE_MENU:
-                if logout_at is None:
-                    self.tap(BTN_MENU_USER_CENTER, "用户中心")
-                else:
+                if logout_at is not None:
                     self.tap(BTN_MENU_CLOSE, "关闭")
+                elif center_since is None or now - center_since < USER_CENTER_TRY_S:
+                    self.tap(BTN_MENU_USER_CENTER, "用户中心")
+                    center_since = center_since or now
+                    center_at = now
+                elif now - center_at >= MENU_CLOSE_AFTER_S:
+                    logger.info("用户中心点不开（账号还没登录好？），关掉菜单等 %.0fs 再打开", MENU_REOPEN_S)
+                    self.tap(BTN_MENU_CLOSE, "关闭")
+                    center_since = None
+                    reopen_at = now + MENU_REOPEN_S
                 self._sleep(self.settle_s)
                 continue
             elif screen is Screen.USER_CENTER:
+                center_since = None
                 if logout_at is None and (it := find(items, "退出登录", exact=True)):
                     logger.info("退出当前账号")
                     self.tap(center(it), "退出登录")

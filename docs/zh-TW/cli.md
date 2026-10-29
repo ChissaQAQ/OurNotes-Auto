@@ -49,6 +49,10 @@ ournotes-auto run --until-lb-empty --lb-cost 3 --lb-refill 30   # 清體力，LB
 ournotes-auto run --challenge --mode rotate              # 挑戰演出（活動期間）：每局 200 CP，輪流打每首歌，打到 CP 不夠為止
 ournotes-auto run --challenge --challenge-cost 1600 -n 3 # 挑戰演出，每局 1600 CP（報酬 ×8），打 3 局
 ournotes-auto run --challenge --mode ap_first           # 挑戰演出：先打 EXPERT 還沒 AP 的歌，都 AP 了再輪流打
+ournotes-auto run --arena                                # 激奏舞台：不換樂團，每局消耗依設定，一直打（-n 限局數）
+ournotes-auto run --arena --arena-band rotate --arena-games 2 -n 10   # 激奏舞台：從目前的樂團開始每個樂團打 2 局再換下一個，共 10 局
+ournotes-auto run --arena --arena-band mygo --until-lb-empty --lb-cost 3   # 激奏舞台：換到 MyGO!!!!! 打，打到 LB 用完
+ournotes-auto run --arena --until-lb-empty --wait-lb --lb-cost 3   # 掛機（激奏舞台）：LB 用完後在激奏舞台首頁等回復到 3 個再接著打
 
 # 啟動遊戲並進入主畫面；領取日常報酬（預設除看故事、活動故事外七項全領，--jobs 只做其中幾項）
 ournotes-auto start
@@ -108,6 +112,8 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 - 挑戰演出的 `ap_first`：挑戰演出的「選擇樂曲」頁沒有篩選和隨機選曲，改為從選中的歌往下逐首看右側面板有沒有 ALL PERFECT 標記，打第一首沒 AP 的（同一首打 `loop.ap_max_attempts` 次還沒 AP 就不再打）；`loop.ap_first_difficulties` 的用法同上，都補完了就依 `-d` 的難度輪流打每首歌。
 
 挑戰演出（`--challenge`）每局消耗 `game.challenge_cost`（`--challenge-cost`，200 / 400 / 800 / 1600，預設 200；null 為不改遊戲裡的設定）挑戰pt，不消耗 LB，打到 CP 不夠一局為止，所以不能和 `--until-lb-empty`、`--wait-lb`、`--lb-refill` 一起用。
+
+激奏舞台（`--arena` / `loop.arena`）：轉盤決定歌曲，只打 EXPERT，不跳過，`play.touch.great_ratio` 至少按 0.01 算（多人對局不用 AP）；`--lb-cost`、`--lb-auto`、`--lb-refill`、`--until-lb-empty`、`--wait-lb` 的用法同自由演出，在激奏舞台首頁的「消耗LB」裡設定。`--arena-band`（`loop.arena_band`）選樂團：`current`（預設）不換；`mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` 每局前換到這個樂團；`rotate` 從目前的樂團開始依遊戲裡的順序每個樂團打 `--arena-games`（`loop.arena_games_per_band`，預設 1）局再換下一個。不能和 `--challenge` 一起用。每局的樂團、名次、段位分增減、加減後的段位分、消耗的 LB 和判定數記在 `data/arena.jsonl`。
 
 單獨選中一首歌（停在「選擇樂曲」頁）：`ournotes-auto select 碧天伴走 [--category 全部]`。
 

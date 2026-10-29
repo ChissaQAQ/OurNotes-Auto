@@ -24,6 +24,15 @@ class Screen(StrEnum):
     CHALLENGE_SONG_SELECT = "挑战演出-乐曲选择"
     CHALLENGE_BAND_CONFIRM = "挑战演出-乐队确认"
     CP_SETTING = "挑战pt消耗设置"  # 挑战演出乐队确认页「CP 设置」打开的弹窗：每局消耗 200/400/800/1600
+    # 激奏舞台（从演出首页的「激奏舞台」进，多人对局）：首页「LIVE START」→ 匹配确认 → 正在匹配 → 匹配房间
+    # （成员到齐后转盘定歌）→ 难度选择（点 EXPERT、准备完毕）→ 演奏 → 结果弹窗、排名页（先后不定）→ 普通的结算页 → 首页
+    ARENA_TOP = "激奏舞台"  # 首页：右上角 LB，下面「消耗LB」「LIVE START」，乐队图标右边 ▶▶ 换乐队
+    ARENA_MATCH_CONFIRM = "激奏舞台-匹配确认"  # 左取消右 OK
+    ARENA_MATCHING = "激奏舞台-匹配中"  # 「正在匹配」弹窗、匹配房间（等成员到齐）
+    ARENA_DIFFICULTY = "激奏舞台-难度选择"
+    ARENA_RESULT = "激奏舞台-结果"  # 演奏后弹出的「结果 3rd AP+15」（名次、段位分），下方「下一步」
+    ARENA_RANKING = "激奏舞台-排名"  # 各玩家的名次、分数（「演出记录」切到判定数），右下「下一步」
+    ARENA_RANK_UP = "激奏舞台-段位提升"  # 「RANK UP」大字和新旧段位，没有按钮，点一下继续
     LIVE_OPTIONS = "演出前选项设置"
     LB_SETTING = "LB消耗设置"
     # 用道具/星钻/广告恢复 LB：开了 game.lb_refill 时只在「道具」页用 LIVE BOOST饮料，否则只点取消
@@ -69,6 +78,9 @@ class Screen(StrEnum):
     STORY_PLAYER = "故事播放"
     STORY_MENU = "故事播放菜单"  # 右边一列按钮：SKIP / AUTO / 快进 / 终止 ...
     STORY_SKIP = "要跳过故事吗"  # 左取消右跳过
+    # 主界面上点到角色弹出的对话（背景虚化、角色站在前面，下面是名牌和一句台词），点对话框关掉。
+    # 一直在动（Live2D），按停住的画面恢复不了；左侧一列没有入口的地方点下去就是这个
+    HOME_TALK = "主界面角色对话"
     # B 站 SDK 在标题画面上弹出的「开启消息通知」：只点右上角的 ⓧ（「去开启」会跳到系统的通知设置）
     NOTIFY = "开启消息通知"
     # Android 13 起游戏第一次启动时系统问「要允许…向您发送通知吗」（日服遇到过）：点「不允许」
@@ -99,6 +111,7 @@ _TITLES = {
     "乐曲选择": Screen.SONG_SELECT,
     "演出首页": Screen.LIVE_TOP,
     "设置": Screen.SETTINGS,
+    "激奏舞台": Screen.ARENA_TOP,
 }
 # 故事的各个页面（左上角是返回、主页按钮）
 CHAPTERS_TITLE = "乐队故事章节选择"
@@ -212,8 +225,29 @@ SKIP_TEXTS = ("跳过", "SKIP")
 SKIP_BTN_ROI: Rect = (720, 640, 120, 50)
 SKIP_LEFT_ROI: Rect = (680, 590, 160, 45)
 PLAYER_MENU_ROI: Rect = (1150, 140, 100, 60)  # 故事播放菜单里的 SKIP
+# 主界面角色对话：名牌在 (368,506)，台词在下面的方框里、左边 x≈372；虚化的背景读不出字，这条线以上什么都没有。
+# 故事播放画面也是名牌加台词，但台词从 x≈312 开始（导航还会先按右上角的菜单按钮认故事播放）
+HOME_TALK_NAME_ROI: Rect = (300, 475, 160, 60)
+HOME_TALK_NAME_MAX = 8  # 名牌上只有角色名
+HOME_TALK_LINE_ROI: Rect = (355, 525, 600, 125)
+HOME_TALK_LINE_LEFT = (355, 395)
+HOME_TALK_TOP = 470
 # 加载、下载中的画面认不出，但可能持续很久（下载数据、故事），不算卡住
 LOADING_TEXTS = ("LOADING", "下载", "%")
+
+# 激奏舞台的乐队（loop.arena_band），按首页 ▶▶ 切换的顺序
+ARENA_BANDS = ("mygo", "avemujica", "mewtype", "millsage", "dumbrock")
+# 首页左上角标题「激奏舞台」之外，下面这些至少要有一个（说明弹窗等别的页面标题也可能是激奏舞台）
+ARENA_TOP_MARKS = ("LIVE", "消耗LB", "全部消耗", "交换所")
+TOP_CENTER_ROI: Rect = (440, 10, 400, 60)  # 顶部正中的标题：匹配确认、难度选择
+ARENA_MATCHING_ROI: Rect = (440, 90, 400, 60)  # 「正在匹配」弹窗的标题
+ARENA_RESULT_ROI: Rect = (440, 270, 500, 60)  # 结果弹窗的「结果 3rd AP+15」
+ARENA_AP_ROI: Rect = (690, 425, 90, 45)  # 结果弹窗上加分后的段位分
+ARENA_TIER_ROI: Rect = (400, 490, 480, 50)  # 段位提升：左右两个段位名
+ARENA_RECORD_ROI: Rect = (720, 630, 250, 60)  # 排名页底部的「演出记录」
+ARENA_PLACE_ROI: Rect = (20, 330, 200, 150)  # 排名页左边自己的名次（大号的「3rd」）
+ARENA_SONG_ROI: Rect = (780, 385, 490, 50)  # 难度选择页右边封面下的曲名
+ARENA_LEVEL_ROI: Rect = (1140, 510, 130, 45)  # 难度选择页 EXPERT 上面的等级数字
 
 # 乐队确认页左下角的曲名与难度
 SONG_TITLE_ROI: Rect = (100, 588, 420, 42)
@@ -318,7 +352,8 @@ def classify(items: list[OcrItem]) -> Screen:
         if it := find(items, text, TITLE_ROI if screen is Screen.LB_RECOVER else None):
             return _setting_dialog(items, it) if screen is Screen.LB_SETTING else screen
     if now_loading:
-        return Screen.UNKNOWN
+        # 激奏舞台「正在匹配」中间的转圈图写着 Now Loading
+        return Screen.ARENA_MATCHING if find(items, "正在匹配", ARENA_MATCHING_ROI) else Screen.UNKNOWN
     # 跳过确认的标题别的语言没见过：左下「关闭」、右下「跳过」，中间有「全部消耗」
     if (
         find(items, "全部消耗", exact=True)
@@ -341,6 +376,8 @@ def classify(items: list[OcrItem]) -> Screen:
     for it in items:
         if it.h >= 50 and in_roi(it, LIVE_END_ROI) and _LIVE_END.match(_norm(it.text)):
             return Screen.LIVE_END
+    if (arena := _arena(items)) is not None:
+        return arena
     if find(items, "ANKUP", RANK_UP_ROI) or find(items, "玩家等级", RANK_UP_ROI):
         return Screen.RANK_UP
     if find(items, "关闭", CLOSE_ROI, exact=True):
@@ -381,6 +418,8 @@ def classify(items: list[OcrItem]) -> Screen:
         return Screen.RESULT_OTHER
     for text, screen in _TITLES.items():
         if find(items, text, TITLE_ROI):
+            if screen is Screen.ARENA_TOP and not any(find(items, mark) for mark in ARENA_TOP_MARKS):
+                continue
             if screen is Screen.SONG_SELECT and _challenge_song_select(items):
                 return Screen.CHALLENGE_SONG_SELECT
             # English 界面上「消耗LB」按钮也叫「Settings」，但上面有「Use All x1 Left」（全部消耗剩余n次）
@@ -399,7 +438,49 @@ def classify(items: list[OcrItem]) -> Screen:
         return Screen.SKIPPABLE
     if find(items, "OK", OK_POPUP_ROI, exact=True) and not any(find(items, text) for text in OK_POPUP_BLOCK):
         return Screen.OK_POPUP
+    if home_talk(items):
+        return Screen.HOME_TALK
     return Screen.UNKNOWN
+
+
+def home_talk(items: list[OcrItem]) -> bool:
+    """主界面上点到角色弹出的对话（见 HOME_TALK_NAME_ROI）。"""
+    if any(it.cy < HOME_TALK_TOP for it in items):
+        return False
+    name = any(in_roi(it, HOME_TALK_NAME_ROI) and len(_compact(it.text)) <= HOME_TALK_NAME_MAX for it in items)
+    left, right = HOME_TALK_LINE_LEFT
+    return name and any(in_roi(it, HOME_TALK_LINE_ROI) and left <= it.x <= right for it in items)
+
+
+def _arena(items: list[OcrItem]) -> Screen | None:
+    """激奏舞台对局途中的画面（首页按左上角标题认，见 _TITLES），都不是时为 None。"""
+    if find(items, "匹配确认", TOP_CENTER_ROI):
+        return Screen.ARENA_MATCH_CONFIRM
+    if find(items, "正在匹配", ARENA_MATCHING_ROI) or (
+        find(items, "匹配", TITLE_ROI, exact=True) and find(items, "表情", exact=True)
+    ):
+        return Screen.ARENA_MATCHING
+    if find(items, "难度选择", TOP_CENTER_ROI):
+        return Screen.ARENA_DIFFICULTY
+    if any(in_roi(it, ARENA_RESULT_ROI) and _compact(it.text).startswith("结果") for it in items):
+        return Screen.ARENA_RESULT
+    # 「激奏BESTPERFORMER」的前两个字常读错（激秦、激春）
+    if not find(items, "结算", TITLE_ROI) and (
+        find(items, "演出记录", ARENA_RECORD_ROI) or any("PERFORMER" in it.text.upper() for it in items)
+    ):
+        return Screen.ARENA_RANKING
+    # 段位提升的 RANK UP 大字和羁绊等级的一样高，但没有 OK，下面是新旧两个段位名
+    if (
+        find(items, "ANKUP", BOND_UP_ROI)
+        and not find(items, "OK", CLOSE_ROI, exact=True)
+        and not any(find(items, text) for text in ("羁绊等级", "乐队RANK", "玩家等级"))
+        and sum(in_roi(it, ARENA_TIER_ROI) for it in items) >= 2
+    ):
+        return Screen.ARENA_RANK_UP
+    # 激奏舞台的说明（第一次进来时也可能弹出）：左「关闭」右「下一步」
+    if find(items, "前往帮助") and find(items, "关闭", exact=True):
+        return Screen.POPUP
+    return None
 
 
 def _challenge_song_select(items: list[OcrItem]) -> bool:
@@ -481,6 +562,52 @@ def band_confirm_song(items: list[OcrItem]) -> tuple[str, str | None]:
     return title, diff
 
 
+def arena_song(items: list[OcrItem]) -> tuple[str, int | None]:
+    """激奏舞台难度选择页上转盘定下的 (曲名, EXPERT 等级)。"""
+    parts = sorted((it for it in items if in_roi(it, ARENA_SONG_ROI)), key=lambda it: it.x)
+    title = " ".join(it.text.strip() for it in parts)
+    levels = [parse_level(it.text) for it in items if in_roi(it, ARENA_LEVEL_ROI)]
+    return title, next((lv for lv in levels if lv is not None), None)
+
+
+_ARENA_RESULT = re.compile(r"结果([1-5])\D*?AP([+\-－−一—]?)(\d{1,4})$")
+
+
+def arena_result(items: list[OcrItem]) -> tuple[int | None, int | None]:
+    """激奏舞台结果弹窗「结果 3rd AP+15」→ (名次, 段位分增减)；读不出的为 None。"""
+    for it in items:
+        text = _digits(it.text)
+        if not in_roi(it, ARENA_RESULT_ROI) or not text.startswith("结果"):
+            continue
+        if m := _ARENA_RESULT.match(text):
+            sign = -1 if m.group(2) not in ("", "+") else 1
+            return int(m.group(1)), sign * int(m.group(3))
+        place = re.match(r"结果([1-5])", text)
+        return (int(place.group(1)) if place else None), None
+    return None, None
+
+
+def arena_ap_total(items: list[OcrItem]) -> int | None:
+    """激奏舞台结果弹窗上加减之后的段位分。一位数常检测不到，这时用 :func:`arena_ap_text` 读直接识别的结果。"""
+    for it in items:
+        if in_roi(it, ARENA_AP_ROI) and (value := arena_ap_text(it.text)) is not None:
+            return value
+    return None
+
+
+def arena_ap_text(text: str) -> int | None:
+    """段位分的识别文字 → 数字（最多 5 位），不是数字时为 None。"""
+    return int(digits) if re.fullmatch(r"\d{1,5}", digits := _digits(text)) else None
+
+
+def arena_placement(items: list[OcrItem]) -> int | None:
+    """激奏舞台排名页左边自己的名次（大号的「3rd」），结果弹窗没读到名次时用。"""
+    for it in items:
+        if in_roi(it, ARENA_PLACE_ROI) and (m := re.fullmatch(r"([1-5])(st|nd|rd|th)", _digits(it.text), re.I)):
+            return int(m.group(1))
+    return None
+
+
 def note_speed(items: list[OcrItem]) -> float | None:
     """演出前选项设置弹窗中「节奏图示速度」的数值（位于标签下一行的滑条中央）。"""
     label = find(items, "节奏图示速度")
@@ -506,6 +633,7 @@ SKIP_ALL_CHECK = (316, 434)  # 跳过确认弹窗的「全部消耗」
 # 上下拖消耗数列表：从上往下拖露出更大的消耗数，反过来露出 0
 LB_LIST_DRAG = ((640, 150), (640, 290))
 LB_HELD_ROI: Rect = (560, 545, 180, 40)
+LB_ALL_LEFT_ROI: Rect = (300, 380, 160, 40)  # 「全部消耗」复选框上面的「今日剩余1次」（中心约 (378, 403)）
 
 
 @dataclass(frozen=True)
@@ -538,6 +666,16 @@ def lb_rows(items: list[OcrItem]) -> LbRows | None:
 def lb_all_used(items: list[OcrItem]) -> bool:
     """「全部消耗」下面写着今天的次数已用完（「今日次数已用完。」，没用完时是「今日剩余1次」；别的语言没见过，认不出时由勾选不上兜底）。"""
     return find(items, "已用完") is not None
+
+
+def lb_all_left(items: list[OcrItem]) -> int | None:
+    """「全部消耗」复选框上面写的今天还能用几次（「今日剩余1次」，日文「本日あと1回」；用完时这里没有字），
+    没读到为 None（English、한국어、繁體中文的还没见过）。"""
+    for it in items:
+        m = re.search(r"今日剩[余餘](\d+)次|本日あと(\d+)回", _digits(it.text))
+        if m and in_roi(it, LB_ALL_LEFT_ROI):
+            return int(m.group(1) or m.group(2))
+    return None
 
 
 def lb_held(items: list[OcrItem]) -> int | None:
@@ -757,8 +895,10 @@ RESULT_COL_FAST = (874, 72)
 RESULT_COL_SLOW = (958, 72)
 RESULT_CELL_H = 30
 # 分数：大号斜体数字，整屏识别常把开头的 1 读丢（1330139 → 330139）；只框数字、不做检测就读得准。
+# 数字右对齐（右沿 x≈1226），「1」比别的数字窄：7 位里没有 1 时（3438301）整串最宽，左沿伸出原来的框（x=960）
+# 就读丢开头一到三位（438301、5463）。左边只有背景，留够余量；也不能太宽，杂点读成 1 会连进分数
 # 下沿不能碰到下面一行的 HIGH SCORE 数字（y≈234）
-RESULT_SCORE_ROI: Rect = (960, 166, 280, 64)
+RESULT_SCORE_ROI: Rect = (900, 166, 340, 64)
 # 最大连击（右下角 COMBO 后面的大号数字）：同样会把开头的 1 读丢（1159 → 159）。上面是 FULL COMBO 等字样
 RESULT_COMBO_ROI: Rect = (1120, 516, 112, 48)
 # 总数格的备选框法 (dx, dy, dw, dh)：四位数偶尔读错（1188 读成 T188，格子上沿的横线连上了 1），

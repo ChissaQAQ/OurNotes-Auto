@@ -6,6 +6,7 @@ import math
 import types
 from pathlib import Path
 
+import cv2
 import numpy as np
 import pytest
 
@@ -15,6 +16,7 @@ from ournotes_auto.nav.daily import (
     CLAIM_BUTTONS,
     DAILY_JOBS,
     OPT_IN_JOBS,
+    SIDE_MATCH_MIN,
     day_tabs,
     free_buys,
     gem_balance,
@@ -31,10 +33,12 @@ from ournotes_auto.nav.daily import (
     recruit_top,
     reward_close,
     reward_ok,
+    side_entry,
 )
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import center
+from ournotes_auto.player.guard import load_template
 from ournotes_auto.result_reader import OcrItem
 from ournotes_auto.runner import NavigationError, ServerMaintenance
 
@@ -94,6 +98,9 @@ for _page in ("shop_gems", "shop_tgw", "shop_tgw_free", "tgw_card"):
     ROUTES.setdefault(_page, []).append(((164, 40), "home"))
 
 UNKNOWN_CONFIRM = [OcrItem(560, 300, 160, 30, "要领取吗？"), OcrItem(760, 640, 60, 32, "确定")]
+# 主界面左侧一列的入口图标（resource/image/ 下的模板）和贴在截图上的左上角位置（实机截图里的位置）
+SIDE_ICONS = {"home_limited": (23, 320), "home_beginner": (24, 144)}
+IMAGES = Path(__file__).parent.parent / "resource" / "image"
 # T.G.W CARD 页的「领取积分」「领取」（claimable 里写 tgw_points、tgw_daily）
 TGW_BUTTONS = {"tgw_points": (136, 664), "tgw_daily": (1016, 657)}
 SHOP_CATALOG_TAB = (112, 279)  # 没选中时「专享商品目录」的位置
@@ -120,21 +127,31 @@ TWO_PASS_ROUTES = {
 }
 
 
+def paste_icon(img: np.ndarray, name: str) -> None:
+    """把主界面左侧一列的入口图标 ``name`` 贴到截图上（SIDE_ICONS 里的位置）。"""
+    icon = load_template(IMAGES / f"{name}.png")
+    x, y = SIDE_ICONS[name]
+    img[y : y + icon.shape[0], x : x + icon.shape[1]] = icon
+
+
 class DailyGame:
     """同时充当截图源、触控和 OCR。``claimable`` 里的页面「一键领取」是亮的，点了弹出获得奖励、
     OK 后回到原页面并变灰；``popup`` 指定点了之后弹出的画面（默认 reward）。
 
     商店：``claimable`` 里有 shop_free 时专享商品目录有一件免费商品，点它的「购买」弹出购买完成，
-    OK 后弹窗还要一帧才消失；``spend`` 时领完星钻数变了。"""
+    OK 后弹窗还要一帧才消失；``spend`` 时领完星钻数变了。
+
+    主界面左侧一列画着 ``side`` 里的入口图标（默认限定任务、新手任务都有）。"""
 
     size = (1280, 720)
 
-    def __init__(self, state="home", claimable=(), popup="reward", routes=None, spend=False):
+    def __init__(self, state="home", claimable=(), popup="reward", routes=None, spend=False, side=tuple(SIDE_ICONS)):
         self.state = state
         self.claimable = set(claimable)
         self.popup = popup
         self.routes = {**ROUTES, **(routes or {})}
         self.spend = spend
+        self.side = side
         self.spent = False
         self.back = None
         self.fading = None  # 点了 OK 后下一帧弹窗还在，再下一帧变成这个画面
@@ -160,6 +177,9 @@ class DailyGame:
             catalog = self.state != "shop_gems"
             img[110:160, 14:212] = (141, 85, 71) if catalog else (177, 163, 85)
             img[245:295, 14:212] = (177, 163, 85) if catalog else (141, 85, 71)
+        if self.state == "home":
+            for name in self.side:
+                paste_icon(img, name)
         return img, 0.0
 
     def read(self, frame, roi=None):
@@ -371,9 +391,9 @@ def test_run_daily_claims_lit_buttons(clock):
     assert len(tabs) == 4
     beginner = [p for s, p in game.taps if s == "daily_beginner" and p[0] > 1160]
     assert len(beginner) == 6
-    # 没点过主界面入口以外的地方（招募、通行证 pt 旁的「+」等）
-    home_taps = {p for s, p in game.taps if s == "home"}
-    assert home_taps <= {p for p, _ in ROUTES["home"]}
+    # 没点过主界面入口以外的地方（招募、通行证 pt 旁的「+」等；左侧一列的入口点的是认出来的图标中心）
+    for p in {p for s, p in game.taps if s == "home"}:
+        assert any(math.dist(p, q) < 10 for q, _ in ROUTES["home"]), p
     assert all(math.dist(p, (836, 40)) > 30 for _, p in game.taps)
 
 
@@ -438,14 +458,68 @@ def test_run_daily_selected_jobs(clock):
 
 
 def test_missing_entry_is_skipped(clock):
-    """没有限定任务入口（点了停在主界面）时跳过，不算出错；打开的是别的页面也跳过。"""
-    routes = {"home": [p for p in ROUTES["home"] if p[1] != "daily_limited"] + [((40, 152), "daily_limited")]}
-    game = DailyGame("home", routes=routes)
+    """主界面左侧没有限定任务的图标：不点那里（点下去是背景里的角色），跳过，不算出错；
+    打开的是别的页面也跳过（这里新手任务的入口打开的是限定任务）。"""
+    routes = {"home": [p for p in ROUTES["home"] if p[1] != "daily_beginner"] + [((40, 152), "daily_limited")]}
+    game = DailyGame("home", routes=routes, side=("home_beginner",))
     nav = daily_nav(game, clock)
     assert nav.run_daily(["limited", "beginner"]) == []
     assert game.state == "home"
-    limited = [p for s, p in game.taps if s == "home" and p == (40, 325)]
-    assert len(limited) == 2  # 点了没反应再点一次
+    assert all(math.dist(p, (40, 325)) > 30 for _, p in game.taps)
+    beginner = [(s, p) for s, p in game.taps if math.dist(p, (40, 152)) < 30]
+    assert [s for s, _ in beginner] == ["home"]
+    assert math.dist(beginner[0][1], (39, 158)) < 3  # 点的是认出来的图标中心
+
+
+def test_missing_icon_template_taps_default_entry(clock, monkeypatch):
+    """没有图标模板（资源没装全）：照旧点默认位置，点了没反应再点一次，然后跳过。"""
+    monkeypatch.setattr(daily, "load_template", lambda path: None)
+    routes = {"home": [p for p in ROUTES["home"] if p[1] != "daily_limited"]}
+    game = DailyGame("home", routes=routes)
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["limited"]) == []
+    assert game.state == "home"
+    assert [p for s, p in game.taps if s == "home"] == [(40, 325)] * 2
+
+
+def test_entry_opens_home_talk(clock, monkeypatch):
+    """点入口弹出了主界面角色对话（点到了背景里的角色）：点对话框关掉，跳过，不再点入口。"""
+    monkeypatch.setattr(daily, "load_template", lambda path: None)
+    routes = {
+        "home": [p if p[1] != "daily_limited" else (p[0], "home_talk") for p in ROUTES["home"]],
+        "home_talk": [((640, 600), "home")],
+    }
+    game = DailyGame("home", routes=routes)
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["limited"]) == []
+    assert game.state == "home"
+    assert [p for s, p in game.taps if s == "home"] == [(40, 325)]
+    assert [p for s, p in game.taps if s == "home_talk"] == [(640, 600)]
+
+
+def test_go_home_closes_home_talk(clock):
+    """上次停在了主界面角色对话：回主界面时点对话框关掉。"""
+    game = DailyGame("home_talk", routes={"home_talk": [((640, 600), "home")]})
+    nav = daily_nav(game, clock)
+    nav.go_home()
+    assert game.state == "home"
+    assert game.taps == [("home_talk", (640, 600))]
+
+
+def test_side_entry():
+    """主界面左侧一列的入口图标：贴在哪认到哪，换分辨率也认得出；没有图标时匹配度低于阈值。"""
+    limited, beginner = (load_template(IMAGES / f"{name}.png") for name in SIDE_ICONS)
+    img = np.full((720, 1280, 3), 40, np.uint8)
+    paste_icon(img, "home_beginner")
+    point, score = side_entry(img, limited)
+    assert score < SIDE_MATCH_MIN
+    paste_icon(img, "home_limited")
+    for frame in (img, cv2.resize(img, (1920, 1080))):
+        point, score = side_entry(frame, limited)
+        assert score >= SIDE_MATCH_MIN and math.dist(point, (40, 333)) < 3, (point, score)
+        point, score = side_entry(frame, beginner)
+        assert score >= SIDE_MATCH_MIN and math.dist(point, (39, 158)) < 3, (point, score)
+    assert side_entry(np.full((720, 1280, 3), 40, np.uint8), limited)[1] < SIDE_MATCH_MIN
 
 
 def test_unknown_confirm_is_not_tapped(clock):

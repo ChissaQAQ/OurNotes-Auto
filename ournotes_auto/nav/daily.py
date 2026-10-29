@@ -2,6 +2,7 @@
 
 - 入口都在主界面。右侧一排从上到下是：礼物盒、任务、PASS（任务通行证）、交换所、录音室练习、消息。
   左侧一列是：新手任务、好友邀请、限定任务。底部是招募、商店。左侧的入口随活动增减，位置可能变化，所以打开后都要核对标题。
+  - 限定任务、新手任务按图标在左侧一列里找，找到才点：没有入口的地方点下去是背景里的角色，会弹出角色对话。
 - 任务、礼物盒、通行证任务是弹窗，左下角有「关闭」。其余是整页，左上角有主页按钮（房子图标）。
 - 任务通行证可能同时有几个（左侧列表），通行证任务也是每个通行证各一份，逐个选中来领。
 - 「一键领取」没有可领的奖励时是灰的，亮着才点。
@@ -35,8 +36,10 @@ import cv2
 import numpy as np
 
 from ..logfile import log_image
+from ..player.guard import load_template
 from ..result_reader import OcrItem
 from ..runner import NavigationError, ServerMaintenance
+from .jacket import crop_jacket
 from .screens import RELOGIN_SCREENS, TITLE_ROI, Rect, Screen, center, find, in_roi, skip_button, story_title
 from .song_select import filter_open
 
@@ -59,7 +62,7 @@ DAILY_JOBS = {
 # 不指定项目时不做的（要下载数据、比较慢，界面上默认也不勾）
 OPT_IN_JOBS = frozenset(("story", "event"))
 
-# 主界面入口
+# 主界面入口（左侧一列的限定任务、新手任务按图标找，见 SIDE_ENTRIES，这里是没有图标模板时点的位置）
 HOME_ENTRIES = {
     "录音室练习": (1232, 515),
     "任务": (1232, 243),
@@ -70,6 +73,11 @@ HOME_ENTRIES = {
     "商店": (690, 620),
     "招募": (576, 660),
 }
+# 左侧一列的入口图标（resource/image/ 下的模板，不含右上角的红点）：在 SIDE_ROI 里模板匹配，
+# 实测有入口时 0.82 以上（新手任务带红点、背景暗的时候也是），没有时 0.52 以下
+SIDE_ENTRIES = {"限定任务": "home_limited", "新手任务": "home_beginner"}
+SIDE_ROI: Rect = (0, 100, 100, 370)
+SIDE_MATCH_MIN = 0.7
 # 页面标题（左上角）必须完全相等：「任务」「通行证任务」「任务通行证」互相包含，「录音室练习奖励」是领取后的弹窗
 POPUP_PAGES = ("任务", "礼物盒", "通行证任务")  # 左下角「关闭」
 FULL_PAGES = ("录音室练习", "任务通行证", "限定任务", "新手任务", "好友邀请", "交换所", "商店", "T.G.WCARD", "招募")  # 左上角主页按钮
@@ -181,6 +189,7 @@ HOME_BUTTON_SCREENS = frozenset(
         Screen.BAND_CONFIRM,
         Screen.CHALLENGE_SONG_SELECT,
         Screen.CHALLENGE_BAND_CONFIRM,
+        Screen.ARENA_TOP,
         Screen.SETTINGS,
     )
 )
@@ -353,6 +362,17 @@ def practice_level_up(items: list[OcrItem]) -> bool:
 def home_icon(items: list[OcrItem]) -> bool:
     """左上角的主页按钮。房子图标常被识别成「合」「へ」「^」之类的单个字符。"""
     return any(len(it.text.strip()) == 1 and math.dist(center(it), BTN_HOME) <= 12 for it in items)
+
+
+def side_entry(frame: np.ndarray, template: np.ndarray) -> tuple[tuple[int, int], float]:
+    """主界面左侧一列（SIDE_ROI）里最像入口图标 ``template`` 的位置（1280x720 下的中心）和匹配度。"""
+    region = crop_jacket(frame, SIDE_ROI)
+    size = (round(SIDE_ROI[2]), round(SIDE_ROI[3]))
+    if region.shape[1::-1] != size:
+        region = cv2.resize(region, size, interpolation=cv2.INTER_AREA)
+    _, score, _, (x, y) = cv2.minMaxLoc(cv2.matchTemplate(region, template, cv2.TM_CCOEFF_NORMED))
+    th, tw = template.shape[:2]
+    return (round(SIDE_ROI[0]) + x + tw // 2, round(SIDE_ROI[1]) + y + th // 2), float(score)
 
 
 def day_tabs(items: list[OcrItem]) -> list[tuple[str, tuple[int, int]]]:
@@ -624,9 +644,33 @@ class DailyMixin:
 
     def _open_page(self, title: str) -> bool:
         """在主界面点入口打开 ``title``。没有这个入口（活动结束等）或打开的是别的页面时返回 False。"""
-        point = HOME_ENTRIES[title]
+        point = self._side_entry(title) if title in SIDE_ENTRIES else HOME_ENTRIES[title]
+        if point is None:
+            return False
         self.tap(point, title)
         return self._wait_page(title, retap=point)
+
+    def _side_entry(self, title: str, frames: int = 3) -> tuple[int, int] | None:
+        """主界面左侧一列里 ``title`` 入口图标的位置，看了 ``frames`` 帧都没有时为 None（跳过）；
+        没有图标模板（或测试里没有截图）时照旧是 HOME_ENTRIES 里的位置。"""
+        if title not in self._side_templates:
+            name = SIDE_ENTRIES[title]
+            self._side_templates[title] = load_template(Path(f"resource/image/{name}.png"))
+            if self._side_templates[title] is None:
+                logger.warning("没有主界面入口的图标（resource/image/%s.png），「%s」点默认位置", name, title)
+        template = self._side_templates[title]
+        score = 0.0
+        for i in range(frames):
+            if i:
+                self._sleep(0.5)
+                self.look()
+            if template is None or not isinstance(self._frame, np.ndarray):
+                return HOME_ENTRIES[title]
+            point, score = side_entry(self._frame, template)
+            if score >= SIDE_MATCH_MIN:
+                return point
+        logger.info("主界面左侧没有「%s」的入口（匹配度 %.2f），跳过", title, score)
+        return None
 
     def _wait_page(self, title: str, timeout_s: float = 15.0, retap: tuple[int, int] | None = None) -> bool:
         """等到 ``title`` 页出现（顺手关掉已知的弹窗），再等一会儿让列表和按钮状态刷新。
@@ -653,6 +697,12 @@ class DailyMixin:
                 continue
             if got is not None:
                 logger.warning("点「%s」的入口打开的是「%s」，跳过", title, got)
+                return False
+            if screen is Screen.HOME_TALK:
+                # 点到了背景里的角色：主界面上没有这个入口（或者换了位置），关掉对话跳过，不再点
+                logger.warning("点「%s」的入口弹出了角色对话（主界面上可能没有这个入口），跳过", title)
+                self._common_step(screen, items)
+                self._sleep(1.0)
                 return False
             if self._dismiss(screen, items):
                 continue

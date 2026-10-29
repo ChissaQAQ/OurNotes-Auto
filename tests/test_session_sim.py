@@ -127,6 +127,12 @@ def test_covered_chart_keeps_touching_next_time(monkeypatch):
         assert session.play(chart, stop=threading.Event()).sync.ok
     assert holds == [True, False]
 
+    cfg.loop.arena = True  # 激奏舞台的演奏画面没有暂停按钮：不检查是否离开了演奏画面
+    session = PlaySession(cfg, SimGame(chart, now() + 0.3), LogTouch())
+    assert session.guard_template is None
+    assert session.play(chart, stop=threading.Event()).sync.ok
+    assert holds == [True, False]
+
 
 def test_timed_source_merges_queued_stalls():
     class Stalling:

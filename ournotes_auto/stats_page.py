@@ -16,12 +16,14 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 
 from .backup import MAX_UPLOAD
+from .records import PlayResult
 from .report import ChartStats, judgements, verdict
 from .sources import DIFFICULTIES
 from .stats import (
     ACHIEVEMENTS,
     GROUPS,
     PAGE_SIZE,
+    RUNS_PAGE_SIZE,
     TIERS,
     VER_MARK,
     WINDOW_TEXT,
@@ -126,12 +128,13 @@ setInterval(poll,3000);
 TABS = (("ov", "概览", "u-grid"), ("ach", "成就", "u-trophy"), ("data", "演奏数据", "u-chart"), ("charts", "谱面", "u-music"), ("runs", "运行记录", "u-history"))
 GROUP_ICON = {"演奏": "g-note", "完美": "g-star", "音符": "g-notes", "谱面": "g-diamond", "乐队": "g-band", "时长": "g-clock", "日常": "g-spark", "趣味": "g-smile"}
 WEEK = "一二三四五六日"
-UI_KEY = "stats-ui"  # sessionStorage 里存界面状态（页签、筛选、搜索、排序、展开的歌、表格滚动、页码）
+UI_KEY = "stats-ui"  # sessionStorage 里存界面状态（页签、子页签、筛选、搜索、排序、展开的歌、表格滚动、页码）
 
 # 实时状态：正在运行的任务此刻在做什么（runner 报的 kind → 页面上的名字、图标），见 stats.Tracker.status。
 # 不在表里的 kind 当成一件普通的事，只显示说明。
 LIVE_KINDS = {
     "select": ("换歌", "u-search"),
+    "match": ("匹配中", "u-search"),  # 激奏舞台
     "play": ("演奏中", "u-music"),
     "lb": ("等 LB 恢复", "u-clock"),
     "maintenance": ("等开服", "u-lock"),
@@ -749,6 +752,11 @@ td.t{white-space:normal;min-width:180px;max-width:380px}
 .vd.no{color:var(--muted);background:var(--line2);font-weight:500}
 @media (prefers-color-scheme:dark){.vd.fc{--d:#6ba6ff}}
 .jd .vd{margin-left:8px}
+td.t .vd{margin-left:8px}
+.up{color:var(--good);font-weight:600}
+.dn{color:#dc2626;font-weight:600}
+@media (prefers-color-scheme:dark){.dn{color:#ff7a7a}}
+[data-pv] .strip{border-bottom:1px solid var(--line)}
 .ltag{display:inline-flex;align-items:center;gap:6px;margin-left:8px;font-size:11.5px;font-weight:600;color:var(--good);background:var(--goodbg);border-radius:999px;padding:0 9px;line-height:20px}
 .ltag .pulse{width:7px;height:7px}
 .ltag .pulse::after{inset:-3px;border-width:1.5px}
@@ -901,7 +909,7 @@ dialog.bk[open]{animation:din .22s cubic-bezier(.2,1,.3,1)}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 """
 
-# 页签、成就筛选、谱面表（搜索、难度、只看没 AP、排序、展开）、运行记录翻页、悬停提示；界面状态存 sessionStorage，自动重新载入后恢复
+# 页签、成就筛选、谱面表（搜索、难度、只看没 AP、排序、展开）、运行记录翻页、「全部演奏」的子页签和表格、悬停提示；界面状态存 sessionStorage，自动重新载入后恢复
 # （LIVE_JS 在 load 时才恢复滚动位置，这里先同步恢复状态）。
 PAGE_JS = """(()=>{
 const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)],root=document.documentElement,KEY='stats-ui';
@@ -963,15 +971,25 @@ go(d==='first'?0:d==='prev'?p-1:d==='next'?p+1:pages-1);save();const c=box.close
 go(st[sk]);}
 const sp=$('[data-pg="sp"]');
 if(sp){const rows=[...sp.rows];pager('sp',(a,b)=>rows.forEach((r,i)=>{r.hidden=i<a||i>=b;}));}
-const pd=$('#plays-data'),pt=$('#plays tbody');
-if(pd&&pt){let D=null;try{D=JSON.parse(pd.textContent)}catch(e){}
-if(D&&Array.isArray(D.r)){const esc=s=>String(s).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';'),u=x=>x==null?'?':x,p2=x=>String(x).padStart(2,'0'),Y=new Date().getFullYear(),
-V=['','<span class="vd fc">FC</span>','<span class="vd ap">AP</span>','<span class="vd no">结果没读全</span>'];
+const pm=$('[data-pm]');
+if(pm){const vs=$$('[data-v]',pm).map(b=>b.dataset.v);
+const show=()=>{if(!vs.includes(st.pm))st.pm=vs[0];$$('[data-v]',pm).forEach(b=>b.classList.toggle('on',b.dataset.v===st.pm));$$('[data-pv]').forEach(p=>{p.hidden=p.dataset.pv!==st.pm;});};
+pm.addEventListener('click',e=>{const b=e.target.closest('[data-v]');if(!b)return;st.pm=b.dataset.v;show();save();});show();}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';'),u=x=>x==null?'?':esc(x),num=x=>x==null?'-':typeof x==='number'?x.toLocaleString():esc(x),
+p2=x=>String(x).padStart(2,'0'),Y=new Date().getFullYear(),
+V=['','<span class="vd fc">FC</span>','<span class="vd ap">AP</span>','<span class="vd no">结果没读全</span>','<span class="vd no">没演奏</span>'];
 const when=ts=>{const d=new Date(ts*1000);return (d.getFullYear()===Y?'':d.getFullYear()+'-')+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes());};
-const row=([ts,m,d,p,g,gd,b,ms,v,sc])=>{const k=typeof d==='number';
+const jd=(p,g,gd,b,ms)=>'<td class="jd">P'+u(p)+' G'+u(g)+' g'+u(gd)+' B'+u(b)+' M'+u(ms)+'</td>';
+function table(id,k,row){const pd=$('#'+id+'-data'),pt=$('#'+id+' tbody');if(!pd||!pt)return;let D=null;try{D=JSON.parse(pd.textContent)}catch(e){}
+if(D&&Array.isArray(D.r))pager(k,(a,b)=>{pt.innerHTML=D.r.slice(a,b).map(r=>row(r,D)).join('');});}
+table('plays','pp',([ts,m,d,p,g,gd,b,ms,v,sc],D)=>{const k=typeof d==='number';
 return '<tr><td>'+when(ts)+'</td><td class="t">'+esc(D.t[m]??m)+'</td><td><span class="dg '+(k?'d'+d:'dx')+'">'+esc(String(k?D.d[d]:d).toUpperCase())+'</span></td>'
-+'<td class="jd">P'+u(p)+' G'+u(g)+' g'+u(gd)+' B'+u(b)+' M'+u(ms)+'</td><td>'+(V[v]||'')+'</td><td class="num">'+(sc==null?'-':sc.toLocaleString())+'</td></tr>';};
-pager('pp',(a,b)=>{pt.innerHTML=D.r.slice(a,b).map(row).join('');});}}
++jd(p,g,gd,b,ms)+'<td>'+(V[v]||'')+'</td><td class="num">'+num(sc)+'</td></tr>';});
+table('arena','ap',([ts,bd,m,pl,ga,to,lb,p,g,gd,b,ms,v,sc],D)=>{const n=typeof ga==='number';
+return '<tr><td>'+when(ts)+'</td><td>'+(bd==null?'<span class="muted">认不出</span>':esc(D.b[bd]??bd))+'</td>'
++'<td class="t">'+(typeof m==='number'?esc(D.t[m]??m):esc(m||'?')+'<span class="vd no">没认出</span>')+'</td><td>'+(pl==null?'-':'第 '+esc(pl)+' 名')+'</td>'
++'<td class="num">'+(ga==null?'?':'<span class="'+(n&&ga>0?'up':n&&ga<0?'dn':'')+'">'+(n&&ga>0?'+':'')+esc(ga)+'</span>')+(to==null?'':' <span class="muted">→ '+num(to)+'</span>')+'</td>'
++'<td>'+(lb==null?'-':lb===-1?'全部消耗':lb===0?'不消耗':esc(lb))+'</td>'+jd(p,g,gd,b,ms)+'<td>'+(V[v]||'')+'</td><td class="num">'+num(sc)+'</td></tr>';});
 window.statsGoto=id=>{st.ast='all';st.ag='all';st.at='all';achApply();tab('ach');const c=document.getElementById('a-'+id);
 if(c){c.scrollIntoView({block:'center'});c.classList.remove('flash');void c.offsetWidth;c.classList.add('flash');}else scrollTo(0,0);};
 document.addEventListener('click',e=>{const a=e.target.closest('[data-a]');if(a){statsGoto(a.dataset.a);return;}
@@ -1041,13 +1059,14 @@ function show(j){pv.replaceChildren();const t=j.total||{},hd=el('div','bk-pvh'),
 hd.append(ic('u-file'),el('b','',j.name||''));
 const item=(text,on,label,small)=>{const li=el('li',on?'':'z');li.append(el('b','',text),el('span','',label));if(small)li.append(el('small','',small));ul.append(li);};
 item('+'+n(j.records),j.records>0,'局演奏记录',j.known?'另有 '+n(j.known)+' 局这边已经有了':'');
+if(t.arena)item('+'+n(j.arena),j.arena>0,'局激奏舞台记录','名次、段位分');
 item('+'+n(j.sessions),j.sessions>0,'次运行记录','');
 item('+'+n(j.achievements),j.achievements>0,'个成就','');
 item(j.offsets?'导入':'不变',!!j.offsets,'学到的 offset',j.offsets?'这边还没学过':'');
-pv.append(hd,el('div','bk-pvs','备份里有 '+n(t.records)+' 局演奏记录、'+n(t.sessions)+' 次运行记录、'+n(t.achievements)+' 个成就'),ul);
+pv.append(hd,el('div','bk-pvs','备份里有 '+n(t.records)+' 局演奏记录、'+(t.arena?n(t.arena)+' 局激奏舞台记录、':'')+n(t.sessions)+' 次运行记录、'+n(t.achievements)+' 个成就'),ul);
 if(j.bad)pv.append(el('p','bk-note','有 '+n(j.bad)+' 行演奏记录读不了，会跳过'));
 if(!j.changed)pv.append(el('p','bk-note','这边都有了，不用导入'));
-else if(!j.records&&!j.sessions&&!j.achievements&&!j.offsets)pv.append(el('p','bk-note','只会把成就的解锁时间改早（备份里解锁得更早）'));
+else if(!j.records&&!j.arena&&!j.sessions&&!j.achievements&&!j.offsets)pv.append(el('p','bk-note','只会把成就的解锁时间改早（备份里解锁得更早）'));
 if(j.changed){const c=btn('btn','取消'),g=btn('btn pri','确认导入','u-upload');c.dataset.bk='cancel';g.dataset.bk='go';c.onclick=reset;g.onclick=importIt;act.append(c,g);}
 else{const o=btn('btn pri','好');o.dataset.bk='ok';o.onclick=reset;act.append(o);}
 pv.append(act);pv.hidden=false;pv.scrollIntoView({block:'nearest'});}
@@ -1060,7 +1079,7 @@ async function importIt(){
 if(working||!src)return;lock(true);msg('wait','正在导入…');let done=false;
 try{const r=await call('api/import',{method:'POST',body:src.body,headers:src.headers}),j=await r.json();
 if(!j.backup){reset();msg('ok','这边都有了，没有改动');return;}
-const parts=[];if(j.records)parts.push(n(j.records)+' 局演奏记录');if(j.sessions)parts.push(n(j.sessions)+' 次运行记录');
+const parts=[];if(j.records)parts.push(n(j.records)+' 局演奏记录');if(j.arena)parts.push(n(j.arena)+' 局激奏舞台记录');if(j.sessions)parts.push(n(j.sessions)+' 次运行记录');
 if(j.achievements)parts.push(n(j.achievements)+' 个成就');if(j.offsets)parts.push('学到的 offset');
 ss('stats-flash','已从「'+j.name+'」导入 '+(parts.join('、')||'成就的解锁时间')+'。导入前的记录复制到了 '+j.backup);ss('stats-quiet','1');
 done=true;location.reload();}
@@ -1757,7 +1776,9 @@ def _misses(r) -> int:
 # ---------------------------------------------------------------- 运行记录
 
 PLAYS_MAX = 30_000  # 「全部演奏」最多带上这么多局（页面里每局约 50 字节）
-_VERDICT = {"FC": 1, "AP": 2, "结果没读全": 3}  # 和 PAGE_JS 里的 V 对应
+_VERDICT = {"FC": 1, "AP": 2, "结果没读全": 3, "没演奏": 4}  # 和 PAGE_JS 里的 V 对应
+# 激奏舞台的乐队（nav.screens.ARENA_BANDS）显示的名字，和 locales 里的 opt.ArenaBand.* 一样
+BAND_NAMES = {"mygo": "MyGO!!!!!", "avemujica": "Ave Mujica", "mewtype": "夢限大MewType", "millsage": "millsage", "dumbrock": "一家Dumb Rock!"}
 
 
 def _session_row(s: Session, longest: float, live: bool) -> str:
@@ -1774,10 +1795,10 @@ def _session_row(s: Session, longest: float, live: bool) -> str:
             f'<td class="num">{_e(lb)}</td><td class="num">{s.skips:,}</td></tr>')
 
 
-def _pager(key: str, total: int, unit: str) -> str:
+def _pager(key: str, total: int, unit: str, size: int = PAGE_SIZE) -> str:
     """翻页条：PAGE_JS 按 data-ps 分页，当前页存在界面状态里（自动重新载入后还在这一页）。"""
-    pages = max(1, math.ceil(total / PAGE_SIZE))
-    return (f'<div class="pager" data-pager="{key}" data-ps="{PAGE_SIZE}" data-n="{total}" data-u="{unit}"{"" if pages > 1 else " hidden"}>'
+    pages = max(1, math.ceil(total / size))
+    return (f'<div class="pager" data-pager="{key}" data-ps="{size}" data-n="{total}" data-u="{unit}"{"" if pages > 1 else " hidden"}>'
             f'<button data-p="first" title="第一页" aria-label="第一页">{_ic("u-first")}</button>'
             f'<button data-p="prev">{_ic("u-left")}上一页</button><span class="pi">第 1 / {pages} 页 · 共 {total:,} {unit}</span>'
             f'<button data-p="next">下一页{_ic("u-right")}</button>'
@@ -1797,6 +1818,67 @@ def _plays_json(view: View, plays: Sequence) -> str:
                      r.perfect, r.great, r.good, r.bad, r.miss, _VERDICT.get(verdict(r), 0), r.score])
     data = {"d": list(DIFFICULTIES), "t": titles, "r": rows}
     return json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
+
+
+def _int(x: object) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
+def _arena_json(view: View, games: Sequence) -> str:
+    """激奏舞台每局的数据，读法同 :func:`_plays_json`。每局 [时间, 乐队, 曲目, 名次, 段位分增减, 段位分, LB, P, G, g, B, M, 结果, 分数]：
+    乐队是 ARENA_BANDS 里的名字（显示的名字另外存），曲目认出了是曲目 ID、没认出是难度选择页上读到的曲名，
+    LB 为 -1 是全部消耗，没演奏的局结果是「没演奏」。"""
+    titles: dict[int, str] = {}
+    rows = []
+    for g in games:
+        mid = g.music_id if _int(g.music_id) else None
+        if mid is not None and mid not in titles:
+            titles[mid] = _title(view, mid)
+        v = verdict(PlayResult(0, "expert", g.perfect, g.great, g.good, g.bad, g.miss)) if g.played else "没演奏"
+        rows.append([round(g.timestamp), g.band, g.title if mid is None else mid, g.placement, g.ap_gain, g.ap_total, g.lb_cost,
+                     g.perfect, g.great, g.good, g.bad, g.miss, _VERDICT.get(v, 0), g.score])
+    data = {"b": BAND_NAMES, "t": titles, "r": rows}
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
+
+
+def _arena_strip(games: Sequence) -> str:
+    """激奏舞台的汇总（``games`` 新的在前）：对局数、平均名次，每个打过的乐队现在的段位分（最近一局读到的）、局数和平均名次。"""
+    def places(gs: Sequence) -> list[int]:
+        return [g.placement for g in gs if _int(g.placement) and 1 <= g.placement <= 5]
+
+    ps = places(games)
+    first = ps.count(1)
+    figs = [_fig("对局", f"{len(games):,} 局", f"演奏了 {sum(g.played is True for g in games):,} 局"),
+            _fig("平均名次", f"{sum(ps) / len(ps):.2f}" if ps else "-", f"第一名 {first:,} 局（{_rate(first, len(ps), 0)}）" if ps else "")]
+    for band, name in BAND_NAMES.items():
+        gs = [g for g in games if g.band == band]
+        if not gs:
+            continue
+        total = next((g.ap_total for g in gs if _int(g.ap_total)), None)
+        bp = places(gs)
+        figs.append(_fig(name, "-" if total is None else f"{total:,} 分", f"{len(gs):,} 局" + (f" · 平均第 {sum(bp) / len(bp):.1f} 名" if bp else "")))
+    return f'<div class="strip" style="--n:{len(figs)}">{"".join(figs)}</div>'
+
+
+def _plays_card(view: View) -> str:
+    """「全部演奏」卡片：打过激奏舞台时分「普通演奏」「激奏舞台」两个子页签（PAGE_JS 切换，记在界面状态里），各自翻页。"""
+    plays, games = view.plays[:PLAYS_MAX], view.arena[:PLAYS_MAX]
+    cut = f"，只列出最近的 {PLAYS_MAX:,} 局" if max(len(view.plays), len(view.arena)) > PLAYS_MAX else ""
+    free = (f'<div style="overflow-x:auto"><table id="plays"><thead><tr><th>时间</th><th>曲目</th><th>难度</th><th>判定</th><th>结果</th>'
+            f'<th class="num">分数</th></tr></thead><tbody></tbody></table></div>{_pager("pp", len(plays), "局")}'
+            f'<script type="application/json" id="plays-data">{_plays_json(view, plays)}</script>')
+    seg = ""
+    if games:
+        seg = (f'<div class="seg" data-pm style="margin-left:auto"><button data-v="free">普通演奏<i>{len(view.plays):,}</i></button>'
+               f'<button data-v="arena">激奏舞台<i>{len(view.arena):,}</i></button></div>')
+        arena = (f'{_arena_strip(view.arena)}<div style="overflow-x:auto"><table id="arena"><thead><tr><th>时间</th><th>乐队</th><th>曲目</th>'
+                 f'<th>名次</th><th class="num">段位分</th><th>LB</th><th>判定</th><th>结果</th><th class="num">分数</th></tr></thead><tbody></tbody></table></div>'
+                 f'{_pager("ap", len(games), "局")}<script type="application/json" id="arena-data">{_arena_json(view, games)}</script>')
+        if not plays:
+            free = '<div class="none">还没有普通演奏</div>'
+        free = f'<div data-pv="free">{free}</div><div data-pv="arena" hidden>{arena}</div>'
+    return (f'<section class="card tblcard mt pgc"><div class="tbar"><h3 class="h" style="margin:0">{_ic("u-music")}全部演奏'
+            f'<span class="sub">每局一行，新的在前{cut}</span></h3>{seg}</div>{free}</section>')
 
 
 def _runs(view: View) -> str:
@@ -1819,20 +1901,15 @@ def _runs(view: View) -> str:
         parts.append(f'<section class="card tblcard mt pgc"><div class="tbar"><h3 class="h" style="margin:0">{_ic("u-history")}运行记录'
                      f'<span class="sub">每次打歌任务一行，新的在前</span></h3></div><div style="overflow-x:auto"><table><thead><tr><th>时间</th><th>任务</th><th>时长</th>'
                      f'<th class="num">局数</th><th class="num">AP</th><th class="num">等 LB</th><th class="num">跳过</th></tr></thead>'
-                     f'<tbody data-pg="sp">{"".join(rows)}</tbody></table></div>{_pager("sp", len(rows), "次")}</section>')
+                     f'<tbody data-pg="sp">{"".join(rows)}</tbody></table></div>{_pager("sp", len(rows), "次", RUNS_PAGE_SIZE)}</section>')
     elif t.plays:
         parts.append(f'<section class="card strip" style="--n:4">{_fig("累计运行", duration(t.run_s), "按演奏记录估算")}'
                      f'{_fig("最长一次连续运行", duration(t.longest_run_s), "按演奏记录估算")}'
                      f'{_fig("开始使用", _d(t.first))}{_fig("演奏天数", f"{len(t.per_day):,} 天")}</section>'
                      f'<section class="card mt"><div class="note">{_ic("u-history")}<div>还没有运行记录。从这一版起，每次打歌任务的开始和结束时间、局数、AP、'
                      f'挂机时等 LB 的时间都会记在这里；之前的 {_e(duration(t.estimated_s or t.run_s))} 按演奏记录估算（相邻两局隔不到 10 分钟算一直在运行）。</div></div></section>')
-    if view.plays:
-        plays = view.plays[:PLAYS_MAX]
-        cut = f"，只列出最近的 {len(plays):,} 局" if len(view.plays) > len(plays) else ""
-        parts.append(f'<section class="card tblcard mt pgc"><div class="tbar"><h3 class="h" style="margin:0">{_ic("u-music")}全部演奏'
-                     f'<span class="sub">每局一行，新的在前{cut}</span></h3></div><div style="overflow-x:auto"><table id="plays"><thead><tr><th>时间</th><th>曲目</th>'
-                     f'<th>难度</th><th>判定</th><th>结果</th><th class="num">分数</th></tr></thead><tbody></tbody></table></div>{_pager("pp", len(plays), "局")}'
-                     f'<script type="application/json" id="plays-data">{_plays_json(view, plays)}</script></section>')
+    if view.plays or view.arena:
+        parts.append(_plays_card(view))
     if not parts:
         return f'<section class="card empty">{ART}<div><h2>还没有运行记录</h2><p>每次打歌任务（重复刷歌、挂机、AP补完……）的时长、局数、AP、挂机时等 LB 的时间会记在这里。</p></div></section>'
     return "".join(parts)

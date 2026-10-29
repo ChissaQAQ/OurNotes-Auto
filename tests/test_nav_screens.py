@@ -13,13 +13,20 @@ from ournotes_auto.nav.screens import (
     Screen,
     account_key,
     all_perfect_mark,
+    arena_ap_text,
+    arena_ap_total,
+    arena_placement,
+    arena_result,
+    arena_song,
     band_confirm_song,
     challenge_rows,
     challenge_selected,
     classify,
     cp_bar_held,
     cp_held,
+    home_talk,
     lb_bar_held,
+    lb_all_left,
     lb_all_used,
     lb_bar_timer,
     lb_drinks,
@@ -137,12 +144,37 @@ def load(name: str) -> list[OcrItem]:
         ("story_skip", Screen.STORY_SKIP),  # 「要跳过故事吗？」（中间的「跳过」不算可跳过的演出）
         ("story_player_menu", Screen.STORY_MENU),
         ("bond_player_menu", Screen.STORY_MENU),
+        # 主界面上点到背景里的角色弹出的对话；故事播放画面也是名牌加台词，但台词更靠左（导航按菜单按钮认）
+        ("home_talk", Screen.HOME_TALK),
+        ("story_player", Screen.UNKNOWN),
         ("daily_missions", Screen.UNKNOWN),  # 任务页左侧的「乐曲解锁」分页不算
         ("notice", Screen.POPUP),  # 登录后的公告
+        # 激奏舞台（夹具里的玩家昵称都去掉了）
+        ("arena_top", Screen.ARENA_TOP),
+        ("arena_top_lb_timer", Screen.ARENA_TOP),  # LB 没满，右上角有恢复倒计时
+        ("arena_match_confirm", Screen.ARENA_MATCH_CONFIRM),
+        ("arena_matching", Screen.ARENA_MATCHING),  # 「正在匹配」，中间的转圈图写着 Now Loading
+        ("arena_members", Screen.ARENA_MATCHING),  # 成员已确定，等转盘
+        ("arena_difficulty", Screen.ARENA_DIFFICULTY),
+        ("arena_result", Screen.ARENA_RESULT),
+        ("arena_result_4th", Screen.ARENA_RESULT),
+        ("arena_ranking", Screen.ARENA_RANKING),  # 「激奏」读成「激秦」
+        ("arena_ranking_5th", Screen.ARENA_RANKING),  # 切到了演出记录
+        ("arena_rank_up", Screen.ARENA_RANK_UP),  # 和羁绊等级的 RANK UP 一样大，但没有 OK，下面是新旧段位
+        ("arena_tier_up", Screen.ARENA_RANK_UP),  # 升到新段位（BEGINNER→BRONZE）
+        ("arena_tier_reward", Screen.REWARD),  # 之后的「首次段位达成奖励」
     ],
 )
 def test_classify(name, screen):
     assert classify(load(name)) is screen
+
+
+def test_home_talk():
+    """主界面角色对话：背景虚化读不出字，上面读出字来（主界面的顶栏等）就不是。"""
+    talk = load("home_talk")
+    assert home_talk(talk)
+    assert not home_talk([*talk, OcrItem(130, 40, 120, 24, "Lv.120")])
+    assert not home_talk([it for it in talk if it.y > 520])  # 没有名牌
 
 
 @pytest.mark.parametrize("extra", ["取消", "确定", "购买", "消耗星钻"])
@@ -214,6 +246,52 @@ def test_band_confirm_song():
     assert band_confirm_song(load("band_confirm")) == ("迷星叫", "expert")
     assert band_confirm_song(load("band_confirm_avemujica")) == ("AveMujica", "expert")
     assert band_confirm_song(load("band_confirm_lb_timer")) == ("无路矢", "expert")  # 繁体字都转成了简体
+
+
+def test_arena_song():
+    assert arena_song(load("arena_difficulty")) == ("端程山", 24)
+    assert arena_song(load("arena_matching")) == ("", None)
+
+
+def test_arena_result():
+    """结果弹窗「结果 2nd AP+25」→ 名次、段位分增减，下面是加减后的段位分；排名页左边是大号的名次。"""
+    items = load("arena_result")
+    assert arena_result(items) == (2, 25) and arena_ap_total(items) == 72
+    items = load("arena_result_4th")
+    assert arena_result(items) == (4, 10) and arena_ap_total(items) == 82
+    assert arena_result(load("arena_ranking")) == (None, None)
+    assert arena_placement(load("arena_ranking")) == 2
+    assert arena_placement(load("arena_ranking_5th")) == 5  # 右边的「2nd3rd4th」连成一项也不会认错
+    assert arena_placement(load("arena_result")) is None
+
+
+@pytest.mark.parametrize(
+    "text, result",
+    [
+        ("结果 5th AP-5", (5, -5)),
+        ("结果 5th AP一5", (5, -5)),  # 减号读成「一」
+        ("结果 1st AP+3O", (1, 30)),
+        ("结果 3rd", (3, None)),  # 段位分没读出来
+        ("结果", (None, None)),
+    ],
+)
+def test_arena_result_text(text, result):
+    assert arena_result([OcrItem(581, 284, 217, 28, text)]) == result
+    assert arena_result([OcrItem(581, 584, 217, 28, text)]) == (None, None)  # 不在弹窗标题的位置
+
+
+@pytest.mark.parametrize(
+    "text, value", [("8", 8), ("72", 72), ("1O5", 105), ("]2", 12), ("", None), ("AP", None), ("+8", None), ("123456", None)]
+)
+def test_arena_ap_text(text, value):
+    """结果弹窗上段位分的直接识别结果：小号数字的 1、0 常读成 ]、O。"""
+    assert arena_ap_text(text) == value
+
+
+def test_arena_top_lb():
+    """激奏舞台首页右上角的 LB 持有数、恢复倒计时和乐队确认页的在同一个位置。"""
+    assert lb_bar_held(load("arena_top")) == 10 and lb_bar_timer(load("arena_top")) is None
+    assert lb_bar_held(load("arena_top_lb_timer")) == 9 and lb_bar_timer(load("arena_top_lb_timer")) == 932
 
 
 def test_challenge_band_confirm_song():
@@ -349,6 +427,14 @@ def test_lb_all_used_and_skip_left():
     assert skip_left(load("skip_confirm")) == 2
     assert skip_left(load("band_confirm")) == 0
     assert skip_left(load("lb_setting")) is None
+
+
+def test_lb_all_left():
+    """「全部消耗」复选框上面的「今日剩余1次」；用完了、持有不够、别的语言、商店里的「今日剩余1次」都不算。"""
+    assert lb_all_left(load("lb_setting_event")) == 1
+    assert lb_all_left(load("ja_lb_setting")) == 1
+    for name in ("lb_setting", "lb_setting_4", "en_lb_setting", "ko_lb_setting", "zh_hant_lb_setting", "skip_confirm", "shop_tgw_free"):
+        assert lb_all_left(load(name)) is None, name
 
 
 def test_lb_drinks():

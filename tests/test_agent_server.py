@@ -173,3 +173,27 @@ assert "notify_target" in logged and "***" in logged and "secret-topic_42" not i
 assert json.loads(worker.call_args.args[0][-1])["attach"]["notify_target"] == "secret-topic_42"
 assert server._masked({"notify_target": "", "a": 1}) == {"notify_target": "", "a": 1}
 ''')
+
+
+def test_proxy_password_not_logged():
+    """代理地址里的密码（user:pass@host:port）不进 Agent 的日志，交给演奏进程的还是原样。"""
+    check('''
+import json
+from contextlib import nullcontext
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+from ournotes_auto.agent import server
+from ournotes_auto.agent.worker import WorkerResult
+attach = {"proxy": "me:pa55w0rd@127.0.0.1:7890"}
+ctx = SimpleNamespace(tasker=SimpleNamespace(stopping=False, controller=SimpleNamespace(info={})), get_node_data=lambda name: {"attach": attach})
+update = Mock()
+update.busy.return_value = nullcontext()
+with patch.object(server, "UPDATE", update), patch.object(server, "run_worker", return_value=WorkerResult(0, False, False, False)) as worker, \
+     patch.object(server.logger, "debug") as debug:
+    assert server.OurNotesRun().run(ctx, SimpleNamespace(custom_action_param='{"task":"start"}')) is True
+logged = " ".join(str(c.args[0] % c.args[1:]) for c in debug.call_args_list)
+assert "pa55w0rd" not in logged and "网络代理：http://me:***@127.0.0.1:7890" in logged, logged
+assert json.loads(worker.call_args.args[0][-1])["attach"]["proxy"] == "me:pa55w0rd@127.0.0.1:7890"
+for raw, shown in [("http://me:p@h:1", "http://me:***@h:1"), ("h:7890", "h:7890"), ("http://me@h:1", "http://me@h:1"), (None, None)]:
+    assert server._hide_password(raw) == shown, raw
+''')

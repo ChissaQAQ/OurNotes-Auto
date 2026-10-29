@@ -94,10 +94,11 @@ class Handler(BaseHTTPRequestHandler):
         out = {
             "ok": True,
             "name": b.name,
-            "total": {"records": len(b.records), "sessions": len(b.sessions), "achievements": len(b.unlocked)},
+            "total": {"records": len(b.records), "arena": len(b.arena), "sessions": len(b.sessions), "achievements": len(b.unlocked)},
             "records": result.records,
             "known": result.known,
             "bad": result.bad,
+            "arena": result.arena,
             "sessions": result.sessions,
             "achievements": result.achievements,
             "offsets": result.offsets,

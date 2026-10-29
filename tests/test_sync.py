@@ -200,6 +200,37 @@ def test_tracker_rejects_implausible_track():
     assert rejected
 
 
+def test_tracker_ignores_popup_on_track():
+    """激奏舞台：中间轨道上会出现 LUCK READY 倒计时（偏白的文字），之后一直显示，出现的时机每局不同。
+    首音符进入跟踪区后才出现：这些行音符这一帧到不了、和音符隔着空行，并入基线继续跟踪，不能当成前沿跳变放弃首音符；
+    比首音符先出现：停着不动，0.5s 后并入基线，再跟踪首音符。"""
+    geo = Geometry(W, H)
+    span = Span(8, 14)
+    tau_s, arrival = 0.835, 12.3456
+    enter = arrival - tau_s * math.log((geo.judge_y - geo.motion_horizon_y) / -geo.motion_horizon_y)
+
+    def run(appear_after_s):
+        rng = np.random.default_rng(12)
+        tr = NoteTracker(geo, SyncParams(), 5000.0, [span])
+        t = arrival - 4.5 * tau_s
+        while t < arrival + 1.0:
+            y = geo.note_y(arrival - t, tau_s)
+            frame = render(geo, span, y, 0.04 * (y - geo.motion_horizon_y), rng)
+            if t >= enter + appear_after_s:
+                for yy in (137, 138, 156, 157, 158, 165):  # 两行文字的笔画
+                    frame[yy, int(geo.x_at(span.left, yy)) : int(geo.x_at(span.right, yy))] = (235, 235, 235)
+            result = tr.feed(frame, t)
+            if result is not None:
+                return result
+            t += 1 / 60
+        return None
+
+    for appear_after_s in (-0.3, 0.05, 0.4):
+        result = run(appear_after_s)
+        assert result is not None and result.ok, (appear_after_s, result)
+        assert abs(result.arrival - arrival) * 1000 < 5
+
+
 def test_tracker_rearms_after_scene_change():
     """介绍卡淡出等整体变化不能被当成音符。"""
     rng = np.random.default_rng(4)

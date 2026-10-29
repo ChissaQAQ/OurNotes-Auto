@@ -49,6 +49,10 @@ ournotes-auto run --until-lb-empty --lb-cost 3 --lb-refill 30   # LB 소진, LB 
 ournotes-auto run --challenge --mode rotate              # 챌린지 라이브(이벤트 기간): 판당 200 CP, 곡 순환, CP가 모자랄 때까지 플레이
 ournotes-auto run --challenge --challenge-cost 1600 -n 3 # 챌린지 라이브, 판당 1600 CP(보상 ×8), 3판 플레이
 ournotes-auto run --challenge --mode ap_first           # 챌린지 라이브: EXPERT에서 아직 AP를 못 한 곡부터, 모두 AP면 순환 플레이
+ournotes-auto run --arena                                # 격주 스테이지: 밴드는 그대로, 판당 LB 소모는 설정대로 계속 플레이(-n으로 판 수 제한)
+ournotes-auto run --arena --arena-band rotate --arena-games 2 -n 10   # 격주 스테이지: 지금 밴드부터 밴드마다 2판씩 치고 다음으로, 모두 10판
+ournotes-auto run --arena --arena-band mygo --until-lb-empty --lb-cost 3   # 격주 스테이지: MyGO!!!!!로 바꿔서 LB를 다 쓸 때까지 플레이
+ournotes-auto run --arena --until-lb-empty --wait-lb --lb-cost 3   # 방치 플레이(격주 스테이지): LB를 다 쓰면 격주 스테이지 첫 화면에서 3개 회복까지 기다렸다가 계속
 
 # 게임을 실행하고 홈 화면으로 진입. 데일리 보상 수령(기본은 스토리 보기·이벤트 스토리를 뺀 7개 항목 모두, --jobs로 일부만 지정)
 ournotes-auto start
@@ -108,6 +112,8 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 - 챌린지 라이브의 `ap_first`: 챌린지 라이브의 곡 선택 화면에는 필터와 랜덤 선곡이 없으므로, 선택된 곡부터 아래로 한 곡씩 오른쪽 패널에 ALL PERFECT 표시가 있는지 보고 처음 나오는 AP를 못 한 곡을 플레이합니다(같은 곡을 `loop.ap_max_attempts`번 쳐도 AP가 안 되면 더 치지 않습니다). `loop.ap_first_difficulties`의 사용법은 위와 같으며, 다 채우면 `-d`의 난이도로 곡을 순환하며 플레이합니다.
 
 챌린지 라이브(`--challenge`)는 판마다 `game.challenge_cost`(`--challenge-cost`, 200 / 400 / 800 / 1600, 기본 200, null은 게임 설정을 바꾸지 않음)만큼 챌린지 pt를 소모하고 LB는 소모하지 않으며, CP가 한 판에 모자랄 때까지 플레이합니다. 그래서 `--until-lb-empty`, `--wait-lb`, `--lb-refill`과 함께 쓸 수 없습니다.
+
+격주 스테이지(`--arena` / `loop.arena`): 룰렛으로 곡이 정해지며 EXPERT만 치고 스킵하지 않고, `play.touch.great_ratio`는 최소 0.01로 칩니다(멀티 대전은 AP가 필요 없으므로). `--lb-cost`, `--lb-auto`, `--lb-refill`, `--until-lb-empty`, `--wait-lb`는 프리 라이브와 같으며, 격주 스테이지 첫 화면의 「LB 소모」에서 설정합니다. `--arena-band`(`loop.arena_band`)로 밴드를 고릅니다: `current`(기본)는 바꾸지 않고, `mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock`는 매 판 전에 그 밴드로 바꾸며, `rotate`는 지금 밴드부터 시작해 게임 안의 순서대로 밴드마다 `--arena-games`(`loop.arena_games_per_band`, 기본 1)판을 치면 다음 밴드로 바꿉니다. `--challenge`와 함께 쓸 수 없습니다. 판마다 밴드, 순위, 랭크 포인트 증감, 증감 후 랭크 포인트, 소모한 LB, 판정 수를 `data/arena.jsonl`에 기록합니다.
 
 곡 하나만 선택(곡 선택 화면에 멈춤): `ournotes-auto select 碧天伴走 [--category 全部]`.
 

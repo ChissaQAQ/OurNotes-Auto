@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -30,10 +31,15 @@ ROOT = Path(__file__).resolve().parents[2]
 PARAM_NODE = "OurNotesParam"  # 界面选项都覆盖到这个节点的 attach 上（和 params.PARAM_NODE 一致）
 UPDATE = UpdateCheck(ROOT)
 SECRET_KEYS = ("notify_target",)  # 等于密码的选项（推送地址），日志里不记
+PROXY_PASSWORD = re.compile(r"(?<=:)[^:@/]*(?=@)")  # 代理地址 user:pass@host:port 里的密码，日志里不记
 
 
 def _masked(attach: Mapping[str, Any]) -> dict[str, Any]:
-    return {k: "***" if k in SECRET_KEYS and v else v for k, v in attach.items()}
+    return {k: "***" if k in SECRET_KEYS and v else _hide_password(v) if k == "proxy" else v for k, v in attach.items()}
+
+
+def _hide_password(proxy: Any) -> Any:
+    return PROXY_PASSWORD.sub("***", proxy) if isinstance(proxy, str) else proxy
 
 
 def _flag(attach: Mapping[str, Any], key: str, default: bool) -> bool:
@@ -54,7 +60,7 @@ def _controller_info(context: Context) -> Any:
 
 
 class OurNotesRun(CustomAction):
-    """``custom_action_param`` 为 ``{"task": "start" | "switch_account" | "repeat" | "clear_lb" | "idle" | "ap" | "records" | "notify_test"}``，
+    """``custom_action_param`` 为 ``{"task": "start" | "switch_account" | "repeat" | "clear_lb" | "idle" | "ap" | "challenge" | "arena" | "arena_idle" | "records" | "notify_test"}``，
     选项在 ``OurNotesParam`` 节点的 attach 里。"""
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:
@@ -67,8 +73,9 @@ class OurNotesRun(CustomAction):
         attach = (context.get_node_data(PARAM_NODE) or {}).get("attach") or {}
         set_ui_debug(_flag(attach, "debug_log", False))
         logger.debug("任务 %s，参数 %s", task, _masked(attach))
-        if apply_proxy(attach.get("proxy")):
-            logger.debug("网络代理：%s", attach.get("proxy"))
+        proxy = apply_proxy(attach.get("proxy"))
+        if proxy:
+            logger.debug("网络代理：%s", _hide_password(proxy))
         UPDATE.start(check=_flag(attach, "check_update", True), auto=_flag(attach, "auto_update", True))
         payload = {"task": task, "attach": attach, "controller": _controller_info(context)}
         cmd = [sys.executable, "-m", "ournotes_auto", "agent-run", json.dumps(payload, ensure_ascii=False, default=str)]

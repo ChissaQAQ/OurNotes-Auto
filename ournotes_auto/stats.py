@@ -30,7 +30,7 @@ from urllib.parse import quote
 
 from . import release, stats_window
 from .agent.logs import client_name
-from .records import PlayResult, RecordStore
+from .records import ArenaResult, PlayResult, RecordStore
 from .report import ChartStats
 from .sources import DIFFICULTIES
 
@@ -51,7 +51,8 @@ MXU_CONFIG = Path("config", "mxu-OurNotesAuto.json")  # MXU 的配置：config/m
 MXU_PORT = 12701  # MXU 自带的本机网页服务的默认端口（MXU 设置里能改）
 MXU_PORTS = 10  # 端口被占时 MXU 不提示，依次改用后面的端口，连同设置的一共试这么多个
 PAGE_BUTTON = "stats_button_{}.svg"  # MXU 卡片上「在浏览器里打开」按钮的图片，{} 是这个包的记号（见 mxu_buttons）
-PAGE_SIZE = 50  # 运行记录页上每页列出几次运行、几局
+PAGE_SIZE = 50  # 「全部演奏」每页列出几局
+RUNS_PAGE_SIZE = 10  # 运行记录每页列出几次运行（在「全部演奏」上面，一页太长要往下翻很久）
 GAP_S = 600.0  # 没有运行记录的时段（统计功能加入之前）按演奏记录估算时长：相邻两局隔不到这么久算一直在运行
 MERGE_S = 180.0  # 为换新版本退出的运行（挂机）隔不到这么久又开始了，算同一次连续运行；手动停止后再开始的不算
 
@@ -600,9 +601,30 @@ class View:
     now: float
     title: Callable[[int], str] = str
     live: list[Session] = field(default_factory=list)  # 正在运行的
-    plays: list[PlayResult] = field(default_factory=list)  # 全部演奏记录，新的在前
+    plays: list[PlayResult] = field(default_factory=list)  # 普通演奏记录（不含激奏舞台打的），新的在前
     library: Library = field(default_factory=Library)
     doing: dict[str, dict] = field(default_factory=dict)  # 正在运行的在做什么：live_key → stats_live.js 里的一项
+    arena: list[ArenaResult] = field(default_factory=list)  # 激奏舞台的每一局，新的在前
+
+
+ARENA_MATCH_S = 30.0  # 激奏舞台的一局最多比它的演奏记录晚这么久（对局都要几分钟，不会认错局）
+
+
+def arena_plays(records: list[PlayResult], games: list[ArenaResult]) -> set[int]:
+    """``records`` 里哪几条（下标）是激奏舞台打的：演奏了的每一局对应同一首歌、时间不晚于它的最近一条。
+    两边记的是同一个时间（见 ``Runner._play_arena``），差一点（以前的调试版先记演奏、再记对局）也认。"""
+    by_song: dict[int, list[tuple[float, int]]] = {}
+    for i, r in enumerate(records):
+        by_song.setdefault(r.music_id, []).append((r.timestamp, i))
+    for v in by_song.values():
+        v.sort()
+    out = set()
+    for g in games:
+        cand = by_song.get(g.music_id, []) if g.played and isinstance(g.music_id, int) else []
+        k = bisect.bisect_right(cand, (g.timestamp, math.inf)) - 1
+        if k >= 0 and g.timestamp - cand[k][0] <= ARENA_MATCH_S:
+            out.add(cand[k][1])
+    return out
 
 
 def _client(root: Path) -> str:
@@ -685,9 +707,12 @@ def refresh(
     else:
         for a in new:
             logger.info("★ 解锁成就「%s」：%s（%s）", a.name, a.desc, count)
-    plays = sorted(records, key=lambda r: -r.timestamp)
+    games = RecordStore(d).arena_history(limit=None)
+    in_arena = arena_plays(records, games)  # 总数、成就照常算，「全部演奏」里分开列
+    plays = sorted((r for i, r in enumerate(records) if i not in in_arena), key=lambda r: -r.timestamp)
+    arena = sorted(games, key=lambda g: -g.timestamp)
     doing = {r["key"]: r for r in write_live(d)}  # 先于页面写：新页面读到的一定包括刚开始的这次、不包括刚结束的
-    view = View(totals, unlocked, sessions, time.time() if now is None else now, title or library.title, running, plays, library, doing)
+    view = View(totals, unlocked, sessions, time.time() if now is None else now, title or library.title, running, plays, library, doing, arena)
     root = d.resolve().parent
     shortcut = root / stats_window.SHORTCUT
     release.write_text(d / PAGE_MD, render_md(view, d / PAGE_HTML, _client(root), shortcut if shortcut.exists() else None))

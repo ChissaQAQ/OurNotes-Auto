@@ -17,6 +17,7 @@ logger = logging.getLogger("ournotes_auto")
 # 拟人化选项的上限：时机偏移再加上同步误差也要留在 PERFECT（±50ms）以内
 MAX_GREAT_RATIO = 0.2
 MAX_JITTER_MS = 20.0
+ARENA_GREAT_RATIO = 0.01  # 激奏舞台是多人对局，不用打 AP：至少故意打这么多 GREAT
 
 
 def _parse_point(text: str) -> tuple[int, int]:
@@ -146,7 +147,7 @@ def cmd_look(cfg: Config, args) -> int:
 def check_run_config(cfg: Config) -> None:
     """连续演奏前检查配置（--set 或界面传来的值可能不合法）。"""
     from .nav.screens import LB_MAX_COST
-    from .sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES, SONG_MODES, parse_difficulties
+    from .sources import ARENA_BAND_MODES, CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES, SONG_MODES, parse_difficulties
 
     if cfg.game.difficulty not in DIFFICULTIES:
         raise SetupError(f"难度应为 {'/'.join(DIFFICULTIES)}：{cfg.game.difficulty}")
@@ -169,6 +170,13 @@ def check_run_config(cfg: Config) -> None:
             raise SetupError(f"AP 补完每首最多尝试次数应至少为 1：{cfg.loop.ap_max_attempts}")
     if cfg.loop.song_mode == "list" and not cfg.loop.song_list.strip():
         raise SetupError("选曲方式为歌单时要填写歌单（--songs 或 loop.song_list）")
+    if cfg.loop.arena:
+        if cfg.loop.challenge:
+            raise SetupError("激奏舞台和挑战演出不能同时打开（--arena / --challenge 或 loop.arena / loop.challenge）")
+        if cfg.loop.arena_band not in ARENA_BAND_MODES:
+            raise SetupError(f"激奏舞台的乐队应为 {'/'.join(ARENA_BAND_MODES)}：{cfg.loop.arena_band}")
+        if cfg.loop.arena_games_per_band < 1:
+            raise SetupError(f"激奏舞台每个乐队打的局数应至少为 1：{cfg.loop.arena_games_per_band}")
     if cfg.loop.challenge:
         if cfg.loop.song_mode not in CHALLENGE_SONG_MODES:
             raise SetupError(f"挑战演出的选曲方式只能是 {'/'.join(CHALLENGE_SONG_MODES)}：{cfg.loop.song_mode}")
@@ -218,6 +226,16 @@ def check_run_config(cfg: Config) -> None:
         raise SetupError(f"触控位置随机应在 0~1：{touch.position_jitter}")
 
 
+def arena_defaults(cfg: Config) -> None:
+    """激奏舞台：转盘定歌、只打 EXPERT，没有选曲和跳过；多人对局不用 AP，至少故意打 ARENA_GREAT_RATIO 的 GREAT。"""
+    if not cfg.loop.arena:
+        return
+    cfg.loop.song_mode = "current"
+    cfg.game.difficulty = "expert"
+    cfg.loop.use_skip = False
+    cfg.play.touch.great_ratio = max(cfg.play.touch.great_ratio, ARENA_GREAT_RATIO)
+
+
 def drop_great_for_ap(cfg: Config) -> None:
     """以 AP 为目标选曲（AP 补完 / 优先没 AP 的歌）时不故意打 GREAT。"""
     if cfg.play.touch.great_ratio > 0 and cfg.loop.song_mode in ("ap", "ap_first"):
@@ -264,6 +282,13 @@ def cmd_run(cfg: Config, args) -> int:
         cfg.loop.challenge = True
     if args.challenge_cost is not None:
         cfg.game.challenge_cost = args.challenge_cost
+    if args.arena:
+        cfg.loop.arena = True
+    if args.arena_band:
+        cfg.loop.arena_band = args.arena_band
+    if args.arena_games is not None:
+        cfg.loop.arena_games_per_band = args.arena_games
+    arena_defaults(cfg)
     check_run_config(cfg)
     drop_great_for_ap(cfg)
     stop = args.stop
@@ -331,6 +356,7 @@ def _game_navigator(cfg: Config, args, source, touch):
         args.stop,
         restart_app=restart_app,
         app_running=lambda: adb.app_running(cfg.device),
+        app_in_front=lambda: adb.app_in_front(cfg.device),
     )
 
 
@@ -455,7 +481,7 @@ def cmd_select(cfg: Config, args) -> int:
 
 def register(sub) -> None:
     from .nav.screens import LB_MAX_COST
-    from .sources import SONG_MODES
+    from .sources import ARENA_BAND_MODES, SONG_MODES
 
     sp = sub.add_parser("screenshot", help="截图（可叠加判定线/轨道线核对几何参数）")
     sp.add_argument("-o", "--output", default="debug/screenshot.png")
@@ -493,7 +519,7 @@ def register(sub) -> None:
     sp.add_argument("--category", choices=("原创", "翻唱", "全部"), help="先切换到这个分类")
     sp.set_defaults(func=cmd_select)
 
-    sp = sub.add_parser("run", help="全自动连续演奏（自由演出，--challenge 时为挑战演出）")
+    sp = sub.add_parser("run", help="全自动连续演奏（自由演出，--challenge 时为挑战演出，--arena 时为激奏舞台）")
     sp.add_argument("-d", "--difficulty", choices=("easy", "normal", "hard", "expert"), help="覆盖 game.difficulty")
     sp.add_argument(
         "--mode",
@@ -554,6 +580,17 @@ def register(sub) -> None:
         choices=(200, 400, 800, 1600),
         help="覆盖 game.challenge_cost（挑战演出每局消耗的挑战pt，默认 200）",
     )
+    sp.add_argument(
+        "--arena",
+        action="store_true",
+        help="打激奏舞台（多人对局，转盘定歌，只打 EXPERT，至少故意打 1%% GREAT）；LB 选项同自由演出，不能跳过",
+    )
+    sp.add_argument(
+        "--arena-band",
+        choices=ARENA_BAND_MODES,
+        help="覆盖 loop.arena_band（激奏舞台选哪个乐队：current 不换；rotate 从当前乐队开始每队打 --arena-games 局再换下一队）",
+    )
+    sp.add_argument("--arena-games", type=int, metavar="N", help="覆盖 loop.arena_games_per_band（rotate 时每个乐队打几局）")
     sp.add_argument("--watch-combo", action="store_true", help=WATCH_COMBO_HELP)
     sp.add_argument("--record", action="store_true", help="同步失败时保存跟踪区截图到 debug/sync")
     sp.set_defaults(func=cmd_run)

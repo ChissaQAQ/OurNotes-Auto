@@ -87,6 +87,38 @@
                 "ChallengeCost",
                 "MaxPlays"
             ]
+        },
+        {
+            "name": "激奏舞台",
+            "label": "$task.Arena",
+            "entry": "OurNotes_Arena",
+            "group": [
+                "play"
+            ],
+            "description": "$task.Arena.desc",
+            "option": [
+                "ArenaBand",
+                "MaxPlays",
+                "LbCost",
+                "LbRefill"
+            ]
+        },
+        {
+            "name": "挂机（激奏舞台）",
+            "label": "$task.ArenaIdle",
+            "entry": "OurNotes_ArenaIdle",
+            "group": [
+                "play"
+            ],
+            "description": "$task.ArenaIdle.desc",
+            "option": [
+                "ArenaBand",
+                "IdleLbCost",
+                "LbRefill",
+                "StudioClaim",
+                "DailyClaim",
+                "MaxPlays"
+            ]
         }
     ],
     "option": {
@@ -587,6 +619,66 @@
                     }
                 }
             }
+        },
+        "ArenaBand": {
+            "type": "select",
+            "label": "$opt.ArenaBand",
+            "description": "$opt.ArenaBand.desc",
+            "cases": [
+                {
+                    "name": "current",
+                    "label": "$opt.ArenaBand.current",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_band": "current" } } }
+                },
+                {
+                    "name": "mygo",
+                    "label": "$opt.ArenaBand.mygo",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_band": "mygo" } } }
+                },
+                {
+                    "name": "avemujica",
+                    "label": "$opt.ArenaBand.avemujica",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_band": "avemujica" } } }
+                },
+                {
+                    "name": "mewtype",
+                    "label": "$opt.ArenaBand.mewtype",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_band": "mewtype" } } }
+                },
+                {
+                    "name": "millsage",
+                    "label": "$opt.ArenaBand.millsage",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_band": "millsage" } } }
+                },
+                {
+                    "name": "dumbrock",
+                    "label": "$opt.ArenaBand.dumbrock",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_band": "dumbrock" } } }
+                },
+                {
+                    "name": "rotate",
+                    "label": "$opt.ArenaBand.rotate",
+                    "description": "$opt.ArenaBand.rotate.desc",
+                    "option": ["ArenaGamesPerBand"],
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_band": "rotate" } } }
+                }
+            ],
+            "default_case": "current"
+        },
+        "ArenaGamesPerBand": {
+            "type": "input",
+            "label": "$opt.ArenaGamesPerBand",
+            "inputs": [
+                {
+                    "name": "count",
+                    "label": "$opt.ArenaGamesPerBand.count",
+                    "default": "1",
+                    "pipeline_type": "int",
+                    "verify": "^[1-9]\\d*$",
+                    "pattern_msg": "$opt.ArenaGamesPerBand.count.msg"
+                }
+            ],
+            "pipeline_override": { "OurNotesParam": { "attach": { "arena_games_per_band": "{count}" } } }
         }
     }
 }
