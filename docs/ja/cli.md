@@ -49,6 +49,10 @@ ournotes-auto run --until-lb-empty --lb-cost 3 --lb-refill 30   # LB消化、LB 
 ournotes-auto run --challenge --mode rotate              # チャレンジライブ（イベント期間中）：1 回 200 CP、全曲を順番にプレイ、CP が足りなくなるまで
 ournotes-auto run --challenge --challenge-cost 1600 -n 3 # チャレンジライブ、1 回 1600 CP（報酬 ×8）、3 回プレイ
 ournotes-auto run --challenge --mode ap_first           # チャレンジライブ：EXPERT でまだ AP していない曲を先にプレイし、すべて AP したら順番にプレイ
+ournotes-auto run --arena                                # 激奏ステージ：バンドは変えず、1 回あたりの LB 消費は設定どおりで、ずっとプレイ（-n で回数を制限）
+ournotes-auto run --arena --arena-band rotate --arena-games 2 -n 10   # 激奏ステージ：いまのバンドから各バンド 2 回ずつプレイして次へ、合計 10 回
+ournotes-auto run --arena --arena-band mygo --until-lb-empty --lb-cost 3   # 激奏ステージ：MyGO!!!!! に切り替えて、LB がなくなるまでプレイ
+ournotes-auto run --arena --until-lb-empty --wait-lb --lb-cost 3   # 放置周回（激奏ステージ）：LB がなくなったら激奏ステージのトップで 3 まで回復を待って続行
 
 # ゲームを起動してホーム画面に入る。デイリー報酬を受け取る（デフォルトではストーリー閲覧・イベントストーリー以外の 7 項目をすべて受け取り、--jobs で一部だけ実行）
 ournotes-auto start
@@ -108,6 +112,8 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 - チャレンジライブの `ap_first`：チャレンジライブの楽曲選択画面には絞り込みもランダム選曲もないため、代わりに選択中の曲から下へ 1 曲ずつ、右側のパネルに ALL PERFECT のマークがあるかを確認し、最初に見つかった未 AP の曲をプレイします（同じ曲を `loop.ap_max_attempts` 回プレイしても AP できなければ、もうプレイしません）。`loop.ap_first_difficulties` の使い方は上と同じで、すべて埋め終わったら `-d` の難易度で全曲を順番にプレイします。
 
 チャレンジライブ（`--challenge`）は 1 回ごとに `game.challenge_cost`（`--challenge-cost`、200 / 400 / 800 / 1600、デフォルト 200。null ならゲーム内の設定を変更しない）のチャレンジpt を消費し、LB は消費せず、CP が 1 回分に足りなくなるまでプレイします。そのため `--until-lb-empty`、`--wait-lb`、`--lb-refill` とは併用できません。
+
+激奏ステージ（`--arena` / `loop.arena`）：ルーレットで曲が決まり、EXPERT だけをプレイし、スキップせず、`play.touch.great_ratio` は少なくとも 0.01 として扱います（マルチ対戦は AP の必要がないため）。`--lb-cost`、`--lb-auto`、`--lb-refill`、`--until-lb-empty`、`--wait-lb` の使い方はフリーライブと同じで、激奏ステージのトップの「LB消費」で設定します。`--arena-band`（`loop.arena_band`）でバンドを選びます：`current`（デフォルト）は変えません。`mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` は毎回の前にそのバンドに切り替えます。`rotate` はいまのバンドから始め、ゲーム内の順に各バンドで `--arena-games`（`loop.arena_games_per_band`、デフォルト 1）回プレイしたら次のバンドに替えます。`--challenge` とは併用できません。毎回のバンド、順位、ランクポイントの増減、増減後のランクポイント、消費した LB、判定数は `data/arena.jsonl` に記録します。
 
 1 曲だけを選択する（楽曲選択画面で止めておく）：`ournotes-auto select 碧天伴走 [--category 全部]`。
 

@@ -11,7 +11,7 @@ from ..config import JP_PACKAGE, parse_daily_time
 from ..device.mumu_ipc import find_dll
 from ..nav.screens import LB_MAX_COST
 from ..notify import CHANNELS as NOTIFY_CHANNELS
-from ..sources import CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
+from ..sources import ARENA_BAND_MODES, CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
 
 PARAM_NODE = "OurNotesParam"  # 界面选项都覆盖到这个节点的 attach 上
 TASKS = {
@@ -23,11 +23,14 @@ TASKS = {
     "idle": "挂机",
     "ap": "AP补完",
     "challenge": "挑战演出",
+    "arena": "激奏舞台",
+    "arena_idle": "挂机（激奏舞台）",
     "records": "打开统计窗口",
     "notify_test": "推送测试",
 }
 LOCAL_TASKS = {"records", "notify_test"}  # 不需要连接模拟器
-RUN_TASKS = ("repeat", "clear_lb", "idle", "ap", "challenge")  # 连续演奏（``run``）的任务
+RUN_TASKS = ("repeat", "clear_lb", "idle", "ap", "challenge", "arena", "arena_idle")  # 连续演奏（``run``）的任务
+IDLE_TASKS = ("idle", "arena_idle")  # 挂机：LB 用完等恢复、定时领取
 # 领取日常的各项（与 ``daily --jobs`` 一致），界面上的开关是 attach 里的 ``daily_<项目>``
 DAILY_JOBS = ("studio", "story", "event", "missions", "pass", "limited", "beginner", "tgw", "recruit", "gifts")
 NEW_DAILY_JOBS = frozenset(("event", "recruit"))  # 后加的项目：资源是旧版、attach 里没有时不做
@@ -254,6 +257,23 @@ def _challenge_settings(attach: Mapping[str, Any]) -> dict[str, str]:
     return sets
 
 
+def _arena_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
+    """激奏舞台：LB 选项同重复刷歌（激奏舞台）/ 挂机（挂机（激奏舞台））。只打 EXPERT、不跳过、
+    GREAT 比例至少 1% 由 ``run`` 命令统一设（见 :func:`~ournotes_auto.commands.arena_defaults`）。"""
+    sets = {"loop.arena": "true", "loop.arena_band": (band := _choice(attach, "arena_band", ARENA_BAND_MODES))}
+    if band == "rotate":
+        sets["loop.arena_games_per_band"] = str(_int(attach, "arena_games_per_band", 1))
+    if task == "arena":
+        sets.update(_lb_cost(attach))
+        sets["loop.until_lb_empty"] = "false"
+    else:
+        sets.update(_lb_cost(attach, "clear_lb_cost", 0))
+        sets["loop.until_lb_empty"] = "true" if _lb_spends(sets) else "false"  # 消耗 0 时不等 LB，一直打
+    sets.update(_lb_refill(attach, sets))
+    sets["loop.wait_lb"] = "true" if task == "arena_idle" else "false"
+    return sets
+
+
 def _humanize(attach: Mapping[str, Any]) -> dict[str, str]:
     """拟人化：``human_great``（GREAT 比例，百分数）、``human_timing``（时机偏移幅度 ms）、``human_position``（开关）。"""
     return {
@@ -276,15 +296,19 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     ``daily_claim`` ``daily_claim_time``（每天定时领取日常），其他任务不领。
     挑战演出只有 ``challenge_song_mode``（current / rotate / ap_first）、``difficulty`` 和 ``challenge_cost``
     （``keep`` 或 200/400/800/1600），不用 LB 相关的选项。
+    激奏舞台 / 挂机（激奏舞台）没有选曲和难度，另有 ``arena_band``（current、各乐队或 rotate，rotate 时还有
+    ``arena_games_per_band``），LB 选项分别同重复刷歌 / 挂机，挂机（激奏舞台）同样定时领取。
     """
     if task not in RUN_TASKS:
         raise ParamError(f"未知任务：{task}")
+    idle = task in IDLE_TASKS
     sets = {
         "device.touch": _choice(attach, "touch", TOUCH_MODES),
         "loop.max_plays": str(_int(attach, "max_plays", 0)),
         "loop.challenge": "true" if task == "challenge" else "false",
-        "loop.studio_claim_hours": _studio_claim(attach) if task == "idle" else "0",
-        "loop.daily_claim_time": _daily_claim(attach) if task == "idle" else "",
+        "loop.arena": "false",
+        "loop.studio_claim_hours": _studio_claim(attach) if idle else "0",
+        "loop.daily_claim_time": _daily_claim(attach) if idle else "",
         **_humanize(attach),
     }
     if not flag(attach, "restart_low_fps", True):
@@ -293,6 +317,8 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
         return {**sets, **_ap_settings(attach)}
     if task == "challenge":
         return {**sets, **_challenge_settings(attach)}
+    if task in ("arena", "arena_idle"):
+        return {**sets, **_arena_settings(task, attach)}
     sets["game.difficulty"], high_first = _difficulty(attach)
     sets["loop.song_mode"] = mode = _choice(attach, "song_mode", LOOP_SONG_MODES)
     if mode == "ap_first":

@@ -6,6 +6,7 @@ import logging
 import threading
 import urllib.error
 import urllib.parse
+from pathlib import Path
 
 import pytest
 
@@ -198,6 +199,27 @@ def test_last_error():
         except KeyError:
             log.exception("意外错误")
         assert handler.last == "意外错误：KeyError('x')"
+    finally:
+        log.removeHandler(handler)
+
+
+def test_last_error_hides_home():
+    """推送到第三方服务：本机路径里的用户目录（带着 Windows 用户名）换成 ~。"""
+    log = logging.getLogger("test_notify.home")
+    handler = notify.LastError()
+    log.addHandler(handler)
+    path = Path.home() / "OurNotes" / "a.png"
+    try:
+        log.error("读不了 %s", path)
+        assert handler.last == f"读不了 {Path('~', 'OurNotes', 'a.png')}"
+        log.error("读不了 %s", path.as_posix())
+        assert handler.last == "读不了 ~/OurNotes/a.png"
+        try:
+            open(path.parent / "不存在" / "x")
+        except OSError as e:
+            log.error("%s", e)  # 消息里是 repr 的路径（Windows 上双反斜杠）
+        assert str(Path.home()) not in handler.last and repr(str(Path.home()))[1:-1] not in handler.last
+        assert "~" in handler.last
     finally:
         log.removeHandler(handler)
 

@@ -49,6 +49,10 @@ ournotes-auto run --until-lb-empty --lb-cost 3 --lb-refill 30   # Use Up LB, ref
 ournotes-auto run --challenge --mode rotate              # Challenge LIVE (during events): 200 CP per round, rotating through songs until CP runs short
 ournotes-auto run --challenge --challenge-cost 1600 -n 3 # Challenge LIVE, 1600 CP per round (rewards ×8), 3 rounds
 ournotes-auto run --challenge --mode ap_first           # Challenge LIVE: play EXPERT songs that aren't AP yet first, then rotate once all are AP
+ournotes-auto run --arena                                # Arena: keep the band, LB per round as configured, play nonstop (-n limits rounds)
+ournotes-auto run --arena --arena-band rotate --arena-games 2 -n 10   # Arena: 2 rounds per band starting from the current one, 10 rounds in total
+ournotes-auto run --arena --arena-band mygo --until-lb-empty --lb-cost 3   # Arena: switch to MyGO!!!!! and play until LB runs out
+ournotes-auto run --arena --until-lb-empty --wait-lb --lb-cost 3   # AFK Farming (Arena): wait on the Arena top page for LB to recover to 3, then keep playing
 
 # Start the game and enter the Home screen; claim daily rewards (by default, all seven items except stories and event stories; --jobs to do only some of them)
 ournotes-auto start
@@ -108,6 +112,8 @@ Song selection modes for `run` (`loop.song_mode`):
 - `ap_first` in Challenge LIVE: the Challenge LIVE song selection screen has no filter or random selection, so instead it checks song by song, downward from the selected one, whether the right-side panel has the ALL PERFECT mark, and plays the first song that isn't AP (a song that still isn't AP after `loop.ap_max_attempts` plays is no longer played); `loop.ap_first_difficulties` works as above, and once all are done it rotates through the songs at the `-d` difficulty.
 
 Challenge LIVE (`--challenge`) spends `game.challenge_cost` (`--challenge-cost`, 200 / 400 / 800 / 1600, default 200; null keeps the in-game setting) Challenge Pts per round, uses no LB, and plays until CP isn't enough for another round, so it can't be combined with `--until-lb-empty`, `--wait-lb` or `--lb-refill`.
+
+Arena (`--arena` / `loop.arena`): the roulette picks the song, it only plays EXPERT, never skips, and `play.touch.great_ratio` is treated as at least 0.01 (multiplayer doesn't need AP). `--lb-cost`, `--lb-auto`, `--lb-refill`, `--until-lb-empty` and `--wait-lb` work as in Free LIVE, through 「消耗LB」 on the Arena top page. `--arena-band` (`loop.arena_band`) picks the band: `current` (default) keeps it; `mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` switches to that band before each round; `rotate` starts from the current band and moves on to the next one in the game's order after `--arena-games` (`loop.arena_games_per_band`, default 1) rounds. Can't be combined with `--challenge`. Each round's band, placement, rank point change, rank points after the change, LB spent and judgment counts are recorded in `data/arena.jsonl`.
 
 To select a single song (stopping on the Select Song screen): `ournotes-auto select 碧天伴走 [--category 全部]`.
 

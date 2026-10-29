@@ -217,6 +217,12 @@ class LoopConfig:
     max_plays: int = 0  # 0 表示不限次数
     # 打挑战演出（部分活动期间开放，消耗挑战pt，见 game.challenge_cost）而不是自由演出，打到 CP 不够一局为止
     challenge: bool = False
+    # 打激奏舞台（多人对局，转盘定歌，只打 EXPERT）而不是自由演出；LB 消耗同自由演出（game.lb_cost / lb_auto），不能用跳过
+    arena: bool = False
+    # 激奏舞台选哪个乐队：current 不换；mygo / avemujica / mewtype / millsage / dumbrock 指定一个；
+    # rotate 从当前乐队开始按游戏里的顺序每队打 arena_games_per_band 局再换下一队
+    arena_band: str = "current"
+    arena_games_per_band: int = 1
     # 打到 LB 用完为止（需要 game.lb_cost 为 1~5 或 game.lb_auto；用完后不再改为消耗 0 继续）
     until_lb_empty: bool = False
     # 挂机：LB 用完后停在乐队确认页，等它恢复到 game.lb_cost 个再接着打，一直运行（需要 game.lb_cost 为 0~5；
@@ -229,7 +235,7 @@ class LoopConfig:
     # 录音室练习最多累计 12 小时，超过后效率降到 30%，挂机等长时间运行时用
     studio_claim_hours: float = 0.0
     # 每天到这个时间（电脑的本地时间，时:分，如 "22:30"）回主界面领一次日常（任务、任务通行证、限定任务、新手任务、
-    # T.G.W CARD、礼物盒），开始后第一次到点时领；留空不领。游戏每天 23:00 日期变更，挂机等跨天运行时用
+    # T.G.W CARD、礼物盒），开始后第一次到点时领；留空不领。游戏每天 3:00 日期变更，挂机等跨天运行时用
     daily_claim_time: str = ""
     max_failures: int = 5  # 连续失败次数上限
     # 首音符同步失败、演奏中生命值归零时暂停、点「重试」让这首歌从头开始的次数（每局）；用完了就等歌曲放完。0 为不重试

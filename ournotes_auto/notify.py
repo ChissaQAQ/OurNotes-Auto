@@ -15,6 +15,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 from . import __version__
 from .config import NotifyConfig
@@ -177,16 +178,25 @@ def push(cfg: NotifyConfig, event: str, title: str, text: str, wait: bool = True
 
 
 class LastError(logging.Handler):
-    """记下最后一条错误日志的第一行，任务出错结束时推送它。"""
+    """记下最后一条错误日志的第一行，任务出错结束时推送它（本机路径里的用户目录换成 ~，用户名不推出去）。"""
 
     def __init__(self) -> None:
         super().__init__(logging.ERROR)
         self.last = ""
+        try:
+            home = str(Path.home())
+        except RuntimeError:  # 找不到用户目录
+            home = ""
+        # repr 里双反斜杠的（先换）、原样的、斜杠的
+        variants = (home.replace("\\", "\\\\"), home, home.replace("\\", "/"))
+        self._homes = [h for h in dict.fromkeys(variants) if len(h) > 1]
 
     def emit(self, record: logging.LogRecord) -> None:
         msg = record.getMessage().strip()
         if record.exc_info and record.exc_info[1] is not None:  # 意外错误：附上是什么错
             msg += f"：{record.exc_info[1]!r}"
+        for home in self._homes:
+            msg = msg.replace(home, "~")
         self.last = msg.splitlines()[0] if msg else ""
 
 

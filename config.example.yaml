@@ -43,6 +43,10 @@ loop:
   song_list: ""              # 歌单：曲目 ID 或曲名，逗号分隔，可加 @难度，如 "100010, 碧天伴走@hard"
   max_plays: 0               # 0 为不限
   challenge: false           # true：打挑战演出（部分活动期间开放，消耗挑战pt），打到 CP 不够一局为止
+  arena: false               # true：打激奏舞台（多人对局，转盘定歌，只打 EXPERT），LB 消耗按 game.lb_cost / lb_auto
+  arena_band: current        # 激奏舞台的乐队：current 不换；mygo / avemujica / mewtype / millsage / dumbrock；
+                             # rotate：从当前乐队开始按游戏里的顺序每队打 arena_games_per_band 局再换下一队
+  arena_games_per_band: 1
   until_lb_empty: false      # true：打到 LB 用完为止（清体力，需要 game.lb_cost 为 1~5 或 game.lb_auto）
   wait_lb: false             # true：挂机，LB 用完后停在乐队确认页等它恢复到 game.lb_cost 个再接着打，一直运行
                              # （game.lb_cost 为 0 时不等：持有 LB 时每局消耗 1 个，用完了消耗 0 接着打；
@@ -50,7 +54,7 @@ loop:
   use_skip: false            # true：自由演出先用乐队确认页的「跳过」消耗 LB（每天有次数），次数用完了再演奏
   studio_claim_hours: 0      # 每隔这么多小时回主界面领一次录音室练习（收获），开始时先领一次；0 为不领（最多累计 12 小时）
   daily_claim_time: ""       # 每天到这个时间（电脑的本地时间，要加引号，如 "22:30"）回主界面领一次任务、礼物盒等日常；
-                             # 留空不领。游戏每天 23:00 日期变更，挂机跨天时用
+                             # 留空不领。游戏每天 3:00 日期变更，挂机跨天时用
   max_failures: 5            # 连续失败这么多次后停止
   sync_retries: 2            # 首音符同步失败、演奏中生命值归零时暂停、点「重试」从头再来的次数（每局），用完了等歌曲放完；0 为不重试
   min_fps: 50                # 连续打歌时最近 5 次同步测到的游戏出帧率（中位数）低于它就重启游戏（连续运行十几个小时后会越来越卡）；0 为不检查

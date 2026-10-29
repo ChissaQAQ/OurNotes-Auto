@@ -12,7 +12,7 @@ import pytest
 
 from ournotes_auto import backup, release, stats
 from ournotes_auto.backup import BackupError, export_bundle, import_bundle, read_source
-from ournotes_auto.records import PlayResult, RecordStore
+from ournotes_auto.records import ArenaResult, PlayResult, RecordStore
 from ournotes_auto.runner import RunStats
 from ournotes_auto.stats import RUNNING, SESSIONS, UNLOCKED, Session, Tracker, load_sessions, session_row
 
@@ -89,6 +89,38 @@ def test_round_trip(tmp_path, docs):
     again = import_bundle(new, read_source(path, new))
     assert (again.records, again.known, again.sessions, again.achievements, again.offsets, again.backup) == (0, 3, 0, 0, False, None)
     assert files(new) == before
+
+
+def arena(band, t, **kw):
+    return json.dumps(asdict(ArenaResult(band=band, placement=1, ap_gain=10, title="春日影", timestamp=t, **kw)), ensure_ascii=False)
+
+
+def test_arena_round_trip(tmp_path, docs):
+    """激奏舞台的记录（arena.jsonl）一起导出、导入，这边有的不再加、读不了的行不要；旧版本导出的备份里没有也照常导入。"""
+    old_root = tmp_path / "old"
+    old = make(old_root / "data", [rec(1, T0)])
+    (old / backup.ARENA).write_text(arena("mygo", T0) + "\n{坏的\n" + arena("avemujica", T0 + 60) + "\n", encoding="utf-8")
+    path, b = export_bundle(old, old_root)
+    assert len(b.arena) == 2
+    with zipfile.ZipFile(path) as z:
+        assert backup.ARENA in z.namelist()
+
+    new = make(tmp_path / "new" / "data")
+    (new / backup.ARENA).write_text(arena("mygo", T0) + "\n", encoding="utf-8")
+    result = import_bundle(new, read_source(path, new))
+    assert (result.records, result.arena) == (1, 1)
+    assert [r.band for r in RecordStore(new).arena_history(limit=None)] == ["mygo", "avemujica"]
+    assert import_bundle(new, read_source(path, new)).backup is None
+    assert import_bundle(new, read_source(old_root, new)).backup is None  # 直接选旧的包目录也读 arena.jsonl
+
+    only = make(tmp_path / "only" / "data")  # 只打过激奏舞台、没读到结算页
+    (only / backup.ARENA).write_text(arena("mewtype", T0 + 120) + "\n", encoding="utf-8")
+    assert import_bundle(new, read_source(only, new)).arena == 1
+
+    manifest = json.dumps({"app": backup.APP, "format": backup.FORMAT, "version": "0.2.0"})
+    older = _zip(tmp_path / "v020.zip", {backup.MANIFEST: manifest, "records.jsonl": rec(2, T0) + "\n"})
+    result = import_bundle(new, read_source(older, new))
+    assert (result.records, result.arena) == (1, 0) and read_source(older, new).arena == []
 
 
 def test_import_keeps_existing_lines(tmp_path, docs):

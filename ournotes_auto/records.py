@@ -71,6 +71,39 @@ def parse_result(line: str) -> PlayResult:
     return r
 
 
+@dataclass
+class ArenaResult:
+    """激奏舞台的一局（``arena.jsonl``），读不到的项为 None。演奏了、读到了结算页的，判定数同时照常记在
+    ``records.jsonl`` 里（修正 offset、统计用）。"""
+
+    band: str | None = None  # 选的乐队（``nav.screens.ARENA_BANDS`` 之一）
+    placement: int | None = None  # 名次（1～5）
+    ap_gain: int | None = None  # 段位分增减
+    ap_total: int | None = None  # 加减后的段位分
+    lb_cost: int | None = None  # 消耗的 LB（-1 为全部消耗）
+    title: str = ""  # 难度选择页上读到的曲名
+    music_id: int | None = None  # 认出的曲目（认不出时为 None，这局不演奏）
+    played: bool = False  # 演奏了（认出了曲目、拿到了谱面，同步没失败）
+    score: int | None = None
+    perfect: int | None = None
+    great: int | None = None
+    good: int | None = None
+    bad: int | None = None
+    miss: int | None = None
+    timestamp: float = field(default_factory=time.time)
+
+
+ARENA_FIELDS = frozenset(f.name for f in fields(ArenaResult))
+
+
+def parse_arena(line: str) -> ArenaResult:
+    """``arena.jsonl`` 的一行，读法同 :func:`parse_result`。"""
+    r = ArenaResult(**{k: v for k, v in json.loads(line).items() if k in ARENA_FIELDS})
+    if isinstance(r.timestamp, bool) or not isinstance(r.timestamp, (int, float)):
+        raise ValueError(f"时间不对：{r.timestamp!r}")
+    return r
+
+
 def timing_ratio(fast: int | None, slow: int | None, cfg: AutoTuneConfig) -> float | None:
     """r = (SLOW-FAST)/(SLOW+FAST)；FAST+SLOW 不到 ``min_samples``（或没读到）时为 None。"""
     if fast is None or slow is None:
@@ -92,15 +125,16 @@ def chart_key(music_id: int, difficulty: str) -> str:
 
 
 def game_day(now: float | None = None) -> str:
-    """游戏里的日期（YYYY-MM-DD）：每天北京时间 23:00（日本时间 0:00）变更。"""
+    """游戏里的日期（YYYY-MM-DD）：每天北京时间 3:00（日本时间 4:00）变更（游戏 1.1.0 起，之前是 23:00）。"""
     t = time.time() if now is None else now
-    return time.strftime("%Y-%m-%d", time.gmtime(t + 9 * 3600))
+    return time.strftime("%Y-%m-%d", time.gmtime(t + 5 * 3600))
 
 
 class RecordStore:
     def __init__(self, data_dir: str | Path = "data"):
         self.dir = Path(data_dir)
         self.records_path = self.dir / "records.jsonl"
+        self.arena_path = self.dir / "arena.jsonl"
         self.state_path = self.dir / "state.json"
 
     def _load_state(self) -> dict:
@@ -234,14 +268,16 @@ class RecordStore:
 
     def history(self, limit: int | None = 20) -> list[PlayResult]:
         """最近 ``limit`` 局（None 为全部），从旧到新。按时间排：导入的旧记录接在文件末尾。"""
-        if not self.records_path.exists():
-            return []
-        out = []
-        for line in self.records_path.read_text(encoding="utf-8").splitlines():
-            with suppress(TypeError, ValueError, AttributeError):
-                out.append(parse_result(line))
-        out.sort(key=lambda r: r.timestamp)
-        return out if limit is None else out[-limit:] if limit > 0 else []
+        return _load(self.records_path, parse_result, limit)
+
+    def append_arena(self, result: ArenaResult) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        with self.arena_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(asdict(result), ensure_ascii=False) + "\n")
+
+    def arena_history(self, limit: int | None = 20) -> list[ArenaResult]:
+        """激奏舞台最近 ``limit`` 局（None 为全部），从旧到新。"""
+        return _load(self.arena_path, parse_arena, limit)
 
     def autotune(self, result: PlayResult, cfg: AutoTuneConfig, note_speed: float = 5.0, label: str = "") -> float:
         """记录结果并按 FAST/SLOW 更新学到的 offset（全局或这张谱面的），返回修正量。"""
@@ -319,6 +355,18 @@ class RecordStore:
             f"；各谱面的平均 {shift:+.2f}ms 移到全局" if abs(shift) >= 0.01 else "",
         )
         return new - old
+
+
+def _load(path: Path, parse, limit: int | None) -> list:
+    """按时间排好的记录（读不了的行不要）的最后 ``limit`` 条（None 为全部）。"""
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        with suppress(TypeError, ValueError, AttributeError):
+            out.append(parse(line))
+    out.sort(key=lambda r: r.timestamp)
+    return out if limit is None else out[-limit:] if limit > 0 else []
 
 
 def _recenter(state: dict, note_speed: float, limit: float) -> float:

@@ -1,6 +1,7 @@
 """用假对象验证全自动循环的编排逻辑。"""
 
 import threading
+import time
 from datetime import datetime
 
 import pytest
@@ -15,7 +16,18 @@ from ournotes_auto.player.session import PlayOutcome, SyncFailed
 from ournotes_auto.player.sync import SyncResult
 from ournotes_auto.records import RecordStore
 from ournotes_auto.result_reader import ResultCounts
-from ournotes_auto.runner import IDLE_DAILY_JOBS, Runner, SongLabel, next_daily_time
+from ournotes_auto.runner import IDLE_DAILY_JOBS, ArenaOutcome, Runner, SongLabel, next_daily_time
+from ournotes_auto.sources import make_source
+
+
+def result_counts():
+    return ResultCounts(
+        counts={"perfect": 1000, "great": 27, "good": 0, "bad": 0, "miss": 0},
+        fast={"perfect": 300, "great": 20, "good": 0, "bad": 0, "miss": 0},
+        slow={"perfect": 700, "great": 7, "good": 0, "bad": 0, "miss": 0},
+        score=123,
+        combo=1027,
+    )
 
 
 class FakeNav:
@@ -38,6 +50,9 @@ class FakeNav:
     def choose_next_song(self, mode):
         self.calls.append(f"next:{mode}")
 
+    def selected_locked(self):
+        return False
+
     def clear_status_filter(self):
         self.calls.append("clear_status")
 
@@ -53,13 +68,7 @@ class FakeNav:
 
     def read_result(self, expected_total=None):
         self.calls.append("result")
-        return ResultCounts(
-            counts={"perfect": 1000, "great": 27, "good": 0, "bad": 0, "miss": 0},
-            fast={"perfect": 300, "great": 20, "good": 0, "bad": 0, "miss": 0},
-            slow={"perfect": 700, "great": 7, "good": 0, "bad": 0, "miss": 0},
-            score=123,
-            combo=1027,
-        )
+        return result_counts()
 
     def leave_result(self):
         self.calls.append("leave")
@@ -886,6 +895,118 @@ def test_runner_counts_chart_download_error_as_failure(tmp_path):
     assert stats.failures == 2
     assert not any(entry[0] == "done" for entry in src.log)
 
+
+class ArenaNav(FakeNav):
+    """激奏舞台：首页的乐队、匹配后难度选择页上的曲名、结果弹窗（名次、段位分、判定数）。"""
+
+    def __init__(self, title="诗超绊", band="mygo", counts=True):
+        super().__init__(title)
+        self.band, self.counts = band, counts
+
+    def arena_band(self):
+        return self.band
+
+    def arena_select_band(self, band):
+        self.calls.append(f"band:{band}")
+        self.band = band
+
+    def start_arena(self, lb_short="zero"):
+        self.calls.append(f"arena:{lb_short}")
+        return SongLabel(self.title, "expert", 27)
+
+    def arena_ready(self):
+        self.calls.append("ready")
+
+    def read_arena_result(self, expected_total=None):
+        self.calls.append("arena_result")
+        return ArenaOutcome(2, 15, 1015, result_counts() if self.counts else None, 0)
+
+
+def make_arena(tmp_path, nav=None, max_plays=2, **kw):
+    runner, _, store = make(tmp_path, **kw)
+    runner.cfg.loop.arena, runner.cfg.loop.max_plays = True, max_plays
+    runner.nav = nav or ArenaNav()
+    runner.source = make_source(runner.cfg)
+    return runner, runner.nav, store
+
+
+def test_arena_plays_and_records(tmp_path):
+    """激奏舞台：匹配、认歌、准备完毕后演奏，记下乐队、名次、段位分和判定数；判定数也照常记进演奏记录。"""
+    runner, nav, store = make_arena(tmp_path)
+    stats = runner.run()
+    assert stats.plays == 2 and stats.failures == 0
+    assert nav.calls == ["ensure:expert", "arena:zero", "ready", "arena_result", "leave"] * 2
+    assert len(store.history()) == 2
+    a = store.arena_history()
+    assert len(a) == 2 and not store.records_path.samefile(store.arena_path)
+    assert (a[0].band, a[0].placement, a[0].ap_gain, a[0].ap_total, a[0].lb_cost) == ("mygo", 2, 15, 1015, 0)
+    assert (a[0].title, a[0].music_id, a[0].played, a[0].score, a[0].perfect, a[0].great, a[0].miss) == ("诗超绊", 100008, True, 123, 1000, 27, 0)
+
+
+def test_arena_record_time(tmp_path):
+    """激奏舞台的一局记的是它的演奏记录的时间（中间隔了一会儿也一样）：统计页按这个把激奏舞台打的局从普通演奏里分出来。"""
+    runner, nav, store = make_arena(tmp_path, max_plays=1)
+    record = runner._record
+
+    def slow(outcome, rc):
+        result = record(outcome, rc)
+        time.sleep(0.05)
+        return result
+
+    runner._record = slow
+    runner.run()
+    (r,), (a,) = store.history(), store.arena_history()
+    assert a.timestamp == r.timestamp and a.music_id == r.music_id
+
+
+def test_arena_unknown_song_waits_out_match(tmp_path):
+    """认不出歌：这局不演奏，照样等对局结束、记下名次，算失败；谱面站没有谱面时一样。"""
+    runner, nav, store = make_arena(tmp_path, ArenaNav(title="不认识的歌", counts=False), max_plays=0)
+    runner.cfg.loop.max_failures = 1
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 1 and runner.session.retries == []
+    assert nav.calls == ["ensure:expert", "arena:zero", "ready", "arena_result", "leave"]
+    assert store.history() == []
+    (a,) = store.arena_history()
+    assert (a.title, a.music_id, a.played, a.placement, a.perfect) == ("不认识的歌", None, False, 2, None)
+
+    from ournotes_auto.charts.bdon import ChartNotFound
+
+    runner, nav, store = make_arena(tmp_path / "missing", max_plays=0)
+    runner.cfg.loop.max_failures = 1
+
+    def missing(mid, diff, title=""):
+        raise ChartNotFound(f"{mid}_{diff}")
+
+    runner.client.chart = missing
+    assert runner.run().failures == 1 and runner.session.retries == []
+    (a,) = store.arena_history()
+    assert (a.music_id, a.played) == (100008, False)
+
+
+def test_arena_no_retry(tmp_path):
+    """激奏舞台演奏中没有暂停：同步失败不重试，等歌放完；结算页的判定数还是记在激奏舞台的记录里。"""
+    runner, nav, store = make_arena(tmp_path, max_plays=1, fails=1)
+    runner.cfg.loop.max_failures = 1
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 1
+    assert "retry" not in nav.calls and runner.session.retries == [False]
+    assert store.history() == []
+    (a,) = store.arena_history()
+    assert not a.played and a.perfect == 1000
+
+
+def test_arena_rotate_bands(tmp_path):
+    """轮流打每个乐队：每局前在首页换好乐队，记下的是这局选的乐队；打到 LB 用完时 LB 不够就停。"""
+    runner, nav, store = make_arena(tmp_path, max_plays=3)
+    runner.cfg.loop.arena_band = "rotate"
+    runner.cfg.loop.until_lb_empty, runner.cfg.game.lb_cost = True, 2
+    runner.source = make_source(runner.cfg)
+    runner.run()
+    assert [a.band for a in store.arena_history()] == ["mygo", "avemujica", "mewtype"]
+    assert [c for c in nav.calls if c.startswith(("band:", "arena:"))] == [
+        "band:mygo", "arena:stop", "band:avemujica", "arena:stop", "band:mewtype", "arena:stop"
+    ]
 
 def test_runner_skips_close_when_stopped(tmp_path):
     from ournotes_auto.runner import NavigationError

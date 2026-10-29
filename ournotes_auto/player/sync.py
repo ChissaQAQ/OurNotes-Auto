@@ -63,6 +63,8 @@ _BAR_UNITS = np.arange(0.75, 23.5, 0.5)
 _BAR_GAP = 1.5
 _BAR_MIN_PROBES = 8
 _BAR_MAX_H = 0.012  # 小节线最多这么高（屏高比例，720p 约 9 像素）；更高的整行变化是转场、闪光
+# 前沿这么久没往下走就不是音符（音符在跟踪区顶部也约 50 像素/秒），是停在轨道上的提示，如比首音符先出现的倒计时
+_STILL_S = 0.5
 
 
 class SyncTimeout(TimeoutError):
@@ -246,6 +248,7 @@ class NoteTracker:
         self._frames = 0
         self.samples: list[tuple[float, float]] = []
         self._first_seen: float | None = None
+        self._since = np.full(self.y_to - self.y_from, np.nan)  # 各行从什么时候起一直有覆盖（见 _drop_still）
         self._seen_frames = 0  # 首音符出现以来的帧数（算出帧率）
         self._start_t: float | None = None
         self._begin_t: float | None = None  # 第一帧的时刻，用于检查推算的歌曲开始时刻
@@ -318,7 +321,7 @@ class NoteTracker:
             return None
 
         scores = self._row_scores(crop, self._baseline.astype(np.int16), gate=True)
-        hit = np.flatnonzero(scores >= self.p.diff_threshold)
+        hit = self._drop_still(crop, t, np.flatnonzero(scores >= self.p.diff_threshold))
         if hit.size == 0:
             # 音符出现前缓慢跟随背景变化
             self._baseline += (crop - self._baseline) * 0.05
@@ -326,6 +329,18 @@ class NoteTracker:
                 return self._finish(crop, t, "音符消失")
             return None
         lead = int(hit.max())
+        if self.samples and self.p.tau_s > 0:
+            # 音符这一帧到不了的行（与 _jump 同一个界限）和音符之间隔着空行：多半是突然出现的提示（如激奏舞台在
+            # 中间轨道上显示的 LUCK READY 倒计时，出现的时机每局不同），并入基线，继续跟踪原来的音符；
+            # 连成一片（转场）或只有这样的行时照旧按前沿跳变处理
+            tp, yp = self.samples[-1]
+            h = self.geo.motion_horizon_y
+            reach = h + (yp - h) * math.exp((2 * (t - tp) + 0.05) / self.p.tau_s) - self.y_from - 0.5
+            far = int(np.count_nonzero(hit > reach))
+            if 0 < far < hit.size and hit[-far] - hit[-far - 1] > 1:
+                rows = hit[-far:]
+                self._baseline[rows] = crop[rows]
+                lead = int(hit[-far - 1])
         if self._first_seen is None:
             if lead > self.p.max_entry * (self.y_to - self.y_from):
                 # 音符总是从顶部进入；一出现就在下方说明是转场/弹窗等整体变化
@@ -354,6 +369,24 @@ class NoteTracker:
             return self._solve(t, "跟踪超时")
         return None
 
+    def _drop_still(self, crop: np.ndarray, t: float, hit: np.ndarray) -> np.ndarray:
+        """连续 ``_STILL_S`` 秒都有覆盖的行并入基线、不再算音符覆盖：停在轨道上不动的是提示（如激奏舞台中间轨道上的
+        LUCK READY 倒计时）。跟踪的正是这样的行（提示比首音符先出现）时重新找首音符。"""
+        since = np.full_like(self._since, np.nan)
+        since[hit] = np.fmin(self._since[hit], t)
+        self._since = since
+        still = hit[t - since[hit] > _STILL_S]
+        if still.size == 0:
+            return hit
+        self._baseline[still] = crop[still]
+        self._since[still] = np.nan
+        if self.samples and round(self.samples[-1][1] - self.y_from - 0.5) in still:
+            logger.debug("前沿停在第 %.0f 行 %.1fs 不动，不是音符，重新找首音符", self.samples[-1][1], _STILL_S)
+            self._first_seen = None
+            self._seen_frames = 0
+            self.samples = []
+        return np.setdiff1d(hit, still, assume_unique=True)
+
     def _rearm(self, crop: np.ndarray, t: float, why: str) -> None:
         """放弃当前轨迹（转场、弹窗、介绍卡片等非音符变化），重新等待画面静止（沿用基线时换回那个基线）。"""
         logger.debug("跟踪区出现非音符变化（%s），%s", why, "重新等待静止" if self._preset is None else "换回沿用的基线")
@@ -364,6 +397,7 @@ class NoteTracker:
         self._first_seen = None
         self._seen_frames = 0
         self.samples = []
+        self._since[:] = np.nan
         return None
 
     def _align_render(self, ts: np.ndarray, ys: np.ndarray, fit: _Fit) -> tuple[np.ndarray, float, _Fit] | None:

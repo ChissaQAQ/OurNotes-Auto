@@ -52,7 +52,7 @@ Before use, make sure of the following:
 - In-game "Notes Speed" at **5.00** (be sure to keep it when "Random GREAT" is on; other speeds shift all presses and turn GREATs into GOODs); MV / background off, or switched to a dark, static background; turning down effect and performance levels is recommended
 - Internet access: charts are downloaded at runtime from the chart site `assets.bdon.moe`
 
-Tasks: Start Game, Switch Account (accounts in the International server's bilibili login history, no password needed), Repeat Play, Use Up LB, AFK Farming (waits for LB to recover after running out, then keeps playing), AP Completion, Challenge LIVE (during events), Claim Dailies, Open Stats Window (total run time, play stats and achievements; export your records from its window before switching packages and import them in the new one), Test Notification (checks the "Push Notifications" setting, which sends a message to your phone when playing finishes, on errors and when AFK Farming runs into server maintenance; ntfy, ServerChan, Bark and webhook are supported). For details on each task and option, see the [Usage Guide](docs/en/usage.md); for command-line usage, see [Command Line](docs/en/cli.md).
+Tasks: Start Game, Switch Account (accounts in the International server's bilibili login history, no password needed), Repeat Play, Use Up LB, AFK Farming (waits for LB to recover after running out, then keeps playing), AP Completion, Challenge LIVE (during events), Arena (multiplayer matches; pick a band or take turns with each band, and each round's placement and rank points are recorded), AFK Farming (Arena), Claim Dailies, Open Stats Window (total run time, play stats and achievements; export your records from its window before switching packages and import them in the new one), Test Notification (checks the "Push Notifications" setting, which sends a message to your phone when playing finishes, on errors and when AFK Farming runs into server maintenance; ntfy, ServerChan, Bark and webhook are supported). For details on each task and option, see the [Usage Guide](docs/en/usage.md); for command-line usage, see [Command Line](docs/en/cli.md).
 
 ## Measured Results and Known Limitations
 
@@ -69,7 +69,7 @@ All 48 EXPERT charts played while running smoothly have been ALL PERFECT at leas
 Known limitations:
 
 - When the emulator stutters (dropped frames, jittery touch latency), complex songs may lose a few PERFECTs or even break the combo. Both sync and touch rely on the emulator producing frames and receiving touches on time, so any hiccup causes drift, and the AP rate drops noticeably at low frame rates (see the table above). Closing other CPU-hungry programs, giving the emulator enough CPU and memory, and lowering the game's effect and performance levels helps a lot
-- Only Free LIVE and Challenge LIVE (during events) are supported. Co-op LIVE and other modes are not
+- Only Free LIVE, Challenge LIVE (during events) and Arena are supported. Co-op LIVE and other modes are not
 - Song title OCR occasionally fails; when recognition fails, that round is abandoned and the next song is tried
 - Songs whose first note comes very early (already on screen before the transition ends) may fail to sync; in that case the round is paused and retried
 - So far mainly verified with MuMu + International server, with effect and performance levels turned down; on the Japanese server only Free LIVE, AP Completion and Claim Dailies have been verified

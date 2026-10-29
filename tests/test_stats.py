@@ -12,8 +12,9 @@ from xml.etree import ElementTree
 
 import pytest
 
-from ournotes_auto import stats
-from ournotes_auto.records import PlayResult, RecordStore
+from ournotes_auto import stats, stats_page
+from ournotes_auto.nav.screens import ARENA_BANDS
+from ournotes_auto.records import ArenaResult, PlayResult, RecordStore
 from ournotes_auto.runner import RunStats
 from ournotes_auto.stats import (
     ACHIEVEMENTS,
@@ -519,13 +520,96 @@ def test_page_runs_paged(tmp_path):
     (tmp_path / SESSIONS).write_text("".join(json.dumps({"start": T0 + i * H, "end": T0 + i * H + 60}) + "\n" for i in range(n)), encoding="utf-8")
     refresh(tmp_path, lambda mid: "</script><b>", now=T0 + DAY)
     page = (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
-    assert re.search(rf'data-pager="sp" data-ps="{stats.PAGE_SIZE}" data-n="{n}" data-u="次">', page)
+    assert re.search(rf'data-pager="sp" data-ps="{stats.RUNS_PAGE_SIZE}" data-n="{n}" data-u="次">', page)
     assert re.search(rf'data-pager="pp" data-ps="{stats.PAGE_SIZE}" data-n="{n}" data-u="局">', page)
     assert page.count('<tbody data-pg="sp">') == 1 and "</script><b>" not in page
     raw = page[page.index('id="plays-data">') + 16:]
     data = json.loads(raw[:raw.index("</script>")])
     assert data["t"] == {"1": "</script><b>"} and data["d"][3] == "expert" and len(data["r"]) == n
     assert data["r"][0] == [round(T0 + (n - 1) * 60), 1, 3, 100, 0, 0, 0, 0, 2, 1000]
+    assert '<div class="seg" data-pm' not in page and 'id="arena-data"' not in page  # 没打过激奏舞台：没有子页签
+
+
+def test_page_runs_paged_smaller(tmp_path):
+    """运行记录每页比「全部演奏」少：二三十次运行就要翻页，不是全部列出来；同样多的局数「全部演奏」还在一页里。"""
+    n = stats.RUNS_PAGE_SIZE + 1
+    assert n <= stats.PAGE_SIZE
+    store(tmp_path, [play(1, t=i * 60) for i in range(n)])
+    (tmp_path / SESSIONS).write_text("".join(json.dumps({"start": T0 + i * H, "end": T0 + i * H + 60}) + "\n" for i in range(n)), encoding="utf-8")
+    refresh(tmp_path, lambda mid: "歌", now=T0 + DAY)
+    page = (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+    assert re.search(rf'data-pager="sp" data-ps="{stats.RUNS_PAGE_SIZE}" data-n="{n}" data-u="次">.*?第 1 / 2 页', page)
+    assert re.search(r'data-pager="pp"[^>]* hidden>', page)
+
+
+def arena(band, placement, gain, total, lb, title, mid, played, t, score=None, counts=(None,) * 5):
+    p, g, gd, b, m = counts
+    return ArenaResult(band=band, placement=placement, ap_gain=gain, ap_total=total, lb_cost=lb, title=title, music_id=mid,
+                       played=played, score=score, perfect=p, great=g, good=gd, bad=b, miss=m, timestamp=T0 + t)
+
+
+def test_arena_plays():
+    """激奏舞台演奏了的每一局对应同一首歌、时间不晚于它（差 30 秒以内）的最近一条演奏记录；没演奏的局不对应。"""
+    records = [play(1, t=0), play(1, t=100), play(2, t=200), play(1, t=300), play(3, t=400)]
+    games = [
+        arena("mygo", 1, 10, 100, 0, "歌一", 1, True, 100),
+        arena("mygo", 2, 5, 105, 0, "歌二", 2, True, 203),  # 以前先记演奏、再记对局
+        arena("mygo", 3, 0, 105, 0, "歌一", 1, True, 340),  # 晚了 40 秒：不是 t=300 那局
+        arena("mygo", 4, -5, 100, 0, "歌三", 3, False, 400),
+        arena("mygo", 5, -10, 90, 0, "?", None, False, 500),
+    ]
+    assert stats.arena_plays(records, games) == {1, 2}
+    assert stats.arena_plays(records, []) == set()
+
+
+def test_page_arena_tab(tmp_path):
+    """打过激奏舞台：「全部演奏」分普通演奏、激奏舞台两个子页签，激奏舞台打的局不列在普通演奏里（总数照常算）；
+    激奏舞台每局的乐队、曲目、名次、段位分、LB、判定数、结果、分数都放进页面的数据里，上面有对局数、名次和各乐队段位分的汇总。"""
+    store(tmp_path, [play(1, t=0), play(2, t=60, great=3), play(1, t=120)])
+    s = RecordStore(tmp_path)
+    s.append_arena(arena("mygo", 2, 15, 1015, 0, "歌二", 2, True, 60, 1000, (100, 3, 0, 0, 0)))
+    s.append_arena(arena("mygo", 1, 20, 1035, -1, "読めない", None, False, 600, 900))
+    s.append_arena(arena("avemujica", 5, -8, None, 3, "歌一", 1, True, 900))
+    view = refresh(tmp_path, now=T0 + DAY, library=stats.Library({1: "歌一", 2: "歌二"}))
+    assert view.totals.plays == 3 and [r.timestamp for r in view.plays] == [T0 + 120, T0]
+    page = (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+    assert '<button data-v="free">普通演奏<i>2</i></button><button data-v="arena">激奏舞台<i>3</i></button>' in page
+
+    def data(key):
+        mark = f'id="{key}-data">'
+        raw = page[page.index(mark) + len(mark):]
+        return json.loads(raw[:raw.index("</script>")])
+
+    assert len(data("plays")["r"]) == 2
+    d = data("arena")
+    assert d["b"]["mygo"] == "MyGO!!!!!" and d["t"] == {"1": "歌一", "2": "歌二"}
+    assert d["r"] == [
+        [round(T0 + 900), "avemujica", 1, 5, -8, None, 3, None, None, None, None, None, 3, None],
+        [round(T0 + 600), "mygo", "読めない", 1, 20, 1035, -1, None, None, None, None, None, 4, 900],
+        [round(T0 + 60), "mygo", 2, 2, 15, 1015, 0, 100, 3, 0, 0, 0, 1, 1000],
+    ]
+    strip = page[page.index('<div data-pv="arena"'):page.index('id="arena"')]
+    assert '<div class="fv">3<small>局</small></div><div class="fs">演奏了 2 局</div>' in strip
+    assert '<div class="fv">2.67</div><div class="fs">第一名 1 局（33%）</div>' in strip
+    assert '<div class="fk">MyGO!!!!!</div><div class="fv">1,035<small>分</small></div><div class="fs">2 局 · 平均第 1.5 名</div>' in strip
+    assert '<div class="fk">Ave Mujica</div><div class="fv">-</div><div class="fs">1 局 · 平均第 5.0 名</div>' in strip
+    assert "夢限大MewType" not in strip
+
+
+def test_page_arena_only(tmp_path):
+    """只打过激奏舞台：普通演奏的子页签里说还没有。"""
+    store(tmp_path, [play(2, t=60)])
+    RecordStore(tmp_path).append_arena(arena("mygo", 2, 15, 1015, 0, "歌二", 2, True, 60, 1000, (100, 0, 0, 0, 0)))
+    view = refresh(tmp_path, now=T0 + DAY)
+    assert view.plays == [] and len(view.arena) == 1
+    page = (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+    assert "还没有普通演奏" in page and 'id="plays-data"' not in page and 'id="arena-data"' in page
+
+
+def test_band_names():
+    """统计页上乐队的名字和设置里的一样。"""
+    zh = json.loads((Path(__file__).resolve().parent.parent / "locales" / "zh_cn.json").read_text(encoding="utf-8"))
+    assert stats_page.BAND_NAMES == {b: zh[f"opt.ArenaBand.{b}"] for b in ARENA_BANDS}
 
 
 def test_page_runs_one_page(tmp_path):
@@ -714,7 +798,7 @@ def test_live_kinds():
     from ournotes_auto import runner, stats_page
 
     kinds = set(re.findall(r'self\._status\("(\w+)"', Path(runner.__file__).read_text(encoding="utf-8")))
-    assert len(kinds) == 7 and kinds <= set(stats_page.LIVE_KINDS)
+    assert len(kinds) == 8 and kinds <= set(stats_page.LIVE_KINDS)
     assert all(f'id="{icon}"' in stats_page.SPRITE for _, icon in stats_page.LIVE_KINDS.values())
 
 

@@ -1,15 +1,18 @@
 """offset 自动修正：用实测得到的判定模型检验收敛。"""
 
+import calendar
 import json
 import os
 import random
+import time
+from dataclasses import asdict
 from statistics import mean
 
 import pytest
 
 from ournotes_auto import release
 from ournotes_auto.config import AutoTuneConfig
-from ournotes_auto.records import PlayResult, RecordStore, suggest_offset_delta
+from ournotes_auto.records import ArenaResult, PlayResult, RecordStore, game_day, parse_arena, suggest_offset_delta
 
 # 实测（MuMu，迷星叫 EASY，91 个有时机的判定）：offset=0 时整体晚约 8ms，
 # 按键离散度约 1.5ms，PERFECT 中心 ±2.4ms 内不标 FAST/SLOW
@@ -175,6 +178,16 @@ def test_lb_all_uses_per_account_and_day(tmp_path):
     assert store.lb_all_uses("pkg", "2026-10-26") == 0
 
 
+def test_game_day_changes_at_3am_beijing():
+    """游戏日期每天北京时间 3:00 变更（1.1.0 起）：23:00~3:00 之间还是前一天。"""
+    beijing = lambda d, hm: calendar.timegm(time.strptime(f"{d} {hm}", "%Y-%m-%d %H:%M")) - 8 * 3600
+    assert game_day(beijing("2026-10-27", "22:59")) == "2026-10-27"
+    assert game_day(beijing("2026-10-27", "23:30")) == "2026-10-27"
+    assert game_day(beijing("2026-10-28", "02:59")) == "2026-10-27"
+    assert game_day(beijing("2026-10-28", "03:00")) == "2026-10-28"
+    assert game_day(beijing("2026-10-28", "10:25")) == "2026-10-28"
+
+
 def test_history_tolerates_new_fields_and_sorts(tmp_path):
     """新版本加的字段不认识也照常读（从新版本导入的记录）；读不了的行跳过；按时间排（导入的旧记录接在末尾）。"""
     lines = [
@@ -191,6 +204,26 @@ def test_history_tolerates_new_fields_and_sorts(tmp_path):
     assert [r.music_id for r in store.history(limit=None)] == [2, 4, 1]
     assert [r.music_id for r in store.history(limit=2)] == [4, 1]
     assert store.history(limit=0) == [] and store.history(limit=None)[1].perfect == 5
+
+
+def test_arena_history(tmp_path):
+    """激奏舞台每局记在 arena.jsonl（不进 records.jsonl）；读法同演奏记录：新字段不管、读不了的行跳过、按时间排。"""
+    store = RecordStore(tmp_path)
+    assert store.arena_history() == []
+    store.append_arena(ArenaResult(band="mygo", placement=2, ap_gain=12, ap_total=1012, lb_cost=0, title="春日影",
+                                   music_id=1, played=True, score=900000, perfect=500, great=5, good=0, bad=0, miss=0, timestamp=200.0))
+    store.append_arena(ArenaResult(band="avemujica", placement=5, ap_gain=-8, title="??", timestamp=100.0))
+    with (tmp_path / "arena.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"band": "mewtype", "timestamp": 300.0, "new_field": 1}) + "\n")
+        f.write(json.dumps({"band": "mygo", "timestamp": "坏了"}) + "\nnot json\n[1]\n")
+    assert not store.records_path.exists()
+    got = store.arena_history(limit=None)
+    assert [r.band for r in got] == ["avemujica", "mygo", "mewtype"]
+    assert got[0] == ArenaResult(band="avemujica", placement=5, ap_gain=-8, title="??", timestamp=100.0)
+    assert not got[0].played and got[0].music_id is None
+    assert (got[1].placement, got[1].ap_gain, got[1].ap_total, got[1].great) == (2, 12, 1012, 5) and got[1].played
+    assert [r.band for r in store.arena_history(limit=1)] == ["mewtype"]
+    assert parse_arena(json.dumps(asdict(got[1]), ensure_ascii=False)) == got[1]
 
 
 def test_state_saved_when_file_busy(tmp_path, monkeypatch):

@@ -66,6 +66,11 @@ def app_running(cfg: DeviceConfig, timeout_s: float = 15.0) -> bool:
     return _running(run, serial, cfg.package)
 
 
+def app_in_front(cfg: DeviceConfig, timeout_s: float = 15.0) -> bool:
+    serial, run = _runner(cfg, timeout_s)
+    return _in_front(run, serial, cfg.package)
+
+
 def start_app(cfg: DeviceConfig, timeout_s: float = 30.0) -> bool:
     """游戏没在运行时启动它，在后台时切回前台（不重启），返回是否启动或切换了。"""
     serial, run = _runner(cfg, timeout_s)

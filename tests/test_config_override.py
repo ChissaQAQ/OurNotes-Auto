@@ -5,8 +5,8 @@ import logging
 
 import pytest
 
-from ournotes_auto.cli import JsonLineFormatter
-from ournotes_auto.commands import check_run_config, drop_great_for_ap
+from ournotes_auto.cli import JsonLineFormatter, _masked
+from ournotes_auto.commands import arena_defaults, check_run_config, drop_great_for_ap
 from ournotes_auto.config import Config, apply_override
 from ournotes_auto.context import SetupError
 
@@ -149,6 +149,40 @@ def test_check_run_config_challenge():
         check_run_config(cfg)
 
 
+def test_check_run_config_arena():
+    cfg = Config()
+    cfg.loop.arena = True
+    check_run_config(cfg)
+    cfg.loop.arena_band, cfg.loop.arena_games_per_band = "rotate", 3
+    cfg.game.lb_cost, cfg.loop.until_lb_empty, cfg.loop.wait_lb = 2, True, True  # LB 同挂机
+    check_run_config(cfg)
+    cfg.loop.arena_band = "poppin"
+    with pytest.raises(SetupError, match="激奏舞台的乐队"):
+        check_run_config(cfg)
+    cfg.loop.arena_band, cfg.loop.arena_games_per_band = "mygo", 0
+    with pytest.raises(SetupError, match="至少为 1"):
+        check_run_config(cfg)
+    cfg.loop.arena_games_per_band = 1
+    cfg.loop.challenge = True
+    with pytest.raises(SetupError, match="不能同时打开"):
+        check_run_config(cfg)
+
+
+def test_arena_defaults():
+    """激奏舞台只打 EXPERT、没有选曲和跳过；GREAT 至少 1%，拟人化设得更多时按设置。别的任务不动。"""
+    cfg = Config()
+    cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip = "hard", "random", True
+    arena_defaults(cfg)
+    assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip, cfg.play.touch.great_ratio) == ("hard", "random", True, 0.0)
+    cfg.loop.arena = True
+    arena_defaults(cfg)
+    assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip, cfg.play.touch.great_ratio) == ("expert", "current", False, 0.01)
+    cfg.play.touch.great_ratio = 0.05
+    arena_defaults(cfg)
+    drop_great_for_ap(cfg)
+    assert cfg.play.touch.great_ratio == 0.05
+
+
 @pytest.mark.parametrize(
     "key, value, msg",
     [
@@ -181,3 +215,10 @@ def test_json_line_formatter():
     line = JsonLineFormatter().format(record)
     assert line.isascii() and "\n" not in line
     assert json.loads(line) == {"level": "WARNING", "name": "ournotes_auto.runner", "msg": "曲目：春日影"}
+
+
+def test_masked_notify_target():
+    """启动参数记日志时遮住推送地址：--set 的键前后多了空格（照样能设上）、写成 --set=… 也遮。"""
+    argv = ["run", "--set", "notify.target=SCT1", "--set", " notify.target =SCT2", "--set=notify.target=SCT3", "--set", "game.difficulty=hard"]
+    shown = " ".join(_masked(argv))
+    assert "SCT" not in shown and shown.count("***") == 3 and "game.difficulty=hard" in shown

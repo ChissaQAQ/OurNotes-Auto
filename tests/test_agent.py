@@ -40,6 +40,8 @@ ATTACH = {
     "ap_max_attempts": 3,
     "challenge_song_mode": "rotate",
     "challenge_cost": 200,
+    "arena_band": "current",
+    "arena_games_per_band": 1,
     "human_great": 0,
     "human_timing": 0,
     "human_position": False,
@@ -119,6 +121,7 @@ def test_run_settings_repeat():
         "loop.song_mode": "current",
         "loop.max_plays": "0",
         "loop.challenge": "false",
+        "loop.arena": "false",
         "game.lb_cost": "null",
         "game.lb_auto": "false",
         "game.lb_refill": "false",
@@ -234,6 +237,7 @@ def test_run_settings_ap():
         "device.touch": "minitouch",
         "loop.max_plays": "0",
         "loop.challenge": "false",
+        "loop.arena": "false",
         "loop.song_mode": "ap",
         "loop.ap_difficulties": "expert,hard,normal,easy",
         "loop.ap_max_attempts": "3",
@@ -260,6 +264,7 @@ def test_run_settings_challenge():
         "device.touch": "minitouch",
         "loop.max_plays": "0",
         "loop.challenge": "true",
+        "loop.arena": "false",
         "loop.song_mode": "rotate",
         "game.difficulty": "expert",
         "game.challenge_cost": "200",
@@ -282,23 +287,64 @@ def test_run_settings_challenge():
     assert sets["loop.song_mode"] == "ap_first" and sets["loop.ap_first_difficulties"] == "expert,hard,normal,easy"
     sets = run_settings("challenge", {**ATTACH, "challenge_song_mode": "ap_first", "difficulty": "hard"})
     assert sets["loop.ap_first_difficulties"] == "hard" and sets["game.difficulty"] == "hard"
-    for task in ("repeat", "clear_lb", "idle", "ap"):
+    for task in ("repeat", "clear_lb", "idle", "ap", "arena", "arena_idle"):
         assert run_settings(task, ATTACH)["loop.challenge"] == "false", task
 
 
+def test_run_settings_arena():
+    """激奏舞台：选乐队（轮流时另有每个乐队的局数）；LB 同重复刷歌，挂机（激奏舞台）同挂机、定时领取。"""
+    assert run_settings("arena", ATTACH) == {
+        "device.touch": "minitouch",
+        "loop.max_plays": "0",
+        "loop.challenge": "false",
+        "loop.arena": "true",
+        "loop.arena_band": "current",
+        "game.lb_cost": "null",
+        "game.lb_auto": "false",
+        "game.lb_refill": "false",
+        "loop.until_lb_empty": "false",
+        "loop.wait_lb": "false",
+        "loop.studio_claim_hours": "0",
+        "loop.daily_claim_time": "",
+        **HUMAN_OFF,
+    }
+    sets = run_settings("arena", {**ATTACH, "arena_band": " MyGO ", "lb_cost": 3, "max_plays": "5"})
+    assert sets["loop.arena_band"] == "mygo" and sets["game.lb_cost"] == "3" and sets["loop.max_plays"] == "5"
+    assert "loop.arena_games_per_band" not in sets
+    sets = run_settings("arena", {**ATTACH, "arena_band": "rotate", "arena_games_per_band": "3"})
+    assert sets["loop.arena_band"] == "rotate" and sets["loop.arena_games_per_band"] == "3"
+    # 挂机（激奏舞台）：打到 LB 用完再等它恢复，消耗 0 时不等；定时收获、领日常同挂机
+    sets = run_settings("arena_idle", {**ATTACH, "clear_lb_cost": 2})
+    assert sets["loop.arena"] == "true" and sets["game.lb_cost"] == "2"
+    assert sets["loop.until_lb_empty"] == "true" and sets["loop.wait_lb"] == "true"
+    assert sets["loop.studio_claim_hours"] == "4" and sets["loop.daily_claim_time"] == "22:30"
+    sets = run_settings("arena_idle", {**ATTACH, "clear_lb_cost": 0})
+    assert sets["game.lb_cost"] == "0" and sets["loop.until_lb_empty"] == "false" and sets["loop.wait_lb"] == "true"
+    sets = run_settings("arena_idle", {**ATTACH, "clear_lb_cost": "auto"})
+    assert sets["game.lb_auto"] == "true" and sets["loop.until_lb_empty"] == "true"
+    # 没有选曲、难度：这些选项不传（只打 EXPERT、不跳过由 run 命令统一设）
+    for task in ("arena", "arena_idle"):
+        sets = run_settings(task, {**ATTACH, "song_mode": "random", "difficulty": "hard", "use_skip": True})
+        assert not {"loop.song_mode", "game.difficulty", "loop.use_skip"} & set(sets), task
+    for task in ("repeat", "clear_lb", "idle", "ap", "challenge"):
+        assert run_settings(task, {**ATTACH, "arena_band": "mygo"})["loop.arena"] == "false", task
+
+
 def test_run_settings_lb_refill():
-    """四个演奏任务都能开「LB 不足时用道具补充」；需要每局消耗 1~5 或自动，旧资源没有这两项时不补充。"""
+    """用 LB 的演奏任务都能开「LB 不足时用道具补充」；需要每局消耗 1~5 或自动，旧资源没有这两项时不补充。"""
     on = {**ATTACH, "lb_refill": "Yes", "lb_refill_count": "5", "lb_cost": 2}
-    for task in ("repeat", "clear_lb", "idle", "ap"):
+    for task in ("repeat", "clear_lb", "idle", "ap", "arena", "arena_idle"):
         sets = run_settings(task, on)
         assert sets["game.lb_refill"] == "true" and sets["game.lb_refill_limit"] == "5", task
     assert run_settings("clear_lb", {**on, "lb_refill_count": 0})["game.lb_refill_limit"] == "0"
     old = {k: v for k, v in ATTACH.items() if not k.startswith("lb_refill")}
     assert run_settings("repeat", old)["game.lb_refill"] == "false"
-    for task in ("repeat", "ap"):
+    for task in ("repeat", "ap", "arena"):
         for cost in ("keep", 0):
             with pytest.raises(ParamError, match="1~5"):
                 run_settings(task, {**on, "lb_cost": cost})
+    with pytest.raises(ParamError, match="1~5"):
+        run_settings("arena_idle", {**on, "clear_lb_cost": 0})
     with pytest.raises(ParamError, match="lb_refill_count"):
         run_settings("clear_lb", {**on, "lb_refill_count": -1})
     with pytest.raises(ParamError, match="lb_refill"):
@@ -340,6 +386,11 @@ def test_run_settings_humanize():
         ("challenge", {"challenge_cost": "{cost}"}, "challenge_cost"),
         ("challenge", {"challenge_song_mode": "random"}, "challenge_song_mode"),
         ("challenge", {"difficulty": "master"}, "difficulty"),
+        ("arena", {"arena_band": "poppin"}, "arena_band"),
+        ("arena", {"arena_band": "rotate", "arena_games_per_band": 0}, "arena_games_per_band"),
+        ("arena", {"arena_band": "rotate", "arena_games_per_band": "{count}"}, "arena_games_per_band"),
+        ("arena", {"lb_cost": 6}, "lb_cost"),
+        ("arena_idle", {"clear_lb_cost": -1}, "clear_lb_cost"),
     ],
 )
 def test_run_settings_errors(task, change, msg):
@@ -597,6 +648,22 @@ def test_worker_args_parse_back():
     cfg.loop.until_lb_empty = cfg.loop.wait_lb = False
     with pytest.raises(SetupError, match="道具补充"):
         check_run_config(cfg)
+
+    # 激奏舞台：run 命令统一改成只打 EXPERT、不跳过、至少 1% GREAT（拟人化设得更多时按设置）
+    from ournotes_auto.commands import arena_defaults
+
+    attach = {**ATTACH, "arena_band": "rotate", "arena_games_per_band": 2, "clear_lb_cost": 1, "difficulty": "hard"}
+    args = build_parser().parse_args(worker_args("arena_idle", attach, device))
+    cfg = Config()
+    for item in args.set:
+        key, _, value = item.partition("=")
+        apply_override(cfg, key, value)
+    arena_defaults(cfg)
+    check_run_config(cfg)
+    assert cfg.loop.arena and cfg.loop.arena_band == "rotate" and cfg.loop.arena_games_per_band == 2
+    assert cfg.loop.until_lb_empty and cfg.loop.wait_lb and cfg.game.lb_cost == 1
+    assert cfg.game.difficulty == "expert" and cfg.loop.song_mode == "current" and not cfg.loop.use_skip
+    assert cfg.play.touch.great_ratio == 0.01
 
 
 def _load(rel):

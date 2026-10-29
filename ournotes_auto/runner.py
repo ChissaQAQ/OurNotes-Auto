@@ -22,8 +22,8 @@ from .config import Config, parse_daily_time
 from .player.guard import LifeDepleted, PlayInterrupted
 from .player.session import PlayOutcome, PlaySession, SyncFailed
 from .player.sync import SyncTimeout
-from .records import PlayResult, RecordStore
-from .result_reader import ResultCounts, timing_counts
+from .records import ArenaResult, PlayResult, RecordStore
+from .result_reader import JUDGEMENTS, ResultCounts, timing_counts
 
 if TYPE_CHECKING:
     from .sources import SongSource
@@ -92,6 +92,16 @@ class SongLabel(NamedTuple):
     jacket: tuple[int, float] | None = None  # 封面匹配到的 (musicId, 相关系数)
 
 
+class ArenaOutcome(NamedTuple):
+    """激奏舞台一局的结果；读不到的项为 None。"""
+
+    placement: int | None  # 名次（1～5）
+    ap_gain: int | None  # 段位分增减
+    ap_total: int | None  # 加减后的段位分
+    counts: ResultCounts | None  # 结算页的判定数（错过了结算页时为 None）
+    lb_cost: int | None  # 这局消耗的 LB（-1 为全部消耗；没设置过时为 None）
+
+
 class Navigator(Protocol):
     def ensure_band_confirm(self, difficulty: str | None = None) -> None:
         """从任意画面进入自由演出（``loop.challenge`` 时为挑战演出）的乐队确认页（LIVE START 所在页）；
@@ -104,6 +114,10 @@ class Navigator(Protocol):
 
     def choose_next_song(self, mode: str) -> None:
         """按 ``mode`` 换歌（current 时什么都不做）。"""
+        ...
+
+    def selected_locked(self) -> bool:
+        """选中的歌还没解锁（不在乐队确认页时进入乐曲选择页看）。"""
         ...
 
     def start_live(self, lb_short: str = "zero") -> None:
@@ -174,6 +188,28 @@ class Navigator(Protocol):
 
     def restart_game(self) -> bool:
         """重启游戏，等到重新进入游戏（主界面）；不能重启时返回 False。"""
+        ...
+
+    # 以下为激奏舞台（``loop.arena``，这时 ensure_band_confirm 进入的是激奏舞台首页）
+
+    def arena_band(self) -> str | None:
+        """激奏舞台首页上现在选的乐队（``nav.screens.ARENA_BANDS`` 之一），认不出时为 None。"""
+        ...
+
+    def arena_select_band(self, band: str) -> None:
+        """在激奏舞台首页换到 ``band``。"""
+        ...
+
+    def start_arena(self, lb_short: str = "zero") -> SongLabel:
+        """点 LIVE START 开始匹配，转盘定歌后在难度选择页返回曲名和 EXPERT 等级（LB 同 :meth:`start_live`）。"""
+        ...
+
+    def arena_ready(self) -> None:
+        """难度选择页：选 EXPERT、准备完毕，演奏画面出现时立即返回。"""
+        ...
+
+    def read_arena_result(self, expected_total: int | None = None) -> ArenaOutcome:
+        """演奏后一路点到结算页，返回名次、段位分和判定数，停在结算页。"""
         ...
 
 
@@ -314,6 +350,8 @@ class Runner:
 
     def play_once(self) -> PlayResult | None:
         self.nav.ensure_band_confirm(self.source.difficulty)
+        if self.cfg.loop.arena:
+            return self._play_arena()
         lb_short = self._lb_short()
         if self.cfg.loop.use_skip and not self.cfg.loop.challenge:
             # 先用跳过次数消耗 LB，用完了再演奏（跳过的是当前选中的歌）
@@ -337,6 +375,56 @@ class Runner:
         # 先记下这一局再离开结算页：离开时出错（如遇到没见过的结算页）也不丢记录
         result = None if outcome is None else self._record(outcome, counts)
         self.source.done(song, diff, result)
+        self._finish(result)
+        return result
+
+    def _play_arena(self) -> PlayResult | None:
+        """激奏舞台一局：开始匹配，在难度选择页认歌、取谱面，准备完毕后演奏，结算后记下乐队、名次、段位分和判定数
+        （``arena.jsonl``）。认不出歌、谱面站没有谱面时这局不演奏，照样走完（对局开始后退不出去）；
+        演奏中没有暂停，同步失败也不能重试，等歌放完。"""
+        band = self.nav.arena_band()
+        logger.info("激奏舞台：开始匹配（乐队 %s）", band or "认不出")
+        self._status("match", band or "")
+        label = self.nav.start_arena(self._lb_short())
+        song = chart = None
+        try:
+            song, basis = identify_song(self.catalog, label, "expert")
+            logger.info("曲目：%s（%d，expert，%s）", song.display_title(), song.music_id, basis)
+            chart = self.client.chart(song.music_id, "expert", song.display_title())
+        except ChartNotFound:
+            logger.error("谱面站没有 %d_expert，本局不演奏", song.music_id)
+        except (NavigationError, ConnectionError) as e:
+            logger.error("%s，本局不演奏", e)
+        level = song.level("expert") if song else label.level
+        self._status("play", f"{song.display_title() if song else label.title} · EXPERT{f' {level}' if level else ''}")
+        if chart is not None:
+            self.session.learned_offset_ms = self.store.learned_offset_ms + self._chart_offset(chart)
+        self.nav.arena_ready()
+        outcome = None if chart is None else self._play(chart)
+        arena = self.nav.read_arena_result((chart.judged_count or None) if chart else None)
+        rc = arena.counts
+        result = None if outcome is None or rc is None else self._record(outcome, rc)
+        self.store.append_arena(
+            ArenaResult(
+                band=band,
+                placement=arena.placement,
+                ap_gain=arena.ap_gain,
+                ap_total=arena.ap_total,
+                lb_cost=arena.lb_cost,
+                title=label.title,
+                music_id=None if song is None else song.music_id,
+                played=outcome is not None,
+                score=None if rc is None else rc.score,
+                **({} if rc is None else {j: rc.counts.get(j) for j in JUDGEMENTS}),
+                **({} if result is None else {"timestamp": result.timestamp}),  # 统计按时间认出这局的演奏记录
+            )
+        )
+        self.source.done(song, "expert", result)
+        self._finish(result)
+        return result
+
+    def _finish(self, result: PlayResult | None) -> None:
+        """一局记完之后：计数，离开结算页。"""
         if result is not None:
             self.stats.plays += 1
             self.stats.full_combo += bool(result.full_combo)
@@ -345,7 +433,6 @@ class Runner:
             self._maintenance_over()  # 维护后重新登录出了别的问题、下一局的导航自己进了游戏
         self._log_memory()
         self.nav.leave_result()
-        return result
 
     def _log_memory(self) -> None:
         """每局记一行内存，看是本程序越用越多还是电脑的内存被占满了（#94）；电脑内存快用完时提醒一次。"""
@@ -388,6 +475,7 @@ class Runner:
 
         首音符同步失败、演奏中生命值归零（整体对不上了）、演奏中被暂停时从头重试，最多 ``loop.sync_retries`` 次：
         干等这首歌放完几乎拿不到分，这一局消耗的 LB 就浪费了（「终止」也拿不到演出奖励）。
+        激奏舞台没有暂停，不重试。
         """
         retries = 0
         while True:
@@ -396,7 +484,7 @@ class Runner:
                 return self.session.play(chart, self.stop, retry=retries > 0)
             except (SyncFailed, SyncTimeout, LifeDepleted, PlayInterrupted) as e:
                 interrupted = isinstance(e, PlayInterrupted)
-                if retries >= self.cfg.loop.sync_retries or self.stop.is_set():
+                if retries >= self.cfg.loop.sync_retries or self.cfg.loop.arena or self.stop.is_set():
                     if interrupted:
                         # 暂停菜单、闪退后的桌面等交给下一局开头的导航处理
                         raise NavigationError(str(e)) from e
@@ -541,7 +629,7 @@ class Runner:
 
     def _claim_daily(self) -> None:
         """挂机每天到 ``loop.daily_claim_time`` 回主界面领一次日常（任务列表里的「领取日常」只在挂机前跑一次，
-        挂机跨天后就领不到了；游戏 23:00 日期变更，默认 22:30 领）。有没领成的隔 DAILY_RETRY_S 再领一遍，
+        挂机跨天后就领不到了；游戏 3:00 日期变更，默认 22:30 领）。有没领成的隔 DAILY_RETRY_S 再领一遍，
         一天最多 DAILY_TRIES 次；画面卡住不动、服务器维护时照常停止。"""
         at = self._daily_at
         if at is None or self.wall_clock() < self._daily_due():

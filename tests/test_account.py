@@ -21,7 +21,11 @@ SDK_SCALES = [1.0, 0.745, 1.2]
 
 class AccountGame:
     """截图就是画面名；登录记录里选中的账号、登录后的欢迎提示按 ``selected`` 改写，展开的列表按 ``rows`` 改写；
-    SDK 弹窗按 ``sdk`` 以画面中心缩放（分辨率、DPI 和 1280x720 时不同）。"""
+    SDK 弹窗按 ``sdk`` 以画面中心缩放（分辨率、DPI 和 1280x720 时不同）。
+
+    ``ready_at``：账号自动登录好的时刻（假时钟），之前标题菜单里的用户中心是灰的、点不开（#97）。默认按打开菜单时的
+    状态、菜单开着一直不变，``live`` 时随时变；``toast`` 时登录好后的 3 秒里标题画面上有「欢迎回来」；
+    ``popup_s``：点了用户中心多久后弹窗才出来。"""
 
     size = (1920, 1080)
 
@@ -32,22 +36,43 @@ class AccountGame:
         rows: tuple[str, ...] = (B, A),
         welcome: str | None = None,
         sdk: float = 1.0,
+        ready_at: float | None = None,
+        live: bool = False,
+        toast: bool = False,
+        popup_s: float = 0.0,
     ):
         self.state = state
         self.selected = selected
         self.rows = rows
         self.welcome = welcome  # 欢迎提示里显示的账号（默认是选中的）
         self.sdk = sdk
+        self.ready_at = ready_at
+        self.live = live
+        self.toast = toast
+        self.popup_s = popup_s
+        self.clock = [0.0]  # make() 换成假时钟
+        self.center_ok = True  # 这次打开的菜单里用户中心能不能点
+        self.popup_at: float | None = None  # 用户中心弹窗出来的时刻
+        self.menu_opens: list[float] = []  # 打开标题菜单的时刻
+        self.closes: list[float] = []  # 点标题菜单「关闭」的时刻
+        self.bad_closes = 0  # 用户中心弹窗正要出来时点了关闭
         self.taps: list[tuple[str, tuple[int, int]]] = []
         self.drags = 0
         self.drag_from: list[tuple[float, float]] = []
         self.after_login = "login_welcome"
 
+    def logged_in(self) -> bool:
+        return self.ready_at is None or self.clock[0] >= self.ready_at
+
     def grab(self):
+        if self.popup_at is not None and self.clock[0] >= self.popup_at:
+            self.state, self.popup_at = "user_center", None
         return self.state, 0.0
 
     def read(self, frame, roi=None):
         items = load_items(frame)
+        if frame == "title" and self.toast and self.logged_in() and self.clock[0] - self.ready_at < 3:
+            items = [*items, OcrItem(520, 30, 240, 30, f"{self.selected},欢迎回来")]
         if frame in ("login_history", "login_welcome"):
             name = self.welcome or self.selected if frame == "login_welcome" else self.selected
             items = [OcrItem(it.x, it.y, it.w, it.h, it.text.replace(A, name)) for it in items]
@@ -86,8 +111,18 @@ class AccountGame:
 
         if self.state == "title" and near((1232, 46)):
             self.state = "title_menu"
+            self.center_ok = self.logged_in()
+            self.menu_opens.append(self.clock[0])
         elif self.state == "title_menu" and near((502, 298)):
-            self.state = "user_center"
+            if (self.logged_in() if self.live else self.center_ok) and self.popup_at is None:
+                if self.popup_s:
+                    self.popup_at = self.clock[0] + self.popup_s
+                else:
+                    self.state = "user_center"
+        elif self.state == "title_menu" and near((640, 573)):
+            self.closes.append(self.clock[0])
+            self.bad_closes += self.popup_at is not None
+            self.state = "title"
         elif self.state == "user_center" and near((639, 524)):
             self.state = "login_history"
         elif self.state == "login_history" and near((798, 305)):
@@ -117,7 +152,7 @@ def make(game, monkeypatch):
     nav = make_nav(game, game, game)
     nav.save_debug = lambda *a: None
     monkeypatch.setattr("ournotes_auto.nav.song_select.time.sleep", lambda s: None)
-    fake_clock(monkeypatch, nav)
+    game.clock = fake_clock(monkeypatch, nav)
     return nav
 
 
@@ -174,6 +209,44 @@ def test_switch_from_game_without_restart_fails(monkeypatch):
     with pytest.raises(NavigationError, match="没能回到标题画面"):
         nav.switch_account(B)
     assert game.taps == []
+
+
+@pytest.mark.parametrize("toast", [False, True])
+def test_user_center_disabled_until_logged_in(monkeypatch, toast):
+    """#97：账号还没自动登录好就打开了菜单，用户中心是灰的、菜单开着一直点不开：点几秒还在菜单上就关掉菜单，
+    等一会儿（看到「欢迎回来」就不等）再打开。"""
+    game = AccountGame("title", ready_at=1012.0, toast=toast)
+    nav = make(game, monkeypatch)
+    nav.switch_account(B)
+    assert game.selected == B and game.state == "login_welcome"
+    first, again = game.menu_opens
+    (closed,) = game.closes
+    assert closed - first < 10 and game.bad_closes == 0
+    if toast:
+        assert 1012 <= again < 1015
+    else:
+        assert again - closed >= 8
+
+
+def test_user_center_never_enabled_fails(monkeypatch):
+    """用户中心一直点不开：和原来一样到时间报错，其间反复关掉菜单再打开。"""
+    game = AccountGame("title", ready_at=math.inf)
+    nav = make(game, monkeypatch)
+    with pytest.raises(NavigationError, match="180s 内没能切换到账号"):
+        nav.switch_account(B)
+    assert len(game.closes) > 5 and game.bad_closes == 0
+    assert "user_center" not in [s for s, _ in game.taps]
+
+
+@pytest.mark.parametrize("popup_s", [0.0, 1.0, 2.5])
+@pytest.mark.parametrize("ready", [3.0, 5.5, 6.0, 7.0])
+def test_user_center_slow_popup_not_closed(monkeypatch, ready, popup_s):
+    """用户中心快到时限才变成能点、弹窗又出来得慢：弹窗正要出来时不点关闭（关闭的位置在弹窗里）。"""
+    game = AccountGame("title", ready_at=1000.0 + ready, live=True, popup_s=popup_s)
+    nav = make(game, monkeypatch)
+    nav.switch_account(B)
+    assert game.selected == B and game.bad_closes == 0
+    assert len(game.closes) == (ready > 6.0)
 
 
 @pytest.mark.parametrize("sdk", SDK_SCALES)

@@ -101,8 +101,9 @@ class PlaySession:
         self.geometry = Geometry(w, h, config.geometry)
         self.planner = Planner(self.geometry, config.play.touch)
         self.executor = Executor(touch)
-        self.guard_template = load_template() if config.play.guard_lost_s > 0 else None
-        if config.play.guard_lost_s > 0 and self.guard_template is None:
+        guard = config.play.guard_lost_s > 0 and not config.loop.arena  # 激奏舞台的演奏画面没有暂停按钮
+        self.guard_template = load_template() if guard else None
+        if guard and self.guard_template is None:
             logger.warning("找不到 %s，演奏中不检查是否离开了演奏画面", TEMPLATE_PATH)
         # 上一次同步时画面静止取的跟踪区基线（谱面, 基线）：暂停重试后歌曲立即开始，等不到静止，沿用它
         self._baseline: tuple[str, np.ndarray] | None = None
