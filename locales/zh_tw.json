@@ -130,7 +130,7 @@
     "opt.ArenaGamesPerBand.count": "每個樂團連續打的局數",
     "opt.ArenaGamesPerBand.count.msg": "請輸入正整數",
     "opt.LbRefill": "LB 不足時用道具補充",
-    "opt.LbRefill.desc": "每局開始前 LB 持有數少於每局消耗數時，從「消耗LB」→「回復」進去，只在「道具」頁用 LIVE BOOST飲料補足這一局（先用小型飲料）；絕不用星鑽、不看廣告。飲料用完或補足設定的數量後依原來的方式繼續。需要把每局消耗 LB 設為 1~5 或「自動」",
+    "opt.LbRefill.desc": "每局開始前 LB 持有數少於每局消耗數時，從「消耗LB」→「回復」進去，只在「道具」頁用 LIVE BOOST飲料補足這一局（先用小型飲料）；絕不用星鑽、不看廣告。飲料用完或補足設定的數量後依原來的方式繼續。每局消耗 LB 為 0 或「不修改遊戲裡的設定」時不補充",
     "opt.LbRefillCount": "最多補充",
     "opt.LbRefillCount.count": "本次最多補充多少 LB（0 為直到飲料用完）",
     "opt.LbRefillCount.count.msg": "請輸入 0 或正整數",

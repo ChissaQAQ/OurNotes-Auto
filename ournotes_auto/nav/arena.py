@@ -32,6 +32,7 @@ from .jacket import crop_jacket
 from .screens import (
     ARENA_AP_ROI,
     ARENA_BANDS,
+    OK_POPUP_BLOCK,
     RELOGIN_SCREENS,
     Rect,
     Screen,
@@ -61,6 +62,11 @@ ARENA_RESULT_NEXT_ROI: Rect = (440, 630, 400, 60)
 BTN_ARENA_RANKING_NEXT = (1140, 660)  # 排名：下一步
 # 段位提升没有按钮，点一下继续：升到新段位（BEGINNER→BRONZE）时点上面的乐队标志没反应、点下面空白处才行，两处轮流点
 TAP_ARENA_RANK_UP = ((640, 600), (640, 300))
+# 认不出的段位提升（#101，黄金以上卡住）：结算途中有「RANK UP」、没有 OK（羁绊等级、玩家等级的 RANK UP 都有 OK）的画面
+# 停了这么久，也当成段位提升点
+ARENA_RANK_UP_GUESS_S = 3.0
+# 段位提升的「RANK UP」是上半部的大字（只在这里找：T.G.W CARD 页下面也有「RANK UP까지」这样的进度文字）
+RANK_UP_TITLE_ROI: Rect = (0, 0, 1280, 360)
 PLAY_SCORE_ROI: Rect = (0, 0, 300, 170)  # 演奏画面左上角的 SCORE
 ARENA_BAND_ROI: Rect = (870, 285, 200, 90)  # 首页的乐队标志（模板 arena_band_<乐队>.png 在里面找）
 ARENA_BAND_MIN = 0.6
@@ -90,6 +96,16 @@ ARENA_RESULT_POPUPS = frozenset(
         Screen.RANK_UP,
     )
 )
+
+
+def rank_up_like(items: list[OcrItem]) -> bool:
+    """像段位提升：上半部有「RANK UP」，没有 OK，不在演奏中（左上角 SCORE），也没有购买、星钻之类的字。"""
+    return (
+        find(items, "ANKUP", RANK_UP_TITLE_ROI) is not None
+        and not find(items, "OK", exact=True)
+        and not find(items, "SCORE", PLAY_SCORE_ROI)
+        and not any(find(items, text) for text in OK_POPUP_BLOCK)
+    )
 
 
 class ArenaMixin:
@@ -273,6 +289,8 @@ class ArenaMixin:
         """
         place = gain = total = None
         deadline = time.monotonic() + timeout_s
+        guess_at: float | None = None  # 开始看到像段位提升、但认不出的画面的时刻
+        guessed = False
 
         def parse(its: list[OcrItem]):
             p, g = arena_result(its)
@@ -308,6 +326,20 @@ class ArenaMixin:
                 screen, items = self.last_screen, self._items  # 上面又看过几次
             elif screen is Screen.ARENA_RANKING and place is None:
                 place = arena_placement(items)
+            if screen not in ARENA_SCREENS and rank_up_like(items):
+                guess_at = guess_at or time.monotonic()
+                if time.monotonic() - guess_at >= ARENA_RANK_UP_GUESS_S:
+                    if not guessed:
+                        guessed = True
+                        logger.warning(
+                            "画面上有 RANK UP、没有 OK（%s），%.0fs 没过去，当成段位提升点一下继续（截图 %s）",
+                            screen,
+                            time.monotonic() - guess_at,
+                            self.save_debug("arena_rank_up_guess"),
+                        )
+                    screen = Screen.ARENA_RANK_UP
+            else:
+                guess_at = None
             if screen in ARENA_SCREENS or screen in ARENA_RESULT_POPUPS:
                 self._common_step(screen, items)
                 self._sleep(self.settle_s)

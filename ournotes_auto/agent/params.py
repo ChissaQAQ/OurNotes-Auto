@@ -176,12 +176,11 @@ def _lb_spends(sets: Mapping[str, str]) -> bool:
     return sets["game.lb_auto"] == "true" or sets["game.lb_cost"] not in ("null", "0")
 
 
-def _lb_refill(attach: Mapping[str, Any], sets: Mapping[str, str]) -> dict[str, str]:
-    """``lb_refill``（开关）、``lb_refill_count``（最多补充多少 LB，0 为直到道具用完）；资源是旧版没有这两项时不补充。"""
+def _lb_refill(attach: Mapping[str, Any]) -> dict[str, str]:
+    """``lb_refill``（开关）、``lb_refill_count``（最多补充多少 LB，0 为直到道具用完）；资源是旧版没有这两项时不补充。
+    每局不消耗 LB（消耗 0、不改游戏里的设置）时照传，``run`` 命令不补充（见 :func:`~ournotes_auto.commands.drop_refill_without_cost`）。"""
     if not flag(attach, "lb_refill"):
         return {"game.lb_refill": "false"}
-    if not _lb_spends(sets):
-        raise ParamError(f"LB 不足时用道具补充，需要把「每局消耗 LB」选为 1~{LB_MAX_COST} 或自动")
     return {"game.lb_refill": "true", "game.lb_refill_limit": str(_int(attach, "lb_refill_count", 0))}
 
 
@@ -216,7 +215,7 @@ def _ap_settings(attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.ap_difficulties": ",".join(chosen),
         "loop.ap_max_attempts": str(_int(attach, "ap_max_attempts", 1, 99)),
         **lb_cost,
-        **_lb_refill(attach, lb_cost),
+        **_lb_refill(attach),
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
         "loop.use_skip": "false",
@@ -269,7 +268,7 @@ def _arena_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     else:
         sets.update(_lb_cost(attach, "clear_lb_cost", 0))
         sets["loop.until_lb_empty"] = "true" if _lb_spends(sets) else "false"  # 消耗 0 时不等 LB，一直打
-    sets.update(_lb_refill(attach, sets))
+    sets.update(_lb_refill(attach))
     sets["loop.wait_lb"] = "true" if task == "arena_idle" else "false"
     return sets
 
@@ -334,7 +333,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     else:
         sets.update(_lb_cost(attach, "clear_lb_cost", 0 if task == "idle" else 1))
         sets["loop.until_lb_empty"] = "true" if _lb_spends(sets) else "false"  # 挂机消耗 0 时不等 LB，一直打
-    sets.update(_lb_refill(attach, sets))
+    sets.update(_lb_refill(attach))
     sets["loop.wait_lb"] = "true" if task == "idle" else "false"
     sets["loop.use_skip"] = "true" if task != "repeat" and flag(attach, "use_skip") else "false"
     return sets

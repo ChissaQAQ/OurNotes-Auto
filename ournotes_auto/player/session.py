@@ -102,7 +102,9 @@ class PlaySession:
         self.planner = Planner(self.geometry, config.play.touch)
         self.executor = Executor(touch)
         guard = config.play.guard_lost_s > 0 and not config.loop.arena  # 激奏舞台的演奏画面没有暂停按钮
-        self.guard_template = load_template() if guard else None
+        # 暂停按钮：演奏中确认还在演奏画面（PlayGuard），同步首音符时分辨开场演出（见 player/sync.py）
+        self.pause_template = None if config.loop.arena else load_template()
+        self.guard_template = self.pause_template if guard else None
         if guard and self.guard_template is None:
             logger.warning("找不到 %s，演奏中不检查是否离开了演奏画面", TEMPLATE_PATH)
         # 上一次同步时画面静止取的跟踪区基线（谱面, 基线）：暂停重试后歌曲立即开始，等不到静止，沿用它
@@ -132,6 +134,7 @@ class PlaySession:
             record_frames=sp.record_frames,
             baseline=baseline,
             max_start_delay_s=sp.retry_start_delay_s if retry else None,
+            pause_template=None if retry else self.pause_template,  # 重试后歌曲立即开始，没有开场演出
         )
         logger.debug(
             "谱面 %s：%d 个手势 / %d 个触控事件，首音符 %.0fms（%d 个）",

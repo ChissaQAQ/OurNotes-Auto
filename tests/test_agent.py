@@ -173,8 +173,8 @@ def test_run_settings_idle():
     # 挂机可以每局消耗 0：用不完 LB，一直打（清体力不行）
     sets = run_settings("idle", {**ATTACH, "clear_lb_cost": 0})
     assert sets["game.lb_cost"] == "0" and sets["loop.until_lb_empty"] == "false" and sets["loop.wait_lb"] == "true"
-    with pytest.raises(ParamError, match="1~5"):  # 消耗 0 用不着补充
-        run_settings("idle", {**ATTACH, "clear_lb_cost": 0, "lb_refill": True})
+    # 消耗 0 用不着补充：照传，run 命令里不补充（#100），不报错
+    assert run_settings("idle", {**ATTACH, "clear_lb_cost": 0, "lb_refill": True})["game.lb_refill"] == "true"
     with pytest.raises(ParamError, match="clear_lb_cost"):
         run_settings("idle", {**ATTACH, "clear_lb_cost": 6})
 
@@ -331,7 +331,8 @@ def test_run_settings_arena():
 
 
 def test_run_settings_lb_refill():
-    """用 LB 的演奏任务都能开「LB 不足时用道具补充」；需要每局消耗 1~5 或自动，旧资源没有这两项时不补充。"""
+    """用 LB 的演奏任务都能开「LB 不足时用道具补充」，旧资源没有这两项时不补充；每局消耗 0、不改游戏里的设置时
+    也不报错（#100，run 命令里不补充）。"""
     on = {**ATTACH, "lb_refill": "Yes", "lb_refill_count": "5", "lb_cost": 2}
     for task in ("repeat", "clear_lb", "idle", "ap", "arena", "arena_idle"):
         sets = run_settings(task, on)
@@ -341,10 +342,9 @@ def test_run_settings_lb_refill():
     assert run_settings("repeat", old)["game.lb_refill"] == "false"
     for task in ("repeat", "ap", "arena"):
         for cost in ("keep", 0):
-            with pytest.raises(ParamError, match="1~5"):
-                run_settings(task, {**on, "lb_cost": cost})
-    with pytest.raises(ParamError, match="1~5"):
-        run_settings("arena_idle", {**on, "clear_lb_cost": 0})
+            assert run_settings(task, {**on, "lb_cost": cost})["game.lb_refill"] == "true", (task, cost)
+    for task in ("idle", "arena_idle"):
+        assert run_settings(task, {**on, "clear_lb_cost": 0})["game.lb_refill"] == "true", task
     with pytest.raises(ParamError, match="lb_refill_count"):
         run_settings("clear_lb", {**on, "lb_refill_count": -1})
     with pytest.raises(ParamError, match="lb_refill"):
@@ -646,8 +646,7 @@ def test_worker_args_parse_back():
         check_run_config(cfg)
     cfg.game.lb_refill_limit, cfg.game.lb_cost = 0, 0
     cfg.loop.until_lb_empty = cfg.loop.wait_lb = False
-    with pytest.raises(SetupError, match="道具补充"):
-        check_run_config(cfg)
+    check_run_config(cfg)  # 消耗 0 时不报错，run 命令里不补充（#100）
 
     # 激奏舞台：run 命令统一改成只打 EXPERT、不跳过、至少 1% GREAT（拟人化设得更多时按设置）
     from ournotes_auto.commands import arena_defaults

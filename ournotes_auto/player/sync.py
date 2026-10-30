@@ -36,6 +36,13 @@ y_h 为运动消失线（见 ``motion_horizon_y``，实测与轨道消失线一�
 100056 的首音符就进入跟踪区），首音符一直在动，等不到画面静止，会错过它、跟上后面的音符。
 所以重试时直接沿用上一次静止时取的基线（``baseline``），不再等静止；歌曲开始时刻也几乎就是开始同步的时刻，
 用更严格的 ``max_start_delay_s`` 检查有没有跟错音符。
+
+游戏 1.1.0 起点「演出」后、出现演奏画面之前多了一段开场演出（曲名卡片、角色登场、舞台灯光），灯光偶尔从轨道上方
+往下扫，像音符一样跟踪得上，按它给结果多半是同步失败、白白重试一次，偶尔还会「同步成功」、整首提前（#102）。
+演奏画面右上角有暂停按钮，开场演出里没有：给结果时这一次同步还没认出过暂停按钮、推算的歌曲开始时刻又早得不可能
+（``min_start_delay_s``，真正开始都在点「演出」后 8.5s 以后），就是开场演出，放弃这条轨迹接着等首音符。
+两个条件互为保底：游戏改了暂停按钮的样子、认不出来时，只放弃开始得太早的；加载快的机器歌曲开始得早，
+但跟踪首音符时已经看得到暂停按钮。重试（没有开场）、激奏舞台（演奏画面没有暂停按钮）不检查。
 """
 
 from __future__ import annotations
@@ -53,6 +60,7 @@ from ..charts.model import Span
 from ..config import SyncParams
 from ..device.base import FrameSource
 from ..geometry import Geometry
+from .guard import pause_visible
 
 logger = logging.getLogger(__name__)
 
@@ -200,9 +208,11 @@ class NoteTracker:
         record_frames: int = 0,
         baseline: np.ndarray | None = None,
         max_start_delay_s: float | None = None,
+        pause_template: np.ndarray | None = None,
     ):
         """``baseline``：上一次（同一谱面）静止时取的基线 ``clean_baseline``，给出时不等静止直接开始跟踪；
-        ``max_start_delay_s``：代替 ``params`` 里的同名参数。"""
+        ``max_start_delay_s``：代替 ``params`` 里的同名参数；
+        ``pause_template``：演奏画面暂停按钮的模板，给出时（``feed`` 喂入整个画面）分辨开场演出（见模块说明）。"""
         self.geo = geometry
         self.spans = list(spans)
         self.p = params
@@ -252,6 +262,8 @@ class NoteTracker:
         self._seen_frames = 0  # 首音符出现以来的帧数（算出帧率）
         self._start_t: float | None = None
         self._begin_t: float | None = None  # 第一帧的时刻，用于检查推算的歌曲开始时刻
+        self._pause = pause_template
+        self._play_seen = False  # 这一次同步认出过演奏画面的暂停按钮（之后不再看）
         # 调试用：保留最近若干帧的跟踪区截图，同步后可 dump 下来离线重放
         self._record: deque[tuple[float, np.ndarray]] | None = deque(maxlen=record_frames) if record_frames else None
 
@@ -294,6 +306,12 @@ class NoteTracker:
         return fit_arrival(ts, ys, self.geo.judge_y, self.geo.motion_horizon_y, p.tau_s, p.tau_rel_sigma, p.fit_horizon)
 
     def feed(self, frame: np.ndarray, t: float) -> SyncResult | None:
+        if self._pause is not None and not self._play_seen:
+            try:
+                self._play_seen = pause_visible(frame, self._pause)
+            except Exception as e:  # noqa: BLE001 - 认不了暂停按钮不能影响同步
+                logger.warning("认演奏画面的暂停按钮出错，不再分辨开场演出：%s", e)
+                self._pause = None
         return self.feed_crop(self._crop(frame), t)
 
     def feed_crop(self, crop: np.ndarray, t: float) -> SyncResult | None:
@@ -364,9 +382,9 @@ class NoteTracker:
                 # 跟踪时长太短时模型误差看不出来，除非快来不及了
                 tracked = ts[-1] - ts[0] >= self.p.min_track_s
                 if remain <= self.p.solve_lead_s and (tracked or remain <= self.p.solve_lead_s / 2):
-                    return self._solve(t, "到达预定提前量")
+                    return self._solve(crop, t, "到达预定提前量")
         if t - self._first_seen > self.p.max_track_s:
-            return self._solve(t, "跟踪超时")
+            return self._solve(crop, t, "跟踪超时")
         return None
 
     def _drop_still(self, crop: np.ndarray, t: float, hit: np.ndarray) -> np.ndarray:
@@ -434,6 +452,13 @@ class NoteTracker:
             return f"轨迹不符合音符运动，τ={fit.tau:.3f}s"
         return None
 
+    def _intro(self, delay: float) -> str | None:
+        """还没认出过演奏画面、推算的歌曲开始时刻又早得不可能：跟踪到的是开场演出（见模块说明）。"""
+        limit = self.p.min_start_delay_s
+        if self._pause is None or self._play_seen or limit <= 0 or delay >= limit:
+            return None
+        return f"还没出现演奏画面，推算的歌曲开始时刻在开始同步 {delay:+.1f}s 后，是开场演出"
+
     def _finish(self, crop: np.ndarray, t: float, reason: str) -> SyncResult | None:
         """音符离开跟踪区或消失：轨迹可信则给出结果，否则当作非音符变化重新等待。"""
         if len(self.samples) < self.p.min_samples:
@@ -442,9 +467,10 @@ class NoteTracker:
         ys = np.array([s[1] for s in self.samples])
         if why := self._implausible(self._fit(ts, ys)):
             return self._rearm(crop, t, f"{reason}，{why}")
-        return self._solve(t, reason)
+        return self._solve(crop, t, reason)
 
-    def _solve(self, t_now: float, reason: str) -> SyncResult:
+    def _solve(self, crop: np.ndarray, t_now: float, reason: str) -> SyncResult | None:
+        """给出同步结果；跟踪到的是开场演出时（见模块说明）放弃这条轨迹、重新等待，返回 None。"""
         notes = [reason]
         pts = self.samples
         if len(pts) < 2:
@@ -480,6 +506,8 @@ class NoteTracker:
             notes.append(f"拟合不可信：{len(ts)} 个样本，残差 {rms_ms:.2f}ms，外推误差 ±{sigma_ms:.2f}ms")
         t0 = arrival + self.p.center_lag * (fit.tau - self.p.offset_tau_s) - self.first_ms / 1000
         delay = t0 - self._begin_t
+        if why := self._intro(delay):
+            return self._rearm(crop, t_now, why)
         if self.max_start_delay_s > 0 and delay > self.max_start_delay_s:
             ok = False
             notes.append(f"推算的歌曲开始时刻在开始同步 {delay:.1f}s 后，跟踪到的多半不是第一个音符")

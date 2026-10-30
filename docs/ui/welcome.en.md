@@ -1,14 +1,12 @@
-# What's New in v0.2.1
+# What's New in v0.2.2
 
-> **Note**: The new features in this version (Arena, the new recovery from stuck screens, etc.) have not been fully tested yet. You may run into all kinds of problems, and a whole song may even fail. Please report problems in the GitHub Issues.
+> **Note**: The Arena (new in v0.2.1) and this version's fix for the song intro have not been fully tested yet. You may run into all kinds of problems. Please report problems in the GitHub Issues.
 
-- **New tasks "Arena" and "AFK Farming (Arena)"**: play Arena multiplayer matches continuously, EXPERT only. **Humanize is always on in the Arena**: even with "Humanize: Random GREAT" off, about 1% of notes are hit as GREAT on purpose every round, so it never APs
-- Stats & Achievements: 「运行记录」 (run history) is paginated; 「全部演奏」 (all plays) has a new 「激奏舞台」 (Arena) tab
-- Fixed result scores losing their first digit (e.g. 3624299 read as 624299). Scores recorded before this can't be corrected, so total and average scores will be lower than they should be
-- Fixed retries failing after a sync failure on slow networks (#98), getting stuck on the menu when switching accounts (#97), and Limited-Time Missions not being claimed in Claim Dailies
-- 「全部消耗」 (use all LB) now follows the game's 3:00 day change; when stuck on an unrecognized screen it first tries to close the popup, and restarts the game if that doesn't help
+- Fixed the song intro added in game 1.1.0 (stage lights) being mistaken for notes, which made sync fail, fooled the retry too, and occasionally shifted a whole song early (#102): the intro is now recognized and it keeps waiting for the first note
+- Arena: fixed getting stuck on the zh-Hant 「配對確認」 (match confirmation) screen (#100, thanks @bfs2021) and on rank-up screens it couldn't recognize (#101, Gold and above)
+- Fixed tasks failing right away with "Refill LB with Items When Low" on and "LB per Round" set to 0 (#100): it now just doesn't refill and plays as usual
 
-Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.1
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.2
 
 ---
 

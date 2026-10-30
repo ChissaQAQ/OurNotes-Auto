@@ -14,10 +14,12 @@ import pytest
 from ournotes_auto import sources
 from ournotes_auto.config import Config
 from ournotes_auto.nav import navigator
+from ournotes_auto.nav.arena import rank_up_like
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import (
     ARENA_AP_ROI,
+    ARENA_TIER_ROI,
     CLEAR_MARK_ROI,
     CP_RADIO,
     LB_ALL_CHECK,
@@ -206,6 +208,41 @@ def test_arena_rank_up_taps_both_spots(monkeypatch, works, taps):
     fake_clock(monkeypatch, nav)
     assert nav.ensure_in_game() == navigator.Screen.HOME
     assert [s for s, _ in game.taps] == ["arena_tier_up"] * taps + ["arena_tier_reward"]
+
+
+class UnreadTierGame(FakeGame):
+    """黄金以上的段位提升（#101）：下面的段位名读不出来，认不出是段位提升。"""
+
+    def read(self, frame, roi=None):
+        items = load_items(frame)
+        return [it for it in items if not in_roi(it, ARENA_TIER_ROI)] if frame == "arena_rank_up" else items
+
+
+def test_arena_rank_up_unread_tier(monkeypatch):
+    """#101：认不出的画面上有 RANK UP、没有 OK，停了一会儿也当成段位提升点掉，接着读结果（原来干等到超时）。"""
+    monkeypatch.setitem(TRANSITIONS, "arena_rank_up", [((640, 600), "arena_result")])
+    game = UnreadTierGame("arena_rank_up")
+    nav = make_nav(game, game, game)
+    saved = []
+    nav.save_debug = lambda name, *a: saved.append(name)
+    fake_clock(monkeypatch, nav)
+    assert navigator.classify(game.read("arena_rank_up")) is navigator.Screen.UNKNOWN
+    out = nav.read_arena_result()
+    assert (out.placement, out.counts.counts) == (2, TOTALS)
+    assert [s for s, _ in game.taps][:2] == ["arena_rank_up", "arena_result"]
+    assert saved == ["arena_rank_up_guess"]
+
+
+def test_rank_up_like():
+    """当成段位提升的条件：上半部有 RANK UP、没有 OK；羁绊等级的 RANK UP（有 OK）、结算页、T.G.W CARD 页
+    （下面有「RANK UP까지」的进度文字）不算。"""
+    rank_up = load_items("arena_rank_up")
+    assert rank_up_like(rank_up)
+    assert not rank_up_like(load_items("band_rank_up"))
+    assert not rank_up_like(load_items("rank_up"))
+    assert not rank_up_like(load_items("result"))
+    assert not rank_up_like(load_items("ko_tgw_card"))
+    assert not rank_up_like([*rank_up, OcrItem(600, 400, 80, 30, "星钻")])
 
 
 def test_bond_up_after_result():
