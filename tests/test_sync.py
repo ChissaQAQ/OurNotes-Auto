@@ -9,6 +9,7 @@ import pytest
 from ournotes_auto.charts.model import LANE_UNITS, Span
 from ournotes_auto.config import SyncParams
 from ournotes_auto.geometry import Geometry, GeometryParams
+from ournotes_auto.player.guard import load_template
 from ournotes_auto.player.sync import NoteTracker, SyncTimeout
 
 W, H = 1280, 720
@@ -423,6 +424,46 @@ def test_tracker_retry_start_delay():
     assert run(None).ok
     late = run(1.5)
     assert not late.ok and any("第一个音符" in n for n in late.notes), late.notes
+
+
+PAUSE = load_template()
+
+
+@pytest.mark.parametrize(
+    "light, play_at, pause, min_start, fooled",
+    [
+        (4.0, 8.0, True, 7.0, False),  # 开场灯光：还没出现演奏画面、开始时刻又早得不可能
+        (4.0, math.inf, True, 7.0, False),  # 认不出暂停按钮（游戏改了样子）时开始得太早的照样放弃
+        (4.0, 0.0, True, 7.0, True),  # 保底：加载快的机器歌曲开始得早，跟踪时已经看得到暂停按钮
+        (9.5, math.inf, True, 7.0, True),  # 保底：认不出暂停按钮时，开始时刻不算早的照旧给结果
+        (4.0, 8.0, False, 7.0, True),  # 不传模板（重试、激奏舞台）不检查
+        (4.0, 8.0, True, 0.0, True),  # min_start_delay_s 为 0 不检查
+    ],
+)
+def test_tracker_skips_intro_light(light, play_at, pause, min_start, fooled):
+    """#102：游戏 1.1.0 起进歌有开场演出，舞台灯光从轨道上方往下扫、像音符一样跟踪得上。还没出现过演奏画面
+    （右上角的暂停按钮）、推算的歌曲开始时刻又早于 min_start_delay_s，就放弃这条轨迹接着等，跟上真正的首音符。"""
+    geo = Geometry(W, H)
+    span = Span(8, 14)
+    tau_s, first_ms = 0.835, 2000.0
+    song = light + 7.0  # 首音符到达判定线的时刻：歌曲开始于 +9s（灯光在 +9.5s 时 +14.5s）
+    rng = np.random.default_rng(14)
+    blank = render(geo, span, -1, 0, rng)
+    th, tw = PAUSE.shape[:2]
+    tr = NoteTracker(geo, SyncParams(min_start_delay_s=min_start), first_ms, [span], pause_template=PAUSE if pause else None)
+    t, result = 0.0, None
+    while result is None and t < song + 1.0:
+        frame = blank.copy()
+        arrival = light if t < light + 0.3 else song  # 灯光扫到判定线附近就没了
+        y = geo.note_y(arrival - t, tau_s)
+        for yy in range(max(int(y - 0.04 * (y - geo.motion_horizon_y)), 0), min(int(y), H)):
+            frame[yy, int(geo.x_at(span.left, yy)) : int(geo.x_at(span.right, yy))] = (250, 240, 255)
+        if t >= play_at:
+            frame[16 : 16 + th, 1218 : 1218 + tw] = PAUSE
+        result = tr.feed(frame, t)
+        t += 1 / 30
+    assert result is not None and result.ok, result
+    assert abs(result.arrival - (light if fooled else song)) * 1000 < 10, (result.arrival, result.notes)
 
 
 def test_dump_and_replay(tmp_path):

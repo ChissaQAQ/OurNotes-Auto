@@ -18,7 +18,7 @@ game:
   # 或比一局局消耗能少打 2 局以上时用，用到今天的次数用完（每天几次看月卡，一般 1 次；用完了记在 data/state.json，
   # 按「切换账号」切到的账号分开记，当天不再看）
   lb_auto: false
-  # true：每局前 LB 持有少于 lb_cost（须为 1~5，或 lb_auto）时，用道具里的 LIVE BOOST饮料补够（从「消耗LB」→「恢复」进去，
+  # true：每局前 LB 持有少于 lb_cost（为 1~5 或 lb_auto 时；0、null 时不补充）时，用道具里的 LIVE BOOST饮料补够（从「消耗LB」→「恢复」进去，
   # 只在「道具」页选，先用小型饮料；绝不用星钻、不看广告）。饮料用完或补够 lb_refill_limit 个后按上面的方式处理
   lb_refill: false
   lb_refill_limit: 0         # 本次运行最多补充多少 LB，0 为不限（直到饮料用完）

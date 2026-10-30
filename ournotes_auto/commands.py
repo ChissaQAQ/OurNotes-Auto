@@ -201,10 +201,6 @@ def check_run_config(cfg: Config) -> None:
             f"挂机需要把每局 LB 消耗设为 0~{LB_MAX_COST} 或自动（--lb-cost / --lb-auto 或 game.lb_cost / game.lb_auto；"
             "0 为不等 LB：有就每局消耗 1 个，用完消耗 0 接着打）"
         )
-    if cfg.game.lb_refill and not cfg.game.lb_spends:
-        raise SetupError(
-            f"LB 不足时用道具补充需要把每局 LB 消耗设为 1~{LB_MAX_COST} 或自动（--lb-cost / --lb-auto 或 game.lb_cost / game.lb_auto）"
-        )
     if cfg.game.lb_refill_limit < 0:
         raise SetupError(f"用道具补充 LB 的上限应为 0（不限）或正整数：{cfg.game.lb_refill_limit}")
     if cfg.loop.studio_claim_hours < 0:
@@ -241,6 +237,13 @@ def drop_great_for_ap(cfg: Config) -> None:
     if cfg.play.touch.great_ratio > 0 and cfg.loop.song_mode in ("ap", "ap_first"):
         logger.info("选曲以 AP 为目标，本次不故意打 GREAT")
         cfg.play.touch.great_ratio = 0.0
+
+
+def drop_refill_without_cost(cfg: Config) -> None:
+    """每局不消耗 LB（消耗 0，或不改游戏里的设置）时用不着补充：不用道具补充 LB，照常打（#100）。"""
+    if cfg.game.lb_refill and not cfg.game.lb_spends:
+        logger.info("每局消耗 LB 为 0 或不改游戏里的设置，不用道具补充 LB")
+        cfg.game.lb_refill = False
 
 
 def cmd_run(cfg: Config, args) -> int:
@@ -291,6 +294,7 @@ def cmd_run(cfg: Config, args) -> int:
     arena_defaults(cfg)
     check_run_config(cfg)
     drop_great_for_ap(cfg)
+    drop_refill_without_cost(cfg)
     stop = args.stop
     launched = _launch_game(cfg)
     with open_context(cfg, stop, watch_combo=args.watch_combo, record=args.record) as ctx:

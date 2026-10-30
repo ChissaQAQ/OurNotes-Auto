@@ -130,7 +130,7 @@
     "opt.ArenaGamesPerBand.count": "Rounds to play in a row with each band",
     "opt.ArenaGamesPerBand.count.msg": "Enter a positive integer",
     "opt.LbRefill": "Refill LB with Items When Low",
-    "opt.LbRefill.desc": "Before each round, if LB held is less than the per-round cost, goes through the LB \"Settings\" → \"Recovery\" and, only on the \"Item\" tab, uses Boost Drinks to top up just enough for this round (Small Boost Drinks first); never uses Stars or watches ads. Once the drinks run out or the set amount has been refilled, continues as before. Requires LB per round to be set to 1–5 or \"Auto\"",
+    "opt.LbRefill.desc": "Before each round, if LB held is less than the per-round cost, goes through the LB \"Settings\" → \"Recovery\" and, only on the \"Item\" tab, uses Boost Drinks to top up just enough for this round (Small Boost Drinks first); never uses Stars or watches ads. Once the drinks run out or the set amount has been refilled, continues as before. Does not refill when LB per round is 0 or \"Keep In-Game Setting\"",
     "opt.LbRefillCount": "Max Refill",
     "opt.LbRefillCount.count": "Max LB to refill this run (0 = until the drinks run out)",
     "opt.LbRefillCount.count.msg": "Enter 0 or a positive integer",

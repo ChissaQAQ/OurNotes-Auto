@@ -6,7 +6,7 @@ import logging
 import pytest
 
 from ournotes_auto.cli import JsonLineFormatter, _masked
-from ournotes_auto.commands import arena_defaults, check_run_config, drop_great_for_ap
+from ournotes_auto.commands import arena_defaults, check_run_config, drop_great_for_ap, drop_refill_without_cost
 from ournotes_auto.config import Config, apply_override
 from ournotes_auto.context import SetupError
 
@@ -208,6 +208,20 @@ def test_ap_modes_drop_great(mode, kept):
     drop_great_for_ap(cfg)
     assert cfg.play.touch.great_ratio == (0.03 if kept else 0.0)
     assert cfg.play.touch.jitter_ms == 8  # 时机偏移不影响 PERFECT，照留
+
+
+@pytest.mark.parametrize(
+    "lb_cost, lb_auto, kept",
+    [(0, False, False), (None, False, False), (1, False, True), (5, False, True), (None, True, True), (0, True, True)],
+)
+def test_drop_refill_without_cost(lb_cost, lb_auto, kept):
+    """#100：开了用道具补充 LB、每局消耗 0（或不改游戏里的设置）时不报错，不补充照常打；消耗 1~5、自动时照留。"""
+    cfg = Config()
+    cfg.game.lb_cost, cfg.game.lb_auto = lb_cost, lb_auto
+    cfg.game.lb_refill = True
+    check_run_config(cfg)
+    drop_refill_without_cost(cfg)
+    assert cfg.game.lb_refill is kept
 
 
 def test_json_line_formatter():

@@ -40,7 +40,7 @@ The game just needs to be on the Home screen or the Free LIVE Select Song screen
 
 Repeat Play, Use Up LB, AFK Farming, AP Completion, Arena and AFK Farming (Arena) all have the option "Refill LB with Items When Low" (off by default): before each round, if LB held is less than the per-round cost, it goes through the LB "Settings" → "Recovery" and, only on the "Item" tab, uses Boost Drinks to top up just enough for this round (Small +1 first, then +10 if that's not enough); it taps OK only after verifying that the selected quantity, the recovery preview and the numbers on the confirmation popup all match; if it's not on the "Item" tab or anything doesn't match, it taps Cancel and won't refill again this run. Never uses Stars or watches ads.
 
-The sub-option "Max Refill" is the maximum amount of LB refilled in this run; 0 means until the drinks run out. After the drinks run out, it continues as before (Use Up LB ends there, AFK Farming starts waiting for recovery). Requires LB per round to be set to 1–5 or "Auto".
+The sub-option "Max Refill" is the maximum amount of LB refilled in this run; 0 means until the drinks run out. After the drinks run out, it continues as before (Use Up LB ends there, AFK Farming starts waiting for recovery). When LB per round is 0 or "Keep In-Game Setting", it doesn't refill and plays as usual.
 
 ### LB per Round: 4, 5 and "Auto"
 

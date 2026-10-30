@@ -84,6 +84,7 @@ def test_session_hits_first_notes_on_time(tau_s):
     cfg = Config()
     cfg.play.sync.stable_frames = 10
     cfg.play.guard_lost_s = 0  # 虚拟画面上没有暂停按钮
+    cfg.play.sync.min_start_delay_s = 0  # 虚拟画面上没有暂停按钮、歌曲马上开始
     song_start = now() + 0.3
     game = SimGame(chart, song_start, tau_s=tau_s)
     touch = LogTouch()
@@ -120,6 +121,7 @@ def test_covered_chart_keeps_touching_next_time(monkeypatch):
     chart = Chart(1, "expert", notes=notes)
     cfg = Config()
     cfg.play.sync.stable_frames = 10
+    cfg.play.sync.min_start_delay_s = 0  # 虚拟画面上没有暂停按钮、歌曲马上开始
     session = PlaySession(cfg, SimGame(chart, now() + 0.3), LogTouch())
     assert session.guard_template is not None
     for _ in range(2):
@@ -132,6 +134,20 @@ def test_covered_chart_keeps_touching_next_time(monkeypatch):
     assert session.guard_template is None
     assert session.play(chart, stop=threading.Event()).sync.ok
     assert holds == [True, False]
+
+
+def test_intro_check_only_on_first_start():
+    """分辨开场演出（#102，见 player/sync.py）只在进歌时：重试后歌曲立即开始，激奏舞台的演奏画面没有暂停按钮；
+    和演奏中检查是否离开演奏画面（guard_lost_s）无关。"""
+    chart = Chart(1, "expert", notes=[PointNote(0, 3500, NoteKind.TAP, Span(4, 8))])
+    cfg = Config()
+    cfg.play.guard_lost_s = 0
+    session = PlaySession(cfg, SimGame(chart, now()), LogTouch())
+    assert session.guard_template is None
+    assert session.prepare(chart)[1]._pause is not None
+    assert session.prepare(chart, retry=True)[1]._pause is None
+    cfg.loop.arena = True
+    assert PlaySession(cfg, SimGame(chart, now()), LogTouch()).prepare(chart)[1]._pause is None
 
 
 def test_timed_source_merges_queued_stalls():

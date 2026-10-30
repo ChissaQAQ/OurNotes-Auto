@@ -124,6 +124,10 @@ class SyncParams:
     max_start_delay_s: float = 20.0
     # 暂停重试后歌曲立即从头开始（实测推算的开始时刻在开始同步前 0.3s 左右），同一个检查改用这个上限
     retry_start_delay_s: float = 1.5
+    # 还没出现过演奏画面（右上角的暂停按钮）、推算出的歌曲开始时刻又早于开始同步后这么久：跟踪到的是进歌的开场演出
+    # （游戏 1.1.0 起的舞台灯光等，#102），不给结果、接着等首音符。MuMu 实测歌曲开始于 +8.5s 以后，被灯光骗的都在
+    # +6.5s 以前。0 表示不检查；重试、激奏舞台不检查（见 player/sync.py）
+    min_start_delay_s: float = 7.0
     record_frames: int = 0  # 调试：保存最近多少帧跟踪区截图到 debug/sync/（演奏结束后写盘）
 
 
@@ -181,7 +185,7 @@ class GameConfig:
     # 自动选消耗（开了就不看 lb_cost）：每局按持有数选能选的最大消耗，持有不够就全部消耗掉；「全部消耗」
     # （每天能用的次数看月卡，一般 1 次，用到弹窗上写着今天的次数用完为止）在持有 10 个以上、或比一局局消耗能省 2 局以上时用。用完后的处理同 lb_cost 为 1~5
     lb_auto: bool = False
-    # 每局开始前 LB 持有少于 lb_cost（需要为 1~5）时，用道具里的 LIVE BOOST饮料补充（从「消耗LB」→「恢复」进去，
+    # 每局开始前 LB 持有少于 lb_cost（为 1~5 或 lb_auto 时；消耗 0、null 时不补充）时，用道具里的 LIVE BOOST饮料补充（从「消耗LB」→「恢复」进去，
     # 只在「道具」页选；绝不用星钻、不看广告）。道具用完或补够 lb_refill_limit 个后按上面的方式处理
     lb_refill: bool = False
     lb_refill_limit: int = 0  # 本次运行最多补充多少 LB，0 为不限（直到道具用完）
