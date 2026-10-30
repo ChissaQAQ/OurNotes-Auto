@@ -32,6 +32,7 @@ from .jacket import crop_jacket
 from .screens import (
     ARENA_AP_ROI,
     ARENA_BANDS,
+    MATCH_OK_ROI,
     OK_POPUP_BLOCK,
     RELOGIN_SCREENS,
     Rect,
@@ -49,8 +50,7 @@ logger = logging.getLogger(__name__)
 BTN_ARENA_ENTRY = (1141, 349)  # 演出首页：激奏舞台（下面的「激奏演出」不点）
 BTN_BAND_NEXT = (1125, 300)  # 激奏舞台首页：乐队标志右边的 ▶▶
 BTN_ARENA_START = (1140, 640)  # 激奏舞台首页：LIVE START
-BTN_MATCH_OK = (782, 660)  # 匹配确认：左取消右 OK
-MATCH_OK_ROI: Rect = (640, 630, 300, 60)
+BTN_MATCH_OK = (782, 660)  # 匹配确认：左取消右 OK（MATCH_OK_ROI 在 screens.py，猜页面时也用）
 BTN_MATCH_CANCEL = (498, 660)
 MATCH_CANCEL_ROI: Rect = (340, 630, 300, 60)
 MATCHING_CANCEL_ROI: Rect = (440, 540, 400, 60)  # 「正在匹配」弹窗的取消（匹配房间里没有）

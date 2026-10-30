@@ -315,6 +315,7 @@ def test_story_ko():
         ("バンドスト", "乐队故事"),  # 字没读全
         ("ストーリーをスキップしますか？", "要跳过故事吗？"),
         ("もう一回ライブ", "再次演出"),
+        ("撃奏アリーナ", "激奏舞台"),  # 演出首页的入口、激奏舞台首页的标题（#105）
         ("迷星叫", "迷星叫"),  # 曲名只有汉字，照常转简体
     ],
 )
@@ -331,6 +332,7 @@ def test_localize_ja(text, expected):
         ("ja_story_menu", Screen.HOME),  # 主界面上展开的故事菜单
         ("ja_settings", Screen.SETTINGS),
         ("ja_live_top", Screen.LIVE_TOP),
+        ("ja_arena_top", Screen.ARENA_TOP),  # 激奏舞台首页「撃奏アリーナ」（#105）
         ("ja_song_select", Screen.SONG_SELECT),
         ("ja_band_confirm", Screen.BAND_CONFIRM),
         ("ja_lb_setting", Screen.LB_SETTING),
@@ -356,6 +358,12 @@ def test_classify_ja(name, screen):
 
 def test_band_confirm_song_ja():
     assert band_confirm_song(load("ja_band_confirm")) == ("迷星叫", "expert")
+
+
+def test_arena_entry_ja():
+    """日服演出首页能找到「撃奏アリーナ」入口，位置和简中一样（#105）。"""
+    it = find(load("ja_live_top"), "激奏舞台")
+    assert it is not None and abs(it.x + it.w / 2 - 1141) < 20 and abs(it.cy - 349) < 20
 
 
 def test_lb_ja():

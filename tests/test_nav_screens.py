@@ -1,6 +1,7 @@
 """用实机截图的 OCR 结果（tests/fixtures/screens，由 tools/ocr_dump.py 生成）验证画面判断。"""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from ournotes_auto.nav.screens import (
     all_perfect_mark,
     arena_ap_text,
     arena_ap_total,
+    arena_guess,
     arena_placement,
     arena_result,
     arena_song,
@@ -263,6 +265,7 @@ def test_arena_result():
     assert arena_placement(load("arena_ranking")) == 2
     assert arena_placement(load("arena_ranking_5th")) == 5  # 右边的「2nd3rd4th」连成一项也不会认错
     assert arena_placement(load("arena_result")) is None
+    assert arena_result(foreign(load("arena_result"))) == (2, 25)  # 还没适配的语言（#105）
 
 
 @pytest.mark.parametrize(
@@ -273,6 +276,9 @@ def test_arena_result():
         ("结果 1st AP+3O", (1, 30)),
         ("结果 3rd", (3, None)),  # 段位分没读出来
         ("结果", (None, None)),
+        ("リザルト 2nd AP+25", (2, 25)),  # 还没适配的语言：「结果」认不出，只看后面（#105）
+        ("Result 4th AP+1O", (4, 10)),
+        ("12nd AP+5", (None, None)),
     ],
 )
 def test_arena_result_text(text, result):
@@ -286,6 +292,44 @@ def test_arena_result_text(text, result):
 def test_arena_ap_text(text, value):
     """结果弹窗上段位分的直接识别结果：小号数字的 1、0 常读成 ]、O。"""
     assert arena_ap_text(text) == value
+
+
+def foreign(items: list[OcrItem]) -> list[OcrItem]:
+    """当成还没适配的语言：（换成简中说法后的）汉字都换成认不出的假名，英文、数字照旧。"""
+    han = re.compile(f"[{chr(0x4E00)}-{chr(0x9FFF)}]+")
+    return [OcrItem(it.x, it.y, it.w, it.h, han.sub("ア", it.text)) for it in items]
+
+
+@pytest.mark.parametrize(
+    "name, screen",
+    [
+        ("arena_top", Screen.ARENA_TOP),
+        ("arena_top_lb_timer", Screen.ARENA_TOP),
+        ("ja_arena_top", Screen.ARENA_TOP),  # 日服实机截图（#105）
+        ("arena_match_confirm", Screen.ARENA_MATCH_CONFIRM),
+        ("zh_hant_arena_match_confirm", Screen.ARENA_MATCH_CONFIRM),
+        ("arena_difficulty", Screen.ARENA_DIFFICULTY),
+        ("arena_result", Screen.ARENA_RESULT),
+        ("arena_result_4th", Screen.ARENA_RESULT),
+        ("arena_ranking", Screen.ARENA_RANKING),
+        ("arena_ranking_5th", Screen.ARENA_RANKING),
+        ("arena_matching", None),  # 正在匹配、匹配房间猜不出（开始对局时当作还在匹配，等着）
+        ("arena_members", None),
+    ],
+)
+def test_arena_guess_foreign(name, screen):
+    """还没适配的语言（#105）：标题、按钮上的字认不出时，按「LUCK」那一排的高度等猜激奏舞台的页面。"""
+    assert arena_guess(foreign(load(name))) is screen
+
+
+def test_arena_guess_only_arena_pages():
+    """别的页面（字认不出时也一样）都不会猜成激奏舞台；认得出的激奏舞台页面，猜的和按文字认的一样。"""
+    for path in sorted(FIXTURES.glob("*.json")):
+        items = load(path.stem)
+        guess = arena_guess(items)
+        assert guess is None or guess is classify(items), path.stem
+        if "arena" not in path.stem:
+            assert arena_guess(foreign(items)) is None, path.stem
 
 
 def test_arena_top_lb():

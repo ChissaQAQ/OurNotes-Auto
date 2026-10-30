@@ -86,6 +86,7 @@ from .screens import (
     LbRows,
     Rect,
     Screen,
+    arena_guess,
     band_confirm_song,
     center,
     classify,
@@ -402,8 +403,12 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         # 故事播放画面也是名牌加台词，可能认成主界面角色对话：先按右上角的菜单按钮认
         if screen in (Screen.UNKNOWN, Screen.HOME_TALK) and isinstance(frame, np.ndarray) and self._player_menu_button():
             screen = Screen.STORY_PLAYER
+        # 激奏舞台任务里认不出的画面：还没适配的语言（#105）按不分语言的特征猜是哪一页（简中等照常按文字认，不走这里）
+        guessed = False
+        if screen is Screen.UNKNOWN and self.arena and (guess := arena_guess(items)) is not None:
+            screen, guessed = guess, True
         if screen != self.last_screen:
-            logger.debug("画面：%s", screen)
+            logger.debug("画面：%s%s", screen, "（认不出文字，按位置猜的）" if guessed else "")
         self.prev_screen, self.last_screen = self.last_screen, screen
         if screen in CHALLENGE_SCREENS:
             self._challenge_taps = 0
