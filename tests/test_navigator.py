@@ -50,9 +50,10 @@ def load_items(name: str) -> list[OcrItem]:
     return [OcrItem(x, y, w, h, localize(text)) for x, y, w, h, text in data]
 
 
-def make_nav(source, touch, ocr) -> GameNavigator:
+def make_nav(source, touch, ocr, arena: bool = False) -> GameNavigator:
     cfg = Config()
     cfg.game.difficulty = "expert"
+    cfg.loop.arena = arena
     nav = GameNavigator(cfg, source, touch, ocr, settle_s=0)
     nav._sleep = lambda s: None
     return nav
@@ -197,6 +198,57 @@ def test_read_arena_result_one_digit_total(drop_total, total):
     assert (out.placement, out.ap_gain, out.ap_total) == (2, 25, total)
     assert out.counts.counts == TOTALS
 
+
+class ForeignArenaGame(ArenaResultGame):
+    """还没适配激奏舞台的语言（#105）：激奏舞台各页的标题、说明都认不出（汉字换成假名），
+    「取消」这类各处都有的按钮和结算页认得出（日服都已适配）。"""
+
+    def __init__(self, state: str):
+        super().__init__(drop_total=False)
+        self.state = state
+
+    def read(self, frame, roi=None):
+        items = super().read(frame, roi)
+        if not frame.startswith("arena_"):
+            return items
+        han = re.compile(f"[{chr(0x4E00)}-{chr(0x9FFF)}]+")
+        return [it if it.text == "取消" else OcrItem(it.x, it.y, it.w, it.h, han.sub("ア", it.text)) for it in items]
+
+
+def test_start_arena_foreign_language(monkeypatch):
+    """#105：激奏舞台各页的字认不出时按位置猜（只在激奏舞台任务里）：认得出首页，LIVE START 后匹配确认点 OK，
+    到难度选择页读出 EXPERT 等级（原来一直认不出，等到超时）。"""
+    monkeypatch.setitem(TRANSITIONS, "arena_top", [((1140, 640), "arena_match_confirm")])
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), "arena_difficulty")])
+    game = ForeignArenaGame("arena_top")
+    nav = make_nav(game, game, game, arena=True)
+    fake_clock(monkeypatch, nav)
+    for name in ("arena_top", "arena_match_confirm", "arena_difficulty"):
+        assert navigator.classify(game.read(name)) is navigator.Screen.UNKNOWN, name
+    nav.ensure_band_confirm()
+    assert game.state == "arena_top" and not game.taps
+    song = nav.start_arena()
+    assert (song.difficulty, song.level) == ("expert", 24)
+    assert [s for s, _ in game.taps] == ["arena_top", "arena_match_confirm"]
+
+
+def test_read_arena_result_foreign_language(monkeypatch):
+    """#105：结果弹窗的「结果」认不出时按「2nd AP+25」读名次、段位分。"""
+    game = ForeignArenaGame("arena_result")
+    nav = make_nav(game, game, game, arena=True)
+    fake_clock(monkeypatch, nav)
+    out = nav.read_arena_result()
+    assert (out.placement, out.ap_gain, out.ap_total) == (2, 25, 72)
+    assert out.counts.counts == TOTALS
+
+
+def test_foreign_guess_only_in_arena():
+    """不打激奏舞台时认不出的画面不猜（自由演出、简中照旧）。"""
+    game = ForeignArenaGame("arena_top")
+    nav = make_nav(game, game, game)
+    assert nav.look()[0] is navigator.Screen.UNKNOWN
+    nav = make_nav(game, game, game, arena=True)
+    assert nav.look()[0] is navigator.Screen.ARENA_TOP
 
 @pytest.mark.parametrize("works, taps", [((640, 600), 1), ((640, 300), 2)])
 def test_arena_rank_up_taps_both_spots(monkeypatch, works, taps):

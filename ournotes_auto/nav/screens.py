@@ -248,6 +248,21 @@ ARENA_RECORD_ROI: Rect = (720, 630, 250, 60)  # 排名页底部的「演出记�
 ARENA_PLACE_ROI: Rect = (20, 330, 200, 150)  # 排名页左边自己的名次（大号的「3rd」）
 ARENA_SONG_ROI: Rect = (780, 385, 490, 50)  # 难度选择页右边封面下的曲名
 ARENA_LEVEL_ROI: Rect = (1140, 510, 130, 45)  # 难度选择页 EXPERT 上面的等级数字
+MATCH_OK_ROI: Rect = (640, 630, 300, 60)  # 匹配确认：左取消右 OK
+# 激奏舞台的页面认不出时（还没适配的语言，#105）按不分语言的特征猜（见 arena_guess）：首页、匹配确认、难度选择、
+# 排名页上各有一排「LUCK」（别的页面都没有），各页这一排的高度不同
+ARENA_LUCK_ROWS = (
+    (658, Screen.ARENA_TOP),
+    (320, Screen.ARENA_MATCH_CONFIRM),
+    (488, Screen.ARENA_DIFFICULTY),
+    (561, Screen.ARENA_RANKING),
+)
+ARENA_ROW_DY = 20  # 中心高度差这么多以内算同一排
+ARENA_START_ROI: Rect = (1000, 610, 280, 60)  # 首页右下的 LIVE START
+ARENA_DIFFICULTY_Y = 555  # 难度选择页 EASY … EXPERT 那一排
+ARENA_PT_Y = 576  # 排名页各玩家的「220pt」那一排
+# 有这些字时不猜（可能叠着别的弹窗）。匹配确认上有「取消」「确定要开始吗」、首页上有「消耗LB」，所以不用 OK_POPUP_BLOCK
+ARENA_GUESS_BLOCK = ("购买", "星钻", "恢复", "使用", "招募", "下载", "兑换", "跳过", "解锁", "升级")
 
 # 乐队确认页左下角的曲名与难度
 SONG_TITLE_ROI: Rect = (100, 588, 420, 42)
@@ -483,6 +498,36 @@ def _arena(items: list[OcrItem]) -> Screen | None:
     return None
 
 
+def arena_guess(items: list[OcrItem]) -> Screen | None:
+    """认不出的画面猜是激奏舞台的哪一页，不像时为 None。只在激奏舞台任务里、:func:`classify` 认不出时用
+    （见 ``GameNavigator.look``），简中等适配了的语言照常按标题认，不走这里。
+
+    还没适配的语言（#105）里标题、按钮上的字认不出，只看不分语言的：「LUCK」那一排的高度，再加一处这一页才有的
+    （首页的 LIVE START、匹配确认的 OK、难度选择的 EASY … EXPERT、排名页的名次或「220pt」）；
+    结果弹窗看「2nd AP+25」（见 :func:`arena_result`）。
+    """
+    if any(find(items, text) for text in ARENA_GUESS_BLOCK):
+        return None
+    if any(in_roi(it, ARENA_RESULT_ROI) and _ARENA_RESULT_ANY.search(_digits(it.text)) for it in items):
+        return Screen.ARENA_RESULT
+
+    def row(y: float, match) -> int:
+        return sum(1 for it in items if abs(it.cy - y) <= ARENA_ROW_DY and match(_norm(it.text)))
+
+    screen = next((s for y, s in ARENA_LUCK_ROWS if row(y, lambda t: "LUCK" in t) >= 2), None)
+    if screen is Screen.ARENA_TOP:
+        ok = any(in_roi(it, ARENA_START_ROI) and ("LIVE" in _norm(it.text) or "START" in _norm(it.text)) for it in items)
+    elif screen is Screen.ARENA_MATCH_CONFIRM:
+        ok = find(items, "OK", MATCH_OK_ROI, exact=True) is not None
+    elif screen is Screen.ARENA_DIFFICULTY:
+        ok = row(ARENA_DIFFICULTY_Y, parse_difficulty) >= 2
+    elif screen is Screen.ARENA_RANKING:
+        ok = arena_placement(items) is not None or row(ARENA_PT_Y, lambda t: re.fullmatch(r"\d+PT", t)) >= 2
+    else:
+        return None
+    return screen if ok else None
+
+
 def _challenge_song_select(items: list[OcrItem]) -> bool:
     if any(find(items, mark, roi) for mark, roi in NORMAL_SONG_SELECT_MARKS):
         return False
@@ -571,10 +616,13 @@ def arena_song(items: list[OcrItem]) -> tuple[str, int | None]:
 
 
 _ARENA_RESULT = re.compile(r"结果([1-5])\D*?AP([+\-－−一—]?)(\d{1,4})$")
+# 还没适配的语言（#105）：「结果」认不出，只认后面的「3rd AP+15」
+_ARENA_RESULT_ANY = re.compile(r"(?<!\d)([1-5])(?:st|nd|rd|th)\D*?AP([+\-－−一—]?)(\d{1,4})$", re.I)
 
 
 def arena_result(items: list[OcrItem]) -> tuple[int | None, int | None]:
-    """激奏舞台结果弹窗「结果 3rd AP+15」→ (名次, 段位分增减)；读不出的为 None。"""
+    """激奏舞台结果弹窗「结果 3rd AP+15」→ (名次, 段位分增减)；读不出的为 None。
+    没有「结果」开头的一项时（还没适配的语言）认「3rd AP+15」。"""
     for it in items:
         text = _digits(it.text)
         if not in_roi(it, ARENA_RESULT_ROI) or not text.startswith("结果"):
@@ -584,6 +632,10 @@ def arena_result(items: list[OcrItem]) -> tuple[int | None, int | None]:
             return int(m.group(1)), sign * int(m.group(3))
         place = re.match(r"结果([1-5])", text)
         return (int(place.group(1)) if place else None), None
+    for it in items:
+        if in_roi(it, ARENA_RESULT_ROI) and (m := _ARENA_RESULT_ANY.search(_digits(it.text))):
+            sign = -1 if m.group(2) not in ("", "+") else 1
+            return int(m.group(1)), sign * int(m.group(3))
     return None, None
 
 

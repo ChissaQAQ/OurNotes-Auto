@@ -1,3 +1,9 @@
+# What's New in v0.2.2.1
+
+- Arena on the Japanese server (#105): the 「撃奏アリーナ」 entry on the Live top page and the Arena top page are now recognized. The other Arena pages aren't adapted to Japanese yet; when their text can't be recognized, the page is identified by language-independent content (where the row of "LUCK" sits, LIVE START, OK, difficulty names, placements). Languages that are already supported, such as Simplified Chinese, are still recognized by their text as before. The Arena hasn't actually been played on the Japanese server yet, so please report any problems
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.2.1
+
 # What's New in v0.2.2
 
 > **Note**: The Arena (new in v0.2.1) and this version's fix for the song intro have not been fully tested yet. You may run into all kinds of problems. Please report problems in the GitHub Issues.
