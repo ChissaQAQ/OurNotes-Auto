@@ -134,6 +134,24 @@ def test_load_skips_failed_jackets(caplog):
     assert "下载 2 张曲目封面" in caplog.text
 
 
+def test_load_skips_host_down_quietly(caplog):
+    """封面网站这次打开程序后连不上过：缺的封面先不下载，只说一次，不一张一张报警告（#108）。"""
+    from ournotes_auto.charts.bdon import HostDown
+
+    class DownClient(JacketClient):
+        def jacket(self, music_id, url):
+            if music_id != 1:
+                self.fetched.append(music_id)
+                raise HostDown("haneoka.org")
+            return super().jacket(music_id, url)
+
+    with caplog.at_level("INFO"):
+        m = JacketMatcher.load(DownClient(cached=(1,)), catalog_with_jackets())
+    assert m.ids == [1]
+    assert "2 张封面下次打开程序再下载" in caplog.text
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+
 def test_load_jackets_async(monkeypatch):
     from ournotes_auto import context
     from ournotes_auto.config import Config

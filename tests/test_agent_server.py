@@ -34,11 +34,33 @@ with patch.object(server, "setup_logging"), \
     ensure.assert_called_once()  # 不在仓库目录下写 data/stats.md
     card.assert_called_once()
     update.start_on_launch.assert_called_once()  # MFAA 打开界面时查更新
+    import os, time
+    assert 0 <= time.time() - float(os.environ[server.LAUNCHED_ENV]) < 600  # 演奏进程按它判断这次打开程序（#108）
     join.assert_called_once()
     shutdown.assert_called_once()
     update.start_on_launch.side_effect = RuntimeError("boom")  # 查更新出错不影响 Agent
     assert server.main(["test-id"]) == 0
     assert join.call_count == 2
+''')
+
+
+def test_launched_is_ui_start():
+    """这次打开界面的时刻取父进程（界面）启动的时刻；父进程读不到、或比 Agent 还晚（PID 被后来的进程占了）时用 Agent 自己的。"""
+    check('''
+import os, time
+from unittest.mock import patch
+from ournotes_auto.agent import server
+now = time.time()
+assert now - 600 < server._started(os.getpid()) <= now
+assert server._started(0) is None
+times = {os.getpid(): 200.0}
+with patch.object(server, "_started", lambda pid: times.get(pid)):
+    times[os.getppid()] = 100.0
+    assert server._launched() == 100.0
+    times[os.getppid()] = 300.0
+    assert server._launched() == 200.0
+    del times[os.getppid()]
+    assert server._launched() == 200.0
 ''')
 
 
@@ -149,6 +171,172 @@ assert len(errors(WorkerResult(1, False, False, False), PLENTY)) == 1
 assert len(errors(WorkerResult(1, False, False, False), None)) == 1
 assert errors(WorkerResult(0, False, False, False), LOW) == []
 assert errors(WorkerResult(1, True, True, True), LOW) == []  # 停止时被结束
+''')
+
+
+def test_run_history():
+    """记下这次运行里挂机前面的任务（不打歌的、挂机本身不记）；隔了一分钟以上才开始的任务算新的一次运行，
+    手动停止、开着重跑的挂机（不限局数，总在最后）结束后清空，限了局数的挂机后面还有任务、不清空。"""
+    check('''
+from ournotes_auto.agent import params, server
+assert server.IDLE_TASKS == params.IDLE_TASKS and set(server.NO_RERUN) <= set(params.TASKS)
+now = [1000.0]
+h = server.RunHistory(clock=lambda: now[0])
+attach = {"song_mode": "random"}
+for task in ("start", "records", "clear_lb", "notify_test", "arena_idle"):
+    h.begin(task, attach)
+    now[0] += 30
+    h.end(stopped=False)
+    now[0] += 1
+attach["song_mode"] = "list"  # 记的是当时的选项
+h.begin("idle", {})
+assert h.tasks == [("start", {"song_mode": "random"}), ("clear_lb", {"song_mode": "random"})] and h.since == 1000.0
+now[0] += 3600
+h.end(stopped=False, last=True)  # 出错结束：MFAA 的 Agent 常驻，一分钟内再点开始时前面的任务不重复记
+assert h.tasks == []
+now[0] += 1
+h.begin("clear_lb", {})
+assert h.tasks == [("clear_lb", {})] and h.since == now[0]
+h.end(stopped=False)
+now[0] += server.RUN_GAP_S + 1
+h.begin("daily", {})
+assert h.tasks == [("daily", {})] and h.since == now[0]
+h.end(stopped=True)
+assert h.tasks == []
+now[0] += 1
+h.begin("idle", {})
+assert h.tasks == [] and h.since == now[0]
+assert server._reruns("idle", {"rerun_daily": True, "max_plays": 0}) and server._reruns("arena_idle", {"rerun_daily": "Yes", "max_plays": "0"})
+for task, attach in (
+    ("idle", {"rerun_daily": True, "max_plays": "20"}),
+    ("idle", {"max_plays": 0}),
+    ("idle", {"rerun_daily": True, "max_plays": "x"}),
+    ("clear_lb", {"rerun_daily": True, "max_plays": 0}),
+):
+    assert not server._reruns(task, attach), (task, attach)
+''')
+
+
+RERUN = '''
+import json
+from contextlib import nullcontext
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+from ournotes_auto.agent import server
+from ournotes_auto.agent.worker import WorkerResult
+from ournotes_auto.release import EXIT_RERUN, EXIT_UPDATE
+now = [1000.0]
+tasker = SimpleNamespace(stopping=False, controller=SimpleNamespace(info={"type": "adb"}))
+attaches = {"start": {"touch": "mumu"}, "daily": {"daily_jobs": "all"}, "records": {}, "idle": {"rerun_daily": True}}
+current = ["start"]
+ctx = SimpleNamespace(tasker=tasker, get_node_data=lambda name: {"attach": attaches[current[0]]})
+update = Mock()
+update.busy.return_value = nullcontext()
+seen = []
+results = []
+
+def worker(cmd, cwd, should_stop, should_update):
+    seen.append(json.loads(cmd[-1]))
+    now[0] += 600
+    out = results.pop(0)
+    if callable(out):
+        out = out()
+    return out
+
+def run(task, *outs):
+    current[0] = task
+    results[:] = outs
+    with patch.object(server, "UPDATE", update), patch.object(server, "run_worker", worker), \\
+         patch.object(server.sysmem, "memory_status", return_value=None), patch.object(server, "logger") as log:
+        ok = server.OurNotesRun().run(ctx, SimpleNamespace(custom_action_param=json.dumps({"task": task})))
+    assert not results, results
+    msgs = [c.args[0] % c.args[1:] for c in log.mock_calls if c[0] in ("info", "error")]
+    now[0] += 5
+    return ok, msgs
+
+OK = WorkerResult(0, False, False, False)
+FAIL = WorkerResult(1, False, False, False)
+RERUN = WorkerResult(EXIT_RERUN, False, False, False)
+UPDATED = WorkerResult(EXIT_UPDATE, False, False, False)
+
+def stop():
+    tasker.stopping = True
+    return WorkerResult(1, True, True, False)
+
+server.HISTORY = server.RunHistory(clock=lambda: now[0])
+assert run("start", OK)[0] and run("daily", OK)[0] and run("records", OK)[0]
+'''
+
+
+def test_idle_reruns_earlier_tasks():
+    """挂机在日期变更后退出（EXIT_RERUN）：按顺序、用当时的选项重跑前面的任务（不打歌的不跑，出错了接着跑下一个），
+    再用同样的选项重新启动挂机，按重跑开始的时刻算下次；手动停止后结束、清空记录。"""
+    check(RERUN + '''
+ok, msgs = run("idle", RERUN, OK, FAIL, RERUN, OK, OK, stop)
+assert ok is False and server.HISTORY.tasks == []
+assert [p["task"] for p in seen] == ["start", "daily", "records", "idle", "start", "daily", "idle", "start", "daily", "idle"]
+assert [p["attach"] for p in seen[4:6]] == [attaches["start"], attaches["daily"]] and seen[4]["controller"] == {"type": "adb"}
+assert [p["rerun_since"] for p in seen if p["task"] == "idle"] == [1000.0, 3415.0, 5215.0]
+assert all("rerun_since" not in p for p in seen if p["task"] != "idle")
+assert [p.get("continues") for p in seen[3:]] == [None] + [True] * 6  # 重跑的任务、重新启动的挂机接着前面的运行
+assert "重跑挂机前面的任务（1/2）" in msgs and msgs.count("重跑挂机前面的任务（2/2）") == 2, msgs
+assert any(m.startswith("任务结束，退出码 1") for m in msgs) and msgs[-1] == "已停止", msgs
+''')
+
+
+def test_rerun_stopped():
+    """重跑前面的任务时手动停止：不再跑后面的任务、不再启动挂机，清空记录。"""
+    check(RERUN + '''
+ok, msgs = run("idle", RERUN, stop)
+assert ok is False and server.HISTORY.tasks == [] and msgs[-1] == "已停止"
+assert [p["task"] for p in seen[3:]] == ["idle", "start"]
+''')
+
+
+def test_idle_without_earlier_tasks():
+    """挂机前面没有别的任务（或隔了一分钟以上才开始）：不交 rerun_since，开着开关时说一声；挂机正常结束照常返回。"""
+    check(RERUN + '''
+now[0] += server.RUN_GAP_S + 1
+ok, msgs = run("idle", FAIL)
+assert ok is False and "rerun_since" not in seen[-1] and "这次在挂机前面没有运行别的任务，日期变更后不用重跑" in msgs
+attaches["idle"] = {}
+ok, msgs = run("idle", OK)
+assert ok is True and "rerun_since" not in seen[-1] and not any("不用重跑" in m for m in msgs)
+assert run("start", RERUN)[0] is False and [p["task"] for p in seen[-1:]] == ["start"]  # 只有挂机会为重跑退出
+''')
+
+
+def test_idle_end_clears_history():
+    """开着重跑的挂机出错结束后清空记录：MFAA 的 Agent 常驻，一分钟内再点开始时前面的任务不重复记、不重复重跑；
+    限了局数的挂机结束后不清空（后面还有任务）。"""
+    check(RERUN + '''
+assert run("idle", FAIL)[0] is False and server.HISTORY.tasks == []
+since = now[0]
+attaches["arena_idle"] = {"rerun_daily": True, "max_plays": "20"}
+assert run("start", OK)[0] and run("arena_idle", OK)[0] and server.HISTORY.tasks == [("start", attaches["start"])]
+ok, msgs = run("idle", RERUN, OK, stop)
+assert [p["task"] for p in seen[3:]] == ["idle", "start", "arena_idle", "idle", "start", "idle"]
+assert seen[6]["rerun_since"] == since and "重跑挂机前面的任务（1/1）" in msgs, msgs
+''')
+
+
+def test_rerun_then_hot_update():
+    """重跑完重新启动的挂机为热更新退出：等换上新代码，用同样的参数（同一个 rerun_since、接着前面的运行）再启动，不再重跑。"""
+    check(RERUN + '''
+ok, msgs = run("idle", RERUN, OK, OK, UPDATED, OK)
+assert ok is True and update.wait_applied.call_count == 1
+assert [p["task"] for p in seen[3:]] == ["idle", "start", "daily", "idle", "idle"]
+assert seen[-1] == seen[-2] and seen[-1]["continues"] is True and seen[-1]["rerun_since"] == 3415.0
+''')
+
+
+def test_rerun_update_busy():
+    """重跑时有一个任务因为正在更新启动不了：报错，接着跑下一个，再接着挂机。"""
+    check(RERUN + '''
+update.busy.side_effect = [nullcontext(), server.UpdateBusyError("更新尚未完成"), nullcontext(), nullcontext()]
+ok, msgs = run("idle", RERUN, OK, OK)
+assert ok is True and [p["task"] for p in seen[3:]] == ["idle", "daily", "idle"]
+assert "更新尚未完成" in msgs and "重跑挂机前面的任务（2/2）" in msgs, msgs
 ''')
 
 

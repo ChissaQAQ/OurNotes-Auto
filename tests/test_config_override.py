@@ -169,18 +169,22 @@ def test_check_run_config_arena():
 
 
 def test_arena_defaults():
-    """激奏舞台只打 EXPERT、没有选曲和跳过；GREAT 至少 1%，拟人化设得更多时按设置。别的任务不动。"""
+    """激奏舞台只打 EXPERT、没有选曲和跳过；GREAT 至少 1%、时机偏移至少 ±16ms（#110），拟人化设得更多时按设置。
+    别的任务不动。"""
     cfg = Config()
     cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip = "hard", "random", True
     arena_defaults(cfg)
     assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip, cfg.play.touch.great_ratio) == ("hard", "random", True, 0.0)
+    assert cfg.play.touch.jitter_ms == 0.0
     cfg.loop.arena = True
     arena_defaults(cfg)
     assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip, cfg.play.touch.great_ratio) == ("expert", "current", False, 0.01)
-    cfg.play.touch.great_ratio = 0.05
+    assert cfg.play.touch.jitter_ms == 16.0
+    cfg.play.touch.great_ratio, cfg.play.touch.jitter_ms = 0.05, 20.0
     arena_defaults(cfg)
     drop_great_for_ap(cfg)
-    assert cfg.play.touch.great_ratio == 0.05
+    assert cfg.play.touch.great_ratio == 0.05 and cfg.play.touch.jitter_ms == 20.0
+    check_run_config(cfg)  # 设得比下限大也还在上限以内
 
 
 @pytest.mark.parametrize(

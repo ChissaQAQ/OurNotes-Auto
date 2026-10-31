@@ -7,7 +7,7 @@ import pytest
 from ournotes_auto import commands, runner, sources
 from ournotes_auto.cli import build_parser
 from ournotes_auto.config import INTL_PACKAGES, JP_PACKAGE, Config
-from ournotes_auto.release import EXIT_UPDATE
+from ournotes_auto.release import EXIT_RERUN, EXIT_UPDATE
 from ournotes_auto.runner import NavigationError, RunStats
 
 
@@ -22,7 +22,7 @@ class Nav:
             raise NavigationError("180s 内未能进入游戏")
 
 
-def fake_run(monkeypatch, launched, fail=False, stats=None, **attrs):
+def fake_run(monkeypatch, launched, fail=False, stats=None, cfg=None, **attrs):
     """把 ``run`` 命令用到的设备、导航、循环都换成假的，返回调用顺序。``stats`` 是循环的结果，
     ``attrs`` 设到命令参数上；传给 Runner 的参数记在 ``runner.Runner.args``。"""
     calls = []
@@ -49,7 +49,7 @@ def fake_run(monkeypatch, launched, fail=False, stats=None, **attrs):
     args.stop = threading.Event()
     for key, value in attrs.items():
         setattr(args, key, value)
-    return calls, commands.cmd_run(Config(), args)
+    return calls, commands.cmd_run(cfg or Config(), args)
 
 
 def test_run_launches_game_first(monkeypatch):
@@ -75,6 +75,12 @@ def test_run_restart_for_update(monkeypatch):
     assert calls == ["launch", "open", "run"] and code == EXIT_UPDATE == 75
 
 
+def test_run_rerun_tasks(monkeypatch):
+    """挂机在游戏日期变更后退出时返回 EXIT_RERUN，Agent 看到后重跑前面的任务再用同样的参数重启它。"""
+    calls, code = fake_run(monkeypatch, launched=False, stats=RunStats(plays=3, rerun=True))
+    assert calls == ["launch", "open", "run"] and code == EXIT_RERUN == 76
+
+
 def test_run_passes_update_event(monkeypatch):
     """args.update 作为第 9 个参数传给 Runner；没有它时（不是从命令行入口来的）传 None。"""
     update = threading.Event()
@@ -86,18 +92,24 @@ def test_run_passes_update_event(monkeypatch):
 
 
 def test_run_passes_tracker(monkeypatch):
-    """统计页的运行记录：任务名用界面上的任务名（命令行里是「命令行」），挂机看 --wait-lb。"""
+    """统计页的运行记录：任务名用界面上的任务名（命令行里是「命令行」），挂机看 --wait-lb；
+    loop.continues（重跑的任务、重新启动的挂机）记上接着前面的运行。"""
     from ournotes_auto.stats import Tracker
 
     fake_run(monkeypatch, launched=False, label="挂机", wait_lb=True, lb_auto=True)
     tracker = runner.Runner.args[9]
     assert isinstance(tracker, Tracker) and (tracker.session.task, tracker.session.idle) == ("挂机", True)
+    assert tracker.session.continues is False
     fake_run(monkeypatch, launched=False)
     assert (runner.Runner.args[9].session.task, runner.Runner.args[9].session.idle) == ("命令行", False)
+    cfg = Config()
+    cfg.loop.continues = True
+    fake_run(monkeypatch, launched=False, cfg=cfg)
+    assert runner.Runner.args[9].session.continues is True
 
 
 def test_run_arena_args(monkeypatch):
-    """--arena：激奏舞台只打 EXPERT、不跳过、至少 1% GREAT；--arena-band、--arena-games 选乐队和每个乐队的局数。"""
+    """--arena：激奏舞台只打 EXPERT、不跳过、至少 1% GREAT、时机偏移至少 ±16ms；--arena-band、--arena-games 选乐队和每个乐队的局数。"""
     args = build_parser().parse_args(["run", "--arena", "--arena-band", "rotate", "--arena-games", "2"])
     assert (args.arena, args.arena_band, args.arena_games) == (True, "rotate", 2)
     with pytest.raises(SystemExit):
@@ -106,7 +118,7 @@ def test_run_arena_args(monkeypatch):
     cfg = runner.Runner.args[0]
     assert cfg.loop.arena and (cfg.loop.arena_band, cfg.loop.arena_games_per_band) == ("rotate", 2)
     assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip) == ("expert", "current", False)
-    assert cfg.play.touch.great_ratio == 0.01
+    assert cfg.play.touch.great_ratio == 0.01 and cfg.play.touch.jitter_ms == 16.0
     with pytest.raises(commands.SetupError, match="不能同时打开"):
         fake_run(monkeypatch, launched=False, arena=True, challenge=True)
 

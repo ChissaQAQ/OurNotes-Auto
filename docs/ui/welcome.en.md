@@ -1,18 +1,14 @@
-# What's New in v0.2.2.1
+# What's New in v0.2.3
 
-- Arena on the Japanese server (#105): the 「撃奏アリーナ」 entry on the Live top page and the Arena top page are now recognized. The other Arena pages aren't adapted to Japanese yet; when their text can't be recognized, the page is identified by language-independent content (where the row of "LUCK" sits, LIVE START, OK, difficulty names, placements). Languages that are already supported, such as Simplified Chinese, are still recognized by their text as before. The Arena hasn't actually been played on the Japanese server yet, so please report any problems
+> **Note**: The Arena (new in v0.2.1) hasn't been fully tested yet, and it hasn't actually been played on the Japanese server. You may run into all kinds of problems. Please report problems in the GitHub Issues.
 
-Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.2.1
+- New option "Rerun Earlier Tasks Each Day" for AFK Farming and AFK Farming (Arena) (off by default): after the game's daily reset, the tasks before AFK Farming (such as Start Game, Claim Dailies, Use Up LB) run again in the same order with the same options, then AFK Farming continues
+- Arena now identifies the song by the jacket on the right of the difficulty page first, and falls back to the title only when the jacket can't be recognized (#107): long titles and titles with symbols no longer rely on text recognition alone
+- Arena now uses at least ±16ms of "Humanize: Timing Drift" (even when it's set to off), so you no longer get far more JUSTs than a human player would (#110). Expect fewer JUSTs after updating; this is intentional
+- Fixed the Japanese-server Arena getting stuck on 「マッチング確認」 when the 撃奏 rotation is on COMBO or JUST (#111). If the difficulty page isn't recognized and the round starts anyway two rounds in a row, the task now stops instead of wasting LB
+- Less waiting when the chart site can't be reached (#108): with an old cache it tries only once, and after a failure it uses the old cache and skips missing jackets until the next time you open the program. The log explains why the connection failed
 
-# What's New in v0.2.2
-
-> **Note**: The Arena (new in v0.2.1) and this version's fix for the song intro have not been fully tested yet. You may run into all kinds of problems. Please report problems in the GitHub Issues.
-
-- Fixed the song intro added in game 1.1.0 (stage lights) being mistaken for notes, which made sync fail, fooled the retry too, and occasionally shifted a whole song early (#102): the intro is now recognized and it keeps waiting for the first note
-- Arena: fixed getting stuck on the zh-Hant 「配對確認」 (match confirmation) screen (#100, thanks @bfs2021) and on rank-up screens it couldn't recognize (#101, Gold and above)
-- Fixed tasks failing right away with "Refill LB with Items When Low" on and "LB per Round" set to 0 (#100): it now just doesn't refill and plays as usual
-
-Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.2
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.3
 
 ---
 

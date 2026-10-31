@@ -2,7 +2,7 @@
 
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -1280,3 +1280,124 @@ def test_update_ignored_unless_idle_forever(tmp_path, case):
         stats = runner.run()
         assert stats.plays == 2 and src.log[-1] == ("close",)
     assert not stats.restart and stats.failures == 0
+
+
+RERUN_SINCE = datetime(2026, 10, 27, 18, 0, tzinfo=timezone.utc).timestamp()  # 北京时间 2:00，一小时后游戏日期变更
+
+
+def rerun_idle(tmp_path, statuses, exhausted_at=(2,), since=RERUN_SINCE, max_plays=0):
+    """开着「每天重跑前面的任务」的挂机（前面的任务在 ``since`` 开始运行），其余同 :func:`idle`。"""
+    runner, nav, starts, statuses = idle(tmp_path, statuses, exhausted_at)
+    runner.cfg.loop.max_plays = max_plays
+    runner.cfg.loop.rerun_since = since
+    runner = Runner(runner.cfg, nav, runner.session, runner.client, runner.catalog, runner.store, runner.stop)
+    return runner, nav, starts, statuses
+
+
+def test_idle_reruns_between_plays(tmp_path):
+    """前面的任务开始后游戏第一次日期变更、再过 5 分钟：在下一局开头退出（恢复选曲页的设置），不算失败；之前照常打。"""
+    from ournotes_auto.records import next_game_day
+    from ournotes_auto.runner import RERUN_DELAY_S
+
+    runner, nav, starts, _ = rerun_idle(tmp_path, [], exhausted_at=())
+    due = next_game_day(RERUN_SINCE) + RERUN_DELAY_S
+    assert RERUN_DELAY_S == 300 and due == RERUN_SINCE + 3600 + 300 and runner._rerun_at == due
+    runner.source = src = ApSource(songs=10)
+    now = [RERUN_SINCE + 600]
+    runner.wall_clock = lambda: now[0]
+    leave = nav.leave_result
+
+    def leave_result():
+        leave()
+        now[0] += 1200  # 每局之间过 20 分钟
+
+    nav.leave_result = leave_result
+    stats = runner.run()
+    assert stats.rerun and not stats.restart and stats.plays == 3 and stats.failures == 0 and len(starts) == 3
+    assert [e[0] for e in src.log] == ["advance", "done"] * 3 + ["close"]
+
+
+def test_idle_reruns_while_waiting_lb(tmp_path):
+    """等 LB 恢复时到了重跑的时间：按它醒来（不睡到下次看 LB），醒来就退出，不再进乐队确认页。"""
+    from ournotes_auto.runner import LB_POLL_S
+
+    runner, nav, starts, statuses = rerun_idle(tmp_path, [(0, 7200)])
+    assert LB_POLL_S > 400
+    runner.wall_clock = lambda: runner._rerun_at - 400 + runner.stop.now
+    stats = runner.run()
+    assert stats.rerun and stats.plays == 1 and stats.failures == 0 and not statuses
+    assert runner.stop.waits == [400] and len(starts) == 2 and nav.calls.count("lb") == 1
+
+
+def test_idle_rerun_waits_for_maintenance(tmp_path, monkeypatch):
+    """等开服时到了重跑的时间：照常等到开服、重新登录（维护期间前面的任务也跑不了），回到两局之间再退出。"""
+    from ournotes_auto import notify
+    from ournotes_auto.runner import MAINTENANCE_POLL_S, ServerMaintenance
+
+    monkeypatch.setattr(notify, "push", lambda *args, **kw: None)
+    runner, nav, starts, _ = rerun_idle(tmp_path, [], exhausted_at=())
+    runner.source = ApSource(songs=5)  # 不退出时打完 5 首结束，不会一直打下去
+    runner.wall_clock = lambda: runner._rerun_at - 100 + runner.stop.now
+    starts_live = nav.start_live
+
+    def start_live(lb_short="zero"):
+        starts_live(lb_short)
+        if len(starts) == 2:
+            raise ServerMaintenance("服务器维护中")
+
+    nav.start_live = start_live
+    nav.relogin = lambda: nav.calls.append("relogin")
+    stats = runner.run()
+    assert stats.rerun and stats.plays == 1 and stats.failures == 0 and not stats.maintenance
+    assert runner.stop.waits == [MAINTENANCE_POLL_S] and nav.calls.count("relogin") == 1 and len(starts) == 2
+
+
+def test_rerun_overdue_at_start_waits_for_game(tmp_path, monkeypatch):
+    """挂机一开始就过了重跑的时间（维护期间为换新版本重新启动）：先等到开服、进游戏打一局再退出，
+    不在进游戏之前就退出（维护期间前面的任务也跑不了）。"""
+    from ournotes_auto import notify
+    from ournotes_auto.runner import ServerMaintenance
+
+    monkeypatch.setattr(notify, "push", lambda *args, **kw: None)
+    runner, nav, starts, _ = rerun_idle(tmp_path, [], exhausted_at=())
+    runner.source = src = ApSource(songs=5)
+    runner.wall_clock = lambda: runner._rerun_at + 3600 + runner.stop.now
+    advance = src.advance
+
+    def advance_after_maintenance(nav, first):
+        if not src.log:
+            src.log.append(("maintenance", first))
+            raise ServerMaintenance("服务器维护中")
+        return advance(nav, first)
+
+    src.advance = advance_after_maintenance
+    nav.relogin = lambda: nav.calls.append("relogin")
+    stats = runner.run()
+    assert stats.rerun and stats.plays == 1 and stats.failures == 0 and len(starts) == 1
+    assert nav.calls.count("relogin") == 1 and [e[0] for e in src.log] == ["maintenance", "advance", "done", "close"]
+
+
+@pytest.mark.parametrize("continues", [True, False])
+def test_daily_claimed_after_rerun(tmp_path, continues):
+    """重跑完前面的任务接着挂机（continues）：重跑期间到了领取时间的马上补领（不然领取时间在重跑期间时每天都错过）；
+    别的挂机照常等第一次到点。"""
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.daily_claim_time = "3:10"
+    runner.cfg.loop.rerun_since = at(28, 3, 5)
+    runner.cfg.loop.continues = continues
+    runner.wall_clock = lambda: at(28, 3, 15)
+    jobs = []
+    nav.run_daily = lambda chosen: jobs.append(tuple(chosen)) or []
+    runner._claim_daily()
+    assert len(jobs) == continues and runner._next_daily == at(29, 3, 10)
+
+
+@pytest.mark.parametrize("case", ["max_plays", "off"])
+def test_rerun_only_when_idle_forever(tmp_path, caplog, case):
+    """限了局数（打完就结束）、没开「每天重跑前面的任务」：日期变更后照常打，不退出。"""
+    with caplog.at_level("INFO", logger="ournotes_auto.runner"):
+        runner, nav, starts, _ = rerun_idle(tmp_path, [], exhausted_at=(), since=RERUN_SINCE if case == "max_plays" else 0.0, max_plays=3)
+    runner.wall_clock = lambda: RERUN_SINCE + 3 * 86400
+    stats = runner.run()
+    assert stats.plays == 3 and not stats.rerun and runner._rerun_at is None
+    assert ("日期变更后不重跑前面的任务" in caplog.text) == (case == "max_plays")

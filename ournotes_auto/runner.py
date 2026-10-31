@@ -22,7 +22,7 @@ from .config import Config, parse_daily_time
 from .player.guard import LifeDepleted, PlayInterrupted
 from .player.session import PlayOutcome, PlaySession, SyncFailed
 from .player.sync import SyncTimeout
-from .records import ArenaResult, PlayResult, RecordStore
+from .records import ArenaResult, PlayResult, RecordStore, next_game_day
 from .result_reader import JUDGEMENTS, ResultCounts, timing_counts
 
 if TYPE_CHECKING:
@@ -43,6 +43,8 @@ DAILY_RETRY_S = 600.0
 DAILY_TRIES = 3
 # 挂机每天领取的日常（录音室练习由定时收获领，看故事要等剧情播完，不在这里领）
 IDLE_DAILY_JOBS = ("missions", "pass", "limited", "beginner", "tgw", "recruit", "gifts")
+# 挂机重跑前面的任务（loop.rerun_since）：游戏日期变更后等这么久再退出，日期变更的弹窗、重新登录先过去
+RERUN_DELAY_S = 300.0
 # 游戏出帧率按最近这么多次同步的中位数看（见 loop.min_fps）
 FPS_WINDOW = 5
 
@@ -67,6 +69,11 @@ class GameUpdateRequired(ScreenFrozen):
     """游戏弹出「检测到新版本」，只能去应用商店更新安装包（只有「前往商店」，不点）：和画面卡住一样，干等没用，任务立刻停下。"""
 
 
+class ArenaMissed(ScreenFrozen):
+    """激奏舞台连着几局对局开始了、却没认出难度选择页（没适配的语言或版面）：再打也是不演奏、白白消耗 LB 拿最后一名，
+    和画面卡住一样，任务立刻停下。"""
+
+
 class ServerMaintenance(NavigationError):
     """游戏显示服务器维护页：开服之前什么都做不了。"""
 
@@ -77,6 +84,10 @@ class LbExhausted(Exception):
 
 class RestartForUpdate(Exception):
     """挂机收到更新请求，在安全的时机退出（见 :meth:`Runner._check_update`）。"""
+
+
+class RerunTasks(Exception):
+    """挂机到了重跑前面任务的时候，在安全的时机退出（见 :meth:`Runner._check_rerun`）。"""
 
 
 class CpExhausted(LbExhausted):
@@ -201,7 +212,7 @@ class Navigator(Protocol):
         ...
 
     def start_arena(self, lb_short: str = "zero") -> SongLabel:
-        """点 LIVE START 开始匹配，转盘定歌后在难度选择页返回曲名和 EXPERT 等级（LB 同 :meth:`start_live`）。"""
+        """点 LIVE START 开始匹配，转盘定歌后在难度选择页返回封面、曲名和 EXPERT 等级（LB 同 :meth:`start_live`）。"""
         ...
 
     def arena_ready(self) -> None:
@@ -244,6 +255,7 @@ class RunStats:
     lb_wait_s: float = 0.0  # 挂机时等 LB 恢复的时间
     maintenance: bool = False  # 因服务器维护停止
     restart: bool = False  # 为换上新版本退出（挂机），Agent 换完后用同样的参数重新启动
+    rerun: bool = False  # 游戏日期变更后退出（挂机），Agent 重跑完前面的任务后用同样的参数重新启动
 
     def summary(self) -> str:
         skips = f"；跳过 {self.skips} 次" if self.skips else ""
@@ -327,6 +339,13 @@ class Runner:
             parse_daily_time(lc.daily_claim_time)  # 时间格式不对时现在就报错
         self._next_daily: float | None = None  # 下次领取日常的时刻：开始后第一次到点时领
         self._daily_tries = 0
+        self._rerun_at: float | None = None  # 退出去重跑前面任务的时刻（Unix 秒），不重跑时为 None
+        if lc.rerun_since > 0 and lc.wait_lb and lc.max_plays <= 0:
+            self._rerun_at = next_game_day(lc.rerun_since) + RERUN_DELAY_S
+            when = time.strftime("%m-%d %H:%M", time.localtime(self._rerun_at))
+            logger.info("游戏日期变更后（%s）暂停挂机，重跑前面的任务再接着挂机", when)
+        elif lc.rerun_since > 0:
+            logger.warning("限了局数（打完就结束），日期变更后不重跑前面的任务")
         self.frame_rate = FrameRateWatch(lc.min_fps)
         self._warned_memory = False  # 这次运行提醒过电脑内存快用完了
 
@@ -622,9 +641,13 @@ class Runner:
         return parse_daily_time(text) if str(text).strip() else None
 
     def _daily_due(self) -> float:
-        """下次领取日常的时刻（Unix 秒）。"""
+        """下次领取日常的时刻（Unix 秒）。重跑完前面的任务接着挂机时，从重跑开始算：重跑期间到了领取时间的马上补领
+        （不然领取时间在 3:05 之后、重跑完之前时每天都错过）。"""
         if self._next_daily is None:
-            self._next_daily = next_daily_time(self.wall_clock(), self._daily_at)
+            lc = self.cfg.loop
+            now = self.wall_clock()
+            base = max(lc.rerun_since, now - 86400) if lc.continues and 0 < lc.rerun_since <= now else now
+            self._next_daily = next_daily_time(base, self._daily_at)
         return self._next_daily
 
     def _claim_daily(self) -> None:
@@ -674,22 +697,25 @@ class Runner:
             self._claim_daily()
 
     def _claim_wait(self) -> float:
-        """距下次定时领取还有多少秒（都不领时为无穷大）。"""
+        """距下次定时领取（或退出去重跑前面的任务）还有多少秒（都没有时为无穷大）。"""
         wait = float("inf")
         if self.cfg.loop.studio_claim_hours > 0:
             wait = max(0.0, self._next_claim - self.clock())
         if self._daily_at is not None:
             wait = min(wait, max(0.0, self._daily_due() - self.wall_clock()))
+        if self._rerun_at is not None:
+            wait = min(wait, max(0.0, self._rerun_at - self.wall_clock()))
         return wait
 
     def _wait_lb(self) -> None:
         """挂机：停在乐队确认页等 LB 恢复到每局消耗数（LB 少于它时每局奖励也少；``game.lb_auto`` 时恢复 1 个就打）。
         每次醒来都重新进入乐队确认页：等待期间游戏可能日期变更、回到标题画面重新登录；
-        到了定时领取录音室练习、日常的时间也会醒来去领。"""
+        到了定时领取录音室练习、日常的时间也会醒来去领，到了重跑前面任务的时间醒来退出。"""
         need = 1 if self.cfg.game.lb_auto else self.cfg.game.lb_cost
         last: int | None = -1
         while True:
             self._check_update()
+            self._check_rerun()
             self._claim_timed()
             if self.stop.is_set():
                 raise NavigationError("已停止")
@@ -760,6 +786,13 @@ class Runner:
         if self.update.is_set() and self.cfg.loop.wait_lb and self.cfg.loop.max_plays <= 0:
             raise RestartForUpdate
 
+    def _check_rerun(self) -> None:
+        """挂机（不限局数）到了重跑前面任务的时候（``loop.rerun_since`` 之后游戏日期变更、再过 RERUN_DELAY_S），
+        在两局之间、等 LB 这些安全的时机退出，Agent 重跑完前面的任务后用同样的参数重新启动。
+        等开服时不退出：维护期间前面的任务也跑不了，开服后接着挂机时再退出。"""
+        if self._rerun_at is not None and self.wall_clock() >= self._rerun_at:
+            raise RerunTasks
+
     def run(self) -> RunStats:
         if self.tracker is not None:
             self.tracker.start()
@@ -776,18 +809,27 @@ class Runner:
         except RestartForUpdate:
             logger.info("新版本已下载，暂停挂机换上新版本，换好后自动继续")
             self.stats.restart = True
+        except RerunTasks:
+            logger.info("游戏日期变更了，暂停挂机，重跑前面的任务后接着挂机")
+            self.stats.rerun = True
+            self._close_source()  # 前面的任务可能用别的选曲方式
         except (ScreenFrozen, ServerMaintenance) as e:
             # 干等画面不会变、维护期间什么都做不了，重试也没用（恢复选曲页的设置同样做不了）
             logger.error("%s，停止", e)
             self.stats.failures += 1
             self.stats.maintenance = isinstance(e, ServerMaintenance)
         else:
-            if not self.stop.is_set():
-                try:
-                    self.source.close(self.nav)
-                except (NavigationError, TimeoutError) as e:
-                    logger.warning("恢复选曲页的设置失败：%s", e)
+            self._close_source()
         logger.info("%s", self.stats.summary())
+
+    def _close_source(self) -> None:
+        """恢复选曲页改过的设置（被停止时不恢复）。"""
+        if self.stop.is_set():
+            return
+        try:
+            self.source.close(self.nav)
+        except (NavigationError, TimeoutError) as e:
+            logger.warning("恢复选曲页的设置失败：%s", e)
 
     def _loop(self) -> None:
         lc = self.cfg.loop
@@ -797,6 +839,8 @@ class Runner:
         wait_lb = False  # 上一局因 LB 用完没开始（挂机）：等恢复后接着打这首，不换歌
         while not self.stop.is_set() and (lc.max_plays <= 0 or self.stats.plays < lc.max_plays):
             self._check_update()
+            if not first:  # 进过游戏再退出：维护期间为换新版本重新启动的挂机，重跑时间早过了也先等到开服
+                self._check_rerun()
             try:
                 if not wait_lb:
                     self._restart_if_slow()

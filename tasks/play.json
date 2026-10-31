@@ -50,6 +50,7 @@
                 "LbRefill",
                 "StudioClaim",
                 "DailyClaim",
+                "RerunDaily",
                 "MaxPlays"
             ]
         },
@@ -117,6 +118,7 @@
                 "LbRefill",
                 "StudioClaim",
                 "DailyClaim",
+                "RerunDaily",
                 "MaxPlays"
             ]
         }
@@ -290,6 +292,22 @@
                 }
             ],
             "pipeline_override": { "OurNotesParam": { "attach": { "daily_claim_time": "{time}" } } }
+        },
+        "RerunDaily": {
+            "type": "switch",
+            "label": "$opt.RerunDaily",
+            "description": "$opt.RerunDaily.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "rerun_daily": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "rerun_daily": false } } }
+                }
+            ],
+            "default_case": "No"
         },
         "LbCost": {
             "type": "select",

@@ -124,10 +124,18 @@ def chart_key(music_id: int, difficulty: str) -> str:
     return f"{music_id}_{difficulty}"
 
 
+GAME_DAY_SHIFT_S = 5 * 3600  # 游戏日期按 UTC+5 算：UTC 19:00（北京时间 3:00、日本时间 4:00）变更
+
+
 def game_day(now: float | None = None) -> str:
     """游戏里的日期（YYYY-MM-DD）：每天北京时间 3:00（日本时间 4:00）变更（游戏 1.1.0 起，之前是 23:00）。"""
     t = time.time() if now is None else now
-    return time.strftime("%Y-%m-%d", time.gmtime(t + 5 * 3600))
+    return time.strftime("%Y-%m-%d", time.gmtime(t + GAME_DAY_SHIFT_S))
+
+
+def next_game_day(now: float) -> float:
+    """``now``（Unix 秒）之后游戏第一次日期变更（:func:`game_day` 变了）的时刻。"""
+    return ((now + GAME_DAY_SHIFT_S) // 86400 + 1) * 86400 - GAME_DAY_SHIFT_S
 
 
 class RecordStore:

@@ -63,6 +63,7 @@ STATUS_FILE = f"{UPDATE_DIR}/status.json"  # 更新器的进度，Agent 读了�
 MANIFEST_FILE = f"{UPDATE_DIR}/manifest.json"  # Agent 下载的 update.json（带检查时间），更新器按它更新
 FAILED_FILE = f"{UPDATE_DIR}/failed.json"  # 更新失败、已经还原的版本，不再自动重试
 EXIT_UPDATE = 75  # 演奏进程为了热更新在安全点退出的退出码，Agent 看到后用同样的参数重新启动它
+EXIT_RERUN = 76  # 挂机在游戏日期变更后退出的退出码，Agent 看到后按顺序重跑挂机前面的任务，再用同样的参数重新启动它
 _VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?")
 
 

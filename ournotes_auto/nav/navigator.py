@@ -348,6 +348,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         self._lb_screen = Screen.ARENA_TOP if self.arena else Screen.BAND_CONFIRM
         self._arena_lb: int | None = None  # 激奏舞台这一局开始时的 LB 消耗设置
         self._rank_up_taps = 0  # 激奏舞台段位提升画面点了几次（轮流点两处）
+        self._arena_missed = 0  # 激奏舞台连续几局对局开始了却没认出难度选择页
         self._band_templates: dict[str, np.ndarray] | None = None  # 激奏舞台首页的乐队标志（第一次用时加载）
         self._side_templates: dict[str, np.ndarray | None] = {}  # 主界面左侧入口的图标（第一次用时加载）
         cp = config.game.challenge_cost
@@ -389,6 +390,17 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
                     self._sleep(0.2)
             self._jackets = self._jackets.result()
         return self._jackets
+
+    def _jackets_or_none(self) -> JacketMatcher | None:
+        """同 :attr:`jackets`，但加载出错时不抛出：记一条警告、之后不再认封面（只认曲名），返回 None。"""
+        try:
+            return self.jackets
+        except NavigationError:
+            raise
+        except Exception as e:
+            logger.warning("曲目封面加载失败，只按曲名认歌：%s", e)
+            self._jackets = None
+            return None
 
     def look(self, still_ok: bool = False, blocking_ok: bool = False) -> tuple[Screen, list[OcrItem]]:
         """截图并判断画面。``still_ok``：画面长时间不动也正常（等结算时歌可能还在放），不按 FROZEN_S 判断卡住。

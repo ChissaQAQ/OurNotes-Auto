@@ -55,6 +55,8 @@ PAGE_SIZE = 50  # 「全部演奏」每页列出几局
 RUNS_PAGE_SIZE = 10  # 运行记录每页列出几次运行（在「全部演奏」上面，一页太长要往下翻很久）
 GAP_S = 600.0  # 没有运行记录的时段（统计功能加入之前）按演奏记录估算时长：相邻两局隔不到这么久算一直在运行
 MERGE_S = 180.0  # 为换新版本退出的运行（挂机）隔不到这么久又开始了，算同一次连续运行；手动停止后再开始的不算
+# 挂机为重跑前面的任务退出后接着的运行（Session.continues）：中间的启动游戏、领取日常不留运行记录，隔得久些也算同一次连续运行
+CONTINUE_S = 6 * 3600.0
 
 
 @dataclass
@@ -72,6 +74,7 @@ class Session:
     skips: int = 0
     lb_wait_s: float = 0.0  # 挂机时等 LB 恢复的时间
     restart: bool = False  # 为换上新版本退出（挂机），接着会用同样的参数重新开始
+    continues: bool = False  # 接着上一次运行（挂机每天重跑前面的任务时重跑的任务、重新启动的挂机）
 
     @property
     def seconds(self) -> float:
@@ -370,7 +373,8 @@ class Totals:
         self.idle_s += s.seconds if s.idle else 0.0
         self.lb_wait_s += s.lb_wait_s
         self.skips += s.skips
-        if self._resume and self._run_end is not None and 0 <= s.start - self._run_end <= MERGE_S:
+        limit = CONTINUE_S if s.continues else MERGE_S if self._resume else None
+        if limit is not None and self._run_end is not None and 0 <= s.start - self._run_end <= limit:
             self._run += s.end - self._run_end
         else:
             self._run = s.seconds
@@ -745,13 +749,14 @@ class Tracker:
         title: Callable[[int], str] | None = None,
         clock: Callable[[], float] = time.time,
         library: Library | None = None,
+        continues: bool = False,
     ):
         self.dir = Path(data_dir)
         self.title = title
         self.library = library
         self.clock = clock
         now = clock()
-        self.session = Session(start=now, end=now, task=task, idle=idle)
+        self.session = Session(start=now, end=now, task=task, idle=idle, continues=continues)
         self.file = self.dir / RUNNING / f"{os.getpid()}-{next(_ids)}.json"
         self._lock = release.FileLock(self.file.with_suffix(".lock"))
         self._failed = False

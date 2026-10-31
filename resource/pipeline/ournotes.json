@@ -14,6 +14,7 @@
             "studio_claim_hours": 4,
             "daily_claim": true,
             "daily_claim_time": "22:30",
+            "rerun_daily": false,
             "touch": "minitouch",
             "game_language": "default",
             "watch_combo": false,

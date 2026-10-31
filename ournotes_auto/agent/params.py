@@ -258,7 +258,7 @@ def _challenge_settings(attach: Mapping[str, Any]) -> dict[str, str]:
 
 def _arena_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     """激奏舞台：LB 选项同重复刷歌（激奏舞台）/ 挂机（挂机（激奏舞台））。只打 EXPERT、不跳过、
-    GREAT 比例至少 1% 由 ``run`` 命令统一设（见 :func:`~ournotes_auto.commands.arena_defaults`）。"""
+    GREAT 比例至少 1%、时机偏移至少 ±16ms 由 ``run`` 命令统一设（见 :func:`~ournotes_auto.commands.arena_defaults`）。"""
     sets = {"loop.arena": "true", "loop.arena_band": (band := _choice(attach, "arena_band", ARENA_BAND_MODES))}
     if band == "rotate":
         sets["loop.arena_games_per_band"] = str(_int(attach, "arena_games_per_band", 1))
@@ -292,7 +292,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     和 ``use_skip``（先用「跳过」消耗 LB）；AP补完另有 ``ap_expert`` 等
     四个难度开关、``ap_order``、``ap_max_attempts`` 和 ``lb_cost``。四个任务都有 ``lb_refill`` ``lb_refill_count``
     （LB 不足时用道具补充）。挂机另有 ``studio_claim`` ``studio_claim_hours``（定时领取录音室练习）和
-    ``daily_claim`` ``daily_claim_time``（每天定时领取日常），其他任务不领。
+    ``daily_claim`` ``daily_claim_time``（每天定时领取日常），其他任务不领；还有 ``rerun_daily``（见 :func:`_rerun`）。
     挑战演出只有 ``challenge_song_mode``（current / rotate / ap_first）、``difficulty`` 和 ``challenge_cost``
     （``keep`` 或 200/400/800/1600），不用 LB 相关的选项。
     激奏舞台 / 挂机（激奏舞台）没有选曲和难度，另有 ``arena_band``（current、各乐队或 rotate，rotate 时还有
@@ -386,6 +386,24 @@ def _set_args(sets: Mapping[str, str]) -> list[str]:
     return args
 
 
+def _rerun(task: str, attach: Mapping[str, Any], since: Any) -> dict[str, str]:
+    """挂机的 ``rerun_daily``（每天重跑前面的任务，开关）：开着、Agent 交来了挂机前面的任务开始运行的时刻
+    （``rerun_since``，前面没有任务时不交）时，游戏日期变更后退出让 Agent 重跑；资源是旧版没有这一项时不重跑。"""
+    if task not in IDLE_TASKS or since is None or not flag(attach, "rerun_daily"):
+        return {}
+    try:
+        if isinstance(since, bool):
+            raise ValueError
+        return {"loop.rerun_since": str(float(since))}
+    except (TypeError, ValueError):
+        raise ParamError(f"参数 rerun_since 应为时间戳：{since!r}") from None
+
+
+def _continues(payload: Mapping[str, Any]) -> dict[str, str]:
+    """挂机为重跑前面的任务退出后，Agent 给重跑的任务、重新启动的挂机交 ``continues``：接着前面的运行（见 ``loop.continues``）。"""
+    return {"loop.continues": "true"} if payload.get("continues") is True else {}
+
+
 def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str]) -> list[str]:
     """``python -m ournotes_auto`` 之后的参数（不含日志 / 停止相关的全局参数，见 ``global_args``）。"""
     if task == "records":
@@ -416,8 +434,8 @@ def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str])
 
 
 def agent_argv(payload: Any) -> tuple[str, list[str]]:
-    """Agent 交来的任务 ``{"task", "attach", "controller"}``（``controller`` 是界面连接的 ``Controller.info``）
-    → (任务名, ``python -m ournotes_auto`` 之后的完整参数)。
+    """Agent 交来的任务 ``{"task", "attach", "controller"}``（``controller`` 是界面连接的 ``Controller.info``；挂机另有
+    ``rerun_since``，见 :func:`_rerun`；重跑时另有 ``continues``，见 :func:`_continues`）→ (任务名, ``python -m ournotes_auto`` 之后的完整参数)。
 
     参数在演奏进程里转换而不是在 Agent 里：Agent 只负责转发，这里的代码改了热更新就能生效。
     """
@@ -431,4 +449,5 @@ def agent_argv(payload: Any) -> tuple[str, list[str]]:
     if not isinstance(attach, Mapping) or not isinstance(controller, Mapping):
         raise ParamError("任务参数格式不对")
     device = {} if task in LOCAL_TASKS else device_from_controller(controller)
-    return task, [*global_args(attach), *worker_args(task, attach, device)]
+    rerun = _set_args({**_rerun(task, attach, payload.get("rerun_since")), **_continues(payload)})
+    return task, [*global_args(attach), *rerun, *worker_args(task, attach, device)]

@@ -333,6 +333,7 @@ def test_localize_ja(text, expected):
         ("ja_settings", Screen.SETTINGS),
         ("ja_live_top", Screen.LIVE_TOP),
         ("ja_arena_top", Screen.ARENA_TOP),  # 激奏舞台首页「撃奏アリーナ」（#105）
+        ("ja_arena_match_confirm", Screen.ARENA_MATCH_CONFIRM),  # 「マッチング確認」（#111）
         ("ja_song_select", Screen.SONG_SELECT),
         ("ja_band_confirm", Screen.BAND_CONFIRM),
         ("ja_lb_setting", Screen.LB_SETTING),

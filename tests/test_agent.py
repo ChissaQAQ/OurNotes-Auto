@@ -544,6 +544,62 @@ def test_agent_argv(mumu_root):
         agent_argv({"task": "repeat", "attach": {**ATTACH, "difficulty": "master"}, "controller": controller})
 
 
+def test_agent_argv_rerun_daily(mumu_root):
+    """挂机开着「每天重跑前面的任务」、Agent 交来了前面的任务开始运行的时刻：设 loop.rerun_since；
+    关着、旧资源没有这一项、前面没有任务（没交时刻）、不是挂机时不设。"""
+    from ournotes_auto.cli import build_parser
+    from ournotes_auto.config import Config, apply_override
+
+    controller = adb_info("127.0.0.1:16416", str(mumu_root / "nx_main" / "adb.exe"))
+    on = {**ATTACH, "rerun_daily": True}
+    for task in ("idle", "arena_idle"):
+        _, argv = agent_argv({"task": task, "attach": on, "controller": controller, "rerun_since": 1761600000.5})
+        args = build_parser().parse_args(argv)
+        cfg = Config()
+        for item in args.set:
+            key, _, value = item.partition("=")
+            apply_override(cfg, key, value)
+        assert args.command == "run" and cfg.loop.rerun_since == 1761600000.5, task
+    for task, attach, since in (
+        ("idle", {**ATTACH, "rerun_daily": "No"}, 1.0),
+        ("idle", ATTACH, 1.0),
+        ("idle", on, None),
+        ("clear_lb", on, 1.0),
+    ):
+        payload = {"task": task, "attach": attach, "controller": controller}
+        if since is not None:
+            payload["rerun_since"] = since
+        _, argv = agent_argv(payload)
+        assert not any(a.startswith("loop.rerun_since") for a in argv), (task, attach, since)
+    for bad in ("abc", True, [1]):
+        with pytest.raises(ParamError, match="rerun_since"):
+            agent_argv({"task": "idle", "attach": on, "controller": controller, "rerun_since": bad})
+    with pytest.raises(ParamError, match="rerun_daily"):
+        agent_argv({"task": "idle", "attach": {**ATTACH, "rerun_daily": "maybe"}, "controller": controller, "rerun_since": 1.0})
+
+
+def test_agent_argv_continues(mumu_root):
+    """Agent 给重跑的任务、重新启动的挂机交 ``continues``：设 loop.continues（统计里接着前面的运行）；没交、不是 true 时不设。"""
+    from ournotes_auto.cli import build_parser
+    from ournotes_auto.config import Config, apply_override
+
+    controller = adb_info("127.0.0.1:16416", str(mumu_root / "nx_main" / "adb.exe"))
+    for task in ("idle", "clear_lb"):
+        _, argv = agent_argv({"task": task, "attach": ATTACH, "controller": controller, "continues": True})
+        args = build_parser().parse_args(argv)
+        cfg = Config()
+        for item in args.set:
+            key, _, value = item.partition("=")
+            apply_override(cfg, key, value)
+        assert args.command == "run" and cfg.loop.continues is True, task
+    for continues in (None, False, "true", 1):
+        payload = {"task": "idle", "attach": ATTACH, "controller": controller}
+        if continues is not None:
+            payload["continues"] = continues
+        _, argv = agent_argv(payload)
+        assert not any(a.startswith("loop.continues") for a in argv), continues
+
+
 @pytest.mark.parametrize(
     "payload, msg",
     [
@@ -648,7 +704,7 @@ def test_worker_args_parse_back():
     cfg.loop.until_lb_empty = cfg.loop.wait_lb = False
     check_run_config(cfg)  # 消耗 0 时不报错，run 命令里不补充（#100）
 
-    # 激奏舞台：run 命令统一改成只打 EXPERT、不跳过、至少 1% GREAT（拟人化设得更多时按设置）
+    # 激奏舞台：run 命令统一改成只打 EXPERT、不跳过、至少 1% GREAT、时机偏移至少 ±16ms（拟人化设得更多时按设置）
     from ournotes_auto.commands import arena_defaults
 
     attach = {**ATTACH, "arena_band": "rotate", "arena_games_per_band": 2, "clear_lb_cost": 1, "difficulty": "hard"}
@@ -662,7 +718,7 @@ def test_worker_args_parse_back():
     assert cfg.loop.arena and cfg.loop.arena_band == "rotate" and cfg.loop.arena_games_per_band == 2
     assert cfg.loop.until_lb_empty and cfg.loop.wait_lb and cfg.game.lb_cost == 1
     assert cfg.game.difficulty == "expert" and cfg.loop.song_mode == "current" and not cfg.loop.use_skip
-    assert cfg.play.touch.great_ratio == 0.01
+    assert cfg.play.touch.great_ratio == 0.01 and cfg.play.touch.jitter_ms == 16.0
 
 
 def _load(rel):
@@ -893,9 +949,9 @@ def test_agent_run_notify_test(cli_main, capsys, monkeypatch, tmp_path):
 
 
 def test_agent_run_notify_task_end(cli_main, capsys, monkeypatch, mumu_root):
-    """任务出错结束时推送最后一条错误日志；完成了的启动游戏、手动停止的、为更新退出的不推送。"""
+    """任务出错结束时推送最后一条错误日志；完成了的启动游戏、手动停止的、为更新或重跑前面的任务退出的不推送。"""
     from ournotes_auto import commands, notify
-    from ournotes_auto.release import EXIT_UPDATE
+    from ournotes_auto.release import EXIT_RERUN, EXIT_UPDATE
 
     main, watches = cli_main
     pushed = []
@@ -911,7 +967,8 @@ def test_agent_run_notify_task_end(cli_main, capsys, monkeypatch, mumu_root):
         args.stop.set()
         return failing(cfg, args)
 
-    for cmd, code in ((failing, 1), (lambda cfg, args: 0, 0), (stopped, 1), (lambda cfg, args: EXIT_UPDATE, EXIT_UPDATE)):
+    for cmd, code in ((failing, 1), (lambda cfg, args: 0, 0), (stopped, 1), (lambda cfg, args: EXIT_UPDATE, EXIT_UPDATE),
+                      (lambda cfg, args: EXIT_RERUN, EXIT_RERUN)):
         monkeypatch.setattr(commands, "cmd_start", cmd)
         assert main(["agent-run", payload]) == code
     [(target, event, title, text)] = pushed

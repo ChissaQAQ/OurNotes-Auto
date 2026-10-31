@@ -300,6 +300,7 @@ def foreign(items: list[OcrItem]) -> list[OcrItem]:
     return [OcrItem(it.x, it.y, it.w, it.h, han.sub("ア", it.text)) for it in items]
 
 
+@pytest.mark.parametrize("gekisou", ["LUCK", "COMBO", "JUST"])
 @pytest.mark.parametrize(
     "name, screen",
     [
@@ -308,6 +309,7 @@ def foreign(items: list[OcrItem]) -> list[OcrItem]:
         ("ja_arena_top", Screen.ARENA_TOP),  # 日服实机截图（#105）
         ("arena_match_confirm", Screen.ARENA_MATCH_CONFIRM),
         ("zh_hant_arena_match_confirm", Screen.ARENA_MATCH_CONFIRM),
+        ("ja_arena_match_confirm", Screen.ARENA_MATCH_CONFIRM),  # 日服，撃奏是 COMBO（#111）
         ("arena_difficulty", Screen.ARENA_DIFFICULTY),
         ("arena_result", Screen.ARENA_RESULT),
         ("arena_result_4th", Screen.ARENA_RESULT),
@@ -317,9 +319,11 @@ def foreign(items: list[OcrItem]) -> list[OcrItem]:
         ("arena_members", None),
     ],
 )
-def test_arena_guess_foreign(name, screen):
-    """还没适配的语言（#105）：标题、按钮上的字认不出时，按「LUCK」那一排的高度等猜激奏舞台的页面。"""
-    assert arena_guess(foreign(load(name))) is screen
+def test_arena_guess_foreign(name, screen, gekisou):
+    """还没适配的语言（#105）：标题、按钮上的字认不出时，按撃奏那一排的高度等猜激奏舞台的页面。
+    撃奏的种类按时间轮换，LUCK、COMBO、JUST 都要认得（#111：原来只认 LUCK）。"""
+    items = [OcrItem(it.x, it.y, it.w, it.h, re.sub("LUCK|COMBO", gekisou, it.text)) for it in foreign(load(name))]
+    assert arena_guess(items) is screen
 
 
 def test_arena_guess_only_arena_pages():
