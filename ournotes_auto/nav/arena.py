@@ -11,6 +11,7 @@
 - 首页的「消耗LB」打开的是和乐队确认页一样的 LIVE BOOST消耗设置，LB 的处理同自由演出
   （:meth:`~ournotes_auto.nav.navigator.GameNavigator._prepare_lb`），在难度选择页记一次「全部消耗」。
 - 难度选择页上也有「消耗LB」，不点。
+- 难度选择页先认右边的大封面，认不出再按封面下的曲名认歌（#107：长曲名在框里滚动，OCR 读到的只是一截）。
 - 演奏画面左上角有 SCORE，看到它时歌还没开始（约 2 秒后第一个音符），从这时开始首音符同步；
   没有暂停按钮，所以不能从头重试。
 - 结算页的判定数和自由演出的读法一样。
@@ -27,11 +28,12 @@ import numpy as np
 
 from ..player.guard import load_template
 from ..result_reader import OcrItem
-from ..runner import ArenaOutcome, SongLabel
+from ..runner import ArenaMissed, ArenaOutcome, SongLabel
 from .jacket import crop_jacket
 from .screens import (
     ARENA_AP_ROI,
     ARENA_BANDS,
+    ARENA_JACKET_ROI,
     MATCH_OK_ROI,
     OK_POPUP_BLOCK,
     RELOGIN_SCREENS,
@@ -73,6 +75,11 @@ ARENA_BAND_MIN = 0.6
 ARENA_RETAP_S = 3.0  # 点了 LIVE START 还停在首页这么久就再点（匹配中途会闪一下首页，点过 OK 后多等一会儿）
 ARENA_CONFIRMED_RETAP_S = 8.0
 ARENA_MAX_RETAPS = 3
+# 难度选择页之后才有的画面：开始对局时看到（或看到演奏画面），说明难度选择页没认出来，这局没演奏就开始了。
+# 连续这么多局都这样就停下（偶尔漏认一次照常重试；每次都认不出时不能一局接一局白打）
+ARENA_PLAYED = frozenset((Screen.LIVE_END, Screen.ARENA_RESULT, Screen.ARENA_RANKING, Screen.ARENA_RANK_UP))
+ARENA_PLAYED_LOOKS = 2  # 连着看到这么多次才算（进难度选择页的转场中一帧认错不算，不能因此丢一局）
+ARENA_MAX_MISSED = 2
 ARENA_SCREENS = frozenset(
     (
         Screen.ARENA_MATCH_CONFIRM,
@@ -118,6 +125,7 @@ class ArenaMixin:
     _lb_all: bool
     _arena_lb: int | None
     _rank_up_taps: int
+    _arena_missed: int
     _band_templates: dict[str, np.ndarray] | None
 
     def _enter_arena(self, items: list[OcrItem]) -> bool:
@@ -197,16 +205,19 @@ class ArenaMixin:
 
     def start_arena(self, lb_short: str = "zero", timeout_s: float = 300.0) -> SongLabel:
         """激奏舞台首页：（按配置设好 LB 消耗后）LIVE START → 匹配确认 OK → 等匹配、转盘定歌，
-        在难度选择页读出曲名和 EXPERT 等级后返回（倒计时约 28 秒，要赶紧认歌、准备）。
+        在难度选择页认出封面、读出曲名和 EXPERT 等级后返回（倒计时约 28 秒，要赶紧认歌、准备）。
 
         LB 的处理同 :meth:`start_live`（``lb_short`` 也一样）。``timeout_s`` 内没匹配到：还在「正在匹配」就取消，报错。
+        没认出难度选择页、对局就开始了（连着看到演奏画面或 :data:`ARENA_PLAYED`）时报错，连续 ARENA_MAX_MISSED 局
+        都这样时抛 :class:`ArenaMissed` 让任务停下。
         """
         want, auto_pick = self._prepare_lb(lb_short)
+        self._jackets_or_none()  # 封面还在后台加载就在开始匹配前等它（难度选择页的倒计时里等不起）
         self.tap(BTN_ARENA_START, "LIVE START")
         deadline = time.monotonic() + timeout_s
         busy_at = time.monotonic()  # 上次点按钮、或看到对局在进行的时刻
         confirmed = False
-        retaps = recovers = 0
+        retaps = recovers = played = 0
         items: list[OcrItem] = []
         screen = Screen.UNKNOWN
         while time.monotonic() < deadline:
@@ -215,8 +226,23 @@ class ArenaMixin:
             now = time.monotonic()
             if screen is Screen.ARENA_DIFFICULTY:
                 self._arena_lb = -1 if self._lb_all else self._lb_cost
+                self._arena_missed = 0
                 self._lb_started()
                 return self._arena_song(items)
+            if screen in ARENA_PLAYED or (screen is Screen.UNKNOWN and find(items, "SCORE", PLAY_SCORE_ROI)):
+                played += 1
+                if played < ARENA_PLAYED_LOOKS:
+                    continue
+                self._lb_started()  # 对局开始了，LB 照样消耗
+                self._arena_missed += 1
+                if self._arena_missed >= ARENA_MAX_MISSED:
+                    raise self._fail(
+                        f"连续 {self._arena_missed} 局没认出激奏舞台的难度选择页，没有演奏就开始了对局"
+                        "（可能是还没适配的语言或版面），再打也一样",
+                        ArenaMissed,
+                    )
+                raise self._fail("没认出激奏舞台的难度选择页，对局已经开始了，这局没有演奏")
+            played = 0
             if screen is Screen.ARENA_MATCH_CONFIRM:
                 self.tap(self._button(items, "OK", BTN_MATCH_OK, MATCH_OK_ROI), "OK（开始匹配）")
                 confirmed = True
@@ -246,22 +272,34 @@ class ArenaMixin:
         raise self._fail(f"{timeout_s:.0f}s 内没有匹配到对局")
 
     def _arena_song(self, items: list[OcrItem]) -> SongLabel:
-        """难度选择页右边封面下的曲名和 EXPERT 等级：转盘刚停时可能还在动画中，连续两次读数一致才采用。"""
+        """难度选择页右边的封面、封面下的曲名和 EXPERT 等级：转盘刚停时可能还在动画中，连续两次认出同一首封面
+        （等级也一样）、或者连续两次曲名和等级一致才采用。封面优先（#107：长曲名在框里滚动，每次读到的都不一样；
+        带符号的曲名也读不准），认不出封面时由曲名兜底（见 :func:`~ournotes_auto.runner.identify_song`）。"""
+        jackets = self._jackets_or_none()
         prev = None
         for _ in range(8):
             title, level = arena_song(items)
-            if title and (title, level) == prev:
-                break
-            prev = (title, level)
+            frame = self._frame
+            jacket = None
+            if jackets is not None and isinstance(frame, np.ndarray):
+                jacket = jackets.identify(crop_jacket(frame, ARENA_JACKET_ROI))
+            cur = (title, level, jacket)
+            if prev is not None and level == prev[1]:
+                same_jacket = jacket is not None and prev[2] is not None and jacket[0] == prev[2][0]
+                if same_jacket or (title and title == prev[0]):
+                    break
+            prev = cur
             self._sleep(0.3)
             screen, items = self.look()
             if screen is not Screen.ARENA_DIFFICULTY:
                 break
         else:
             logger.debug("难度选择页读数不稳定，采用最后一次")
-        title, level = prev
-        logger.debug("激奏舞台：曲名 %r，EXPERT 等级 %s", title, level)
-        return SongLabel(title, "expert", level)
+        title, level, jacket = cur
+        logger.debug("激奏舞台：曲名 %r，EXPERT 等级 %s，封面 %s", title, level, jacket)
+        if jackets is not None and jackets.ids and jacket is None:  # 一张封面都没有（曲名表下载失败等）时截图没用
+            logger.info("激奏舞台难度选择页的封面认不出，只按曲名认歌（截图 %s）", self.save_debug("arena_song", frame))
+        return SongLabel(title, "expert", level, jacket)
 
     def arena_ready(self, timeout_s: float = 150.0) -> None:
         """难度选择页：EXPERT → 准备完毕，等其他人都准备好、演奏画面出现（左上角 SCORE）后立即返回。

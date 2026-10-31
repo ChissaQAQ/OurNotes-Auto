@@ -432,7 +432,7 @@ def _main(argv: list[str], label: str | None = None) -> int:
         start_stdin_watch(args.stop, args.update)
     from . import notify
     from .context import SetupError
-    from .release import EXIT_UPDATE
+    from .release import EXIT_RERUN, EXIT_UPDATE
 
     errors = notify.LastError()
     logging.getLogger().addHandler(errors)
@@ -453,7 +453,8 @@ def _main(argv: list[str], label: str | None = None) -> int:
         logging.getLogger().removeHandler(errors)
     if label and code == 0 and not args.stop.is_set():
         logger.info("%s完成", label)
-    if not args.stop.is_set() and code != EXIT_UPDATE:  # 手动停止的不推送；为更新退出的马上接着运行
+    # 手动停止的不推送；为更新、重跑前面的任务退出的马上接着运行
+    if not args.stop.is_set() and code not in (EXIT_UPDATE, EXIT_RERUN):
         notify.task_end(cfg.notify, args.command, label, code, args.summary, errors.last, time.monotonic() - started)
     return code
 

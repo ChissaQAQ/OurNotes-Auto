@@ -142,6 +142,23 @@ def test_runs_not_merged_after_stop():
     assert "run_12h" in reached and "run_24h" not in reached and "run_48h" not in reached
 
 
+def test_runs_continue_after_rerun():
+    """挂机每天重跑前面的任务：重跑的任务、重新启动的挂机（continues）接着前面的运行，中间启动游戏、领取日常
+    不留运行记录也算同一次连续运行；没标 continues 的照样分开。"""
+    sessions = [
+        Session(T0, T0 + 20 * H, "挂机", idle=True),
+        Session(T0 + 20 * H + 900, T0 + 21 * H, "清体力", continues=True),
+        Session(T0 + 21 * H + 600, T0 + 30 * H, "挂机", idle=True, continues=True),
+    ]
+    t, reached = compute([], sessions)
+    assert t.runs == 3 and t.longest_run_s == 30 * H
+    assert "run_24h" in reached and "run_48h" not in reached
+    for s in sessions:
+        s.continues = False
+    t, reached = compute([], sessions)
+    assert t.longest_run_s == 20 * H and "run_24h" not in reached
+
+
 def test_load_sessions_skips_bad_lines(tmp_path):
     good = json.dumps({"start": T0, "end": T0 + 60, "task": "挂机", "extra": 1})
     lines = ["not json", "[1]", json.dumps({"start": T0}), good, ""]
@@ -675,6 +692,22 @@ def test_tracker_restart_for_update(tmp_path):
     b.finish(RunStats(plays=80))
     assert [s.restart for s in load_sessions(tmp_path)] == [True, False]
     assert refresh(tmp_path, now=now[0]).totals.longest_run_s == 13 * H + 60
+
+
+def test_tracker_continues_after_rerun(tmp_path):
+    """挂机为重跑前面的任务退出后重新启动的那次（continues）记进运行记录，隔了十几分钟也算同一次连续运行。"""
+    now = [T0]
+    a = Tracker(tmp_path, "挂机", True, clock=lambda: now[0])
+    a.start()
+    now[0] += 20 * H
+    a.finish(RunStats(plays=100))
+    now[0] += 900  # 启动游戏、领取日常
+    b = Tracker(tmp_path, "挂机", True, clock=lambda: now[0], continues=True)
+    b.start()
+    now[0] += 5 * H
+    b.finish(RunStats(plays=30))
+    assert [s.continues for s in load_sessions(tmp_path)] == [False, True]
+    assert refresh(tmp_path, now=now[0]).totals.longest_run_s == 25 * H + 900
 
 
 def test_tracker_recovers_stale_session(tmp_path):

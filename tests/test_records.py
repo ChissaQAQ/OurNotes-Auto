@@ -12,7 +12,7 @@ import pytest
 
 from ournotes_auto import release
 from ournotes_auto.config import AutoTuneConfig
-from ournotes_auto.records import ArenaResult, PlayResult, RecordStore, game_day, parse_arena, suggest_offset_delta
+from ournotes_auto.records import ArenaResult, PlayResult, RecordStore, game_day, next_game_day, parse_arena, suggest_offset_delta
 
 # 实测（MuMu，迷星叫 EASY，91 个有时机的判定）：offset=0 时整体晚约 8ms，
 # 按键离散度约 1.5ms，PERFECT 中心 ±2.4ms 内不标 FAST/SLOW
@@ -186,6 +186,18 @@ def test_game_day_changes_at_3am_beijing():
     assert game_day(beijing("2026-10-28", "02:59")) == "2026-10-27"
     assert game_day(beijing("2026-10-28", "03:00")) == "2026-10-28"
     assert game_day(beijing("2026-10-28", "10:25")) == "2026-10-28"
+
+
+def test_next_game_day():
+    """之后第一次日期变更的时刻：北京时间 3:00；刚好 3:00 时算明天的。"""
+    beijing = lambda d, hm: calendar.timegm(time.strptime(f"{d} {hm}", "%Y-%m-%d %H:%M")) - 8 * 3600
+    assert next_game_day(beijing("2026-10-27", "22:59")) == beijing("2026-10-28", "03:00")
+    assert next_game_day(beijing("2026-10-28", "02:59") + 59.5) == beijing("2026-10-28", "03:00")
+    assert next_game_day(beijing("2026-10-28", "03:00")) == beijing("2026-10-29", "03:00")
+    assert next_game_day(beijing("2026-10-28", "10:25")) == beijing("2026-10-29", "03:00")
+    for t in (beijing("2026-10-27", "22:59"), beijing("2026-10-28", "03:00"), beijing("2026-12-31", "12:00")):
+        n = next_game_day(t)
+        assert game_day(n - 1) == game_day(t) != game_day(n)
 
 
 def test_history_tolerates_new_fields_and_sorts(tmp_path):

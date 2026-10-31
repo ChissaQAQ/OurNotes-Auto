@@ -247,16 +247,20 @@ ARENA_TIER_ROI: Rect = (400, 490, 480, 50)  # 段位提升：左右两个段位�
 ARENA_RECORD_ROI: Rect = (720, 630, 250, 60)  # 排名页底部的「演出记录」
 ARENA_PLACE_ROI: Rect = (20, 330, 200, 150)  # 排名页左边自己的名次（大号的「3rd」）
 ARENA_SONG_ROI: Rect = (780, 385, 490, 50)  # 难度选择页右边封面下的曲名
+# 难度选择页右边转盘定下的那首歌的大封面（#107，要贴边：裁小到 280 就认不出了）。匹配确认页上的封面是自己带的歌，不是这首
+ARENA_JACKET_ROI: Rect = (855, 81, 300, 300)
 ARENA_LEVEL_ROI: Rect = (1140, 510, 130, 45)  # 难度选择页 EXPERT 上面的等级数字
 MATCH_OK_ROI: Rect = (640, 630, 300, 60)  # 匹配确认：左取消右 OK
 # 激奏舞台的页面认不出时（还没适配的语言，#105）按不分语言的特征猜（见 arena_guess）：首页、匹配确认、难度选择、
-# 排名页上各有一排「LUCK」（别的页面都没有），各页这一排的高度不同
-ARENA_LUCK_ROWS = (
+# 排名页上各有一排撃奏（别的页面都没有），各页这一排的高度不同
+ARENA_GEKISOU_ROWS = (
     (658, Screen.ARENA_TOP),
     (320, Screen.ARENA_MATCH_CONFIRM),
     (488, Screen.ARENA_DIFFICULTY),
     (561, Screen.ARENA_RANKING),
 )
+# 撃奏的种类按时间轮换（#111）：「LUCK」「COMBO」「JUST」都有可能
+ARENA_GEKISOU = re.compile(r"LUCK|C[O0]MB[O0]|JUST")
 ARENA_ROW_DY = 20  # 中心高度差这么多以内算同一排
 ARENA_START_ROI: Rect = (1000, 610, 280, 60)  # 首页右下的 LIVE START
 ARENA_DIFFICULTY_Y = 555  # 难度选择页 EASY … EXPERT 那一排
@@ -502,8 +506,8 @@ def arena_guess(items: list[OcrItem]) -> Screen | None:
     """认不出的画面猜是激奏舞台的哪一页，不像时为 None。只在激奏舞台任务里、:func:`classify` 认不出时用
     （见 ``GameNavigator.look``），简中等适配了的语言照常按标题认，不走这里。
 
-    还没适配的语言（#105）里标题、按钮上的字认不出，只看不分语言的：「LUCK」那一排的高度，再加一处这一页才有的
-    （首页的 LIVE START、匹配确认的 OK、难度选择的 EASY … EXPERT、排名页的名次或「220pt」）；
+    还没适配的语言（#105）里标题、按钮上的字认不出，只看不分语言的：撃奏（LUCK / COMBO / JUST）那一排的高度，
+    再加一处这一页才有的（首页的 LIVE START、匹配确认的 OK、难度选择的 EASY … EXPERT、排名页的名次或「220pt」）；
     结果弹窗看「2nd AP+25」（见 :func:`arena_result`）。
     """
     if any(find(items, text) for text in ARENA_GUESS_BLOCK):
@@ -514,18 +518,16 @@ def arena_guess(items: list[OcrItem]) -> Screen | None:
     def row(y: float, match) -> int:
         return sum(1 for it in items if abs(it.cy - y) <= ARENA_ROW_DY and match(_norm(it.text)))
 
-    screen = next((s for y, s in ARENA_LUCK_ROWS if row(y, lambda t: "LUCK" in t) >= 2), None)
-    if screen is Screen.ARENA_TOP:
-        ok = any(in_roi(it, ARENA_START_ROI) and ("LIVE" in _norm(it.text) or "START" in _norm(it.text)) for it in items)
-    elif screen is Screen.ARENA_MATCH_CONFIRM:
-        ok = find(items, "OK", MATCH_OK_ROI, exact=True) is not None
-    elif screen is Screen.ARENA_DIFFICULTY:
-        ok = row(ARENA_DIFFICULTY_Y, parse_difficulty) >= 2
-    elif screen is Screen.ARENA_RANKING:
-        ok = arena_placement(items) is not None or row(ARENA_PT_Y, lambda t: re.fullmatch(r"\d+PT", t)) >= 2
-    else:
-        return None
-    return screen if ok else None
+    def page(screen: Screen) -> bool:
+        if screen is Screen.ARENA_TOP:
+            return any(in_roi(it, ARENA_START_ROI) and re.search("LIVE|START", _norm(it.text)) for it in items)
+        if screen is Screen.ARENA_MATCH_CONFIRM:
+            return find(items, "OK", MATCH_OK_ROI, exact=True) is not None
+        if screen is Screen.ARENA_DIFFICULTY:
+            return row(ARENA_DIFFICULTY_Y, parse_difficulty) >= 2
+        return arena_placement(items) is not None or row(ARENA_PT_Y, lambda t: re.fullmatch(r"\d+PT", t)) >= 2
+
+    return next((s for y, s in ARENA_GEKISOU_ROWS if row(y, ARENA_GEKISOU.search) >= 2 and page(s)), None)
 
 
 def _challenge_song_select(items: list[OcrItem]) -> bool:

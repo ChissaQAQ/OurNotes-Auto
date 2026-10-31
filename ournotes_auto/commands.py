@@ -10,7 +10,7 @@ from .config import Config, parse_daily_time
 from .context import SetupError, open_context
 from .context import open_device as _device
 from .context import open_ocr as _ocr
-from .release import EXIT_UPDATE
+from .release import EXIT_RERUN, EXIT_UPDATE
 
 logger = logging.getLogger("ournotes_auto")
 
@@ -18,6 +18,7 @@ logger = logging.getLogger("ournotes_auto")
 MAX_GREAT_RATIO = 0.2
 MAX_JITTER_MS = 20.0
 ARENA_GREAT_RATIO = 0.01  # 激奏舞台是多人对局，不用打 AP：至少故意打这么多 GREAT
+ARENA_JITTER_MS = 16.0  # 激奏舞台至少这么大的时机偏移：瞄准 PERFECT 正中时 JUST 远多于真人（#110）
 
 
 def _parse_point(text: str) -> tuple[int, int]:
@@ -223,13 +224,15 @@ def check_run_config(cfg: Config) -> None:
 
 
 def arena_defaults(cfg: Config) -> None:
-    """激奏舞台：转盘定歌、只打 EXPERT，没有选曲和跳过；多人对局不用 AP，至少故意打 ARENA_GREAT_RATIO 的 GREAT。"""
+    """激奏舞台：转盘定歌、只打 EXPERT，没有选曲和跳过；多人对局不用 AP，至少故意打 ARENA_GREAT_RATIO 的 GREAT，
+    时机偏移至少 ARENA_JITTER_MS。"""
     if not cfg.loop.arena:
         return
     cfg.loop.song_mode = "current"
     cfg.game.difficulty = "expert"
     cfg.loop.use_skip = False
     cfg.play.touch.great_ratio = max(cfg.play.touch.great_ratio, ARENA_GREAT_RATIO)
+    cfg.play.touch.jitter_ms = max(cfg.play.touch.jitter_ms, ARENA_JITTER_MS)
 
 
 def drop_great_for_ap(cfg: Config) -> None:
@@ -311,7 +314,9 @@ def cmd_run(cfg: Config, args) -> int:
                     return 130
                 logger.error("%s", e)
                 return 1
-        tracker = Tracker("data", getattr(args, "label", None) or "命令行", cfg.loop.wait_lb, library=Library.from_catalog(ctx.catalog))
+        tracker = Tracker(
+            "data", getattr(args, "label", None) or "命令行", cfg.loop.wait_lb, library=Library.from_catalog(ctx.catalog), continues=cfg.loop.continues
+        )
         update = getattr(args, "update", None)
         runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source, update, tracker)
         try:
@@ -323,6 +328,8 @@ def cmd_run(cfg: Config, args) -> int:
     args.summary = stats.summary()  # 完成、出错时推送
     if stats.restart:
         return EXIT_UPDATE
+    if stats.rerun:
+        return EXIT_RERUN
     # 服务器维护时任务算失败（打过几局也一样，没打完）
     return 0 if (stats.plays or not stats.failures) and not stats.maintenance else 1
 
@@ -587,7 +594,7 @@ def register(sub) -> None:
     sp.add_argument(
         "--arena",
         action="store_true",
-        help="打激奏舞台（多人对局，转盘定歌，只打 EXPERT，至少故意打 1%% GREAT）；LB 选项同自由演出，不能跳过",
+        help="打激奏舞台（多人对局，转盘定歌，只打 EXPERT，至少故意打 1%% GREAT、时机偏移至少 ±16ms）；LB 选项同自由演出，不能跳过",
     )
     sp.add_argument(
         "--arena-band",

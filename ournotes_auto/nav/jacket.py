@@ -12,6 +12,8 @@ import logging
 import cv2
 import numpy as np
 
+from ..charts.bdon import HostDown
+
 logger = logging.getLogger(__name__)
 
 JACKET_ROI = (13, 598, 95, 95)  # 乐队确认页左下角封面（1280x720 下的 x, y, w, h）
@@ -67,11 +69,16 @@ class JacketMatcher:
         if missing:
             logger.info("下载 %d 张曲目封面（用来认歌，之后有缓存）", missing)
         images = {}
+        skipped = 0
         for song in songs:
             try:
                 images[song.music_id] = decode(client.jacket(song.music_id, song.jacket_url))
+            except HostDown:
+                skipped += 1
             except (ConnectionError, LookupError, ValueError) as e:
                 logger.warning("封面 %d 获取失败：%s", song.music_id, e)
+        if skipped:  # 一张一张记没用，说一次
+            logger.info("封面网站这次打开程序后下载失败过，%d 张封面下次打开程序再下载，这几首先按曲名认", skipped)
         logger.debug("封面：%d 张", len(images))
         return cls(images)
 

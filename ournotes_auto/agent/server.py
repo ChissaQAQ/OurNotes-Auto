@@ -11,7 +11,8 @@ import logging
 import os
 import re
 import sys
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -20,10 +21,10 @@ from maa.context import Context
 from maa.custom_action import CustomAction
 
 from .. import __version__, release, sysmem
-from ..release import EXIT_UPDATE
+from ..release import EXIT_RERUN, EXIT_UPDATE
 from .logs import set_ui_debug, setup_logging
 from .update import UpdateBusyError, UpdateCheck
-from .worker import apply_proxy, run_worker
+from .worker import WorkerResult, apply_proxy, run_worker
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,12 @@ PARAM_NODE = "OurNotesParam"  # 界面选项都覆盖到这个节点的 attach �
 UPDATE = UpdateCheck(ROOT)
 SECRET_KEYS = ("notify_target",)  # 等于密码的选项（推送地址），日志里不记
 PROXY_PASSWORD = re.compile(r"(?<=:)[^:@/]*(?=@)")  # 代理地址 user:pass@host:port 里的密码，日志里不记
+IDLE_TASKS = ("idle", "arena_idle")  # 挂机（和 params.IDLE_TASKS 一致）：开着「每天重跑前面的任务」时日期变更后退出（EXIT_RERUN）
+RERUN_KEY = "rerun_daily"  # 「每天重跑前面的任务」开关（attach 里的键）
+NO_RERUN = frozenset((*IDLE_TASKS, "records", "notify_test"))  # 不重跑的任务：挂机本身、不打歌的（打开统计窗口会弹出窗口）
+# MFAA 的 Agent 常驻：上一个任务结束这么久以后才开始的任务算新的一次运行（界面上又点了一次开始）；MXU 每次开始都启动新的 Agent
+RUN_GAP_S = 60.0
+LAUNCHED_ENV = "OURNOTES_LAUNCHED"  # 这次打开界面的时刻，演奏进程继承（和 charts/bdon.py 一致）
 
 
 def _masked(attach: Mapping[str, Any]) -> dict[str, Any]:
@@ -59,6 +66,47 @@ def _controller_info(context: Context) -> Any:
         return {}
 
 
+class RunHistory:
+    """这次运行（界面上点一次开始）里已经运行过的任务和选项：挂机开着「每天重跑前面的任务」时，游戏日期变更后
+    按顺序重跑它们再接着挂机。手动停止、这样的挂机结束（它总在最后）后清空。"""
+
+    def __init__(self, clock: Callable[[], float] = time.time):
+        self.clock = clock
+        self.tasks: list[tuple[str, dict[str, Any]]] = []
+        self.since = 0.0  # 这些任务（最近一轮）开始运行的时刻（Unix 秒），挂机按它算哪天该重跑
+        self._last_end = float("-inf")  # 上一个任务结束的时刻
+
+    def begin(self, task: str, attach: Mapping[str, Any]) -> None:
+        """一个任务开始：离上一个任务结束太久就是新的一次运行，之前的不算。"""
+        now = self.clock()
+        if now - self._last_end > RUN_GAP_S:
+            self.tasks.clear()
+        if not self.tasks:
+            self.since = now
+        if task not in NO_RERUN:
+            self.tasks.append((task, dict(attach)))
+
+    def end(self, stopped: bool, last: bool = False) -> None:
+        """一个任务结束。``last``：开着「每天重跑前面的任务」、不限局数的挂机，出错结束后也清空（MFAA 的 Agent 常驻，
+        一分钟内再点开始时前面的任务不重复记）；限了局数的挂机后面还有任务，不清空。"""
+        self._last_end = self.clock()
+        if stopped or last:
+            self.tasks.clear()
+
+
+HISTORY = RunHistory()
+
+
+def _reruns(task: str, attach: Mapping[str, Any]) -> bool:
+    """开着「每天重跑前面的任务」、不限局数的挂机（演奏进程只在这时为重跑退出）。"""
+    if task not in IDLE_TASKS or not _flag(attach, RERUN_KEY, False):
+        return False
+    try:
+        return int(str(attach.get("max_plays", 0)).strip()) <= 0
+    except ValueError:  # 演奏进程会报参数错误
+        return False
+
+
 class OurNotesRun(CustomAction):
     """``custom_action_param`` 为 ``{"task": "start" | "switch_account" | "repeat" | "clear_lb" | "idle" | "ap" | "challenge" | "arena" | "arena_idle" | "records" | "notify_test"}``，
     选项在 ``OurNotesParam`` 节点的 attach 里。"""
@@ -77,35 +125,78 @@ class OurNotesRun(CustomAction):
         if proxy:
             logger.debug("网络代理：%s", _hide_password(proxy))
         UPDATE.start(check=_flag(attach, "check_update", True), auto=_flag(attach, "auto_update", True))
-        payload = {"task": task, "attach": attach, "controller": _controller_info(context)}
-        cmd = [sys.executable, "-m", "ournotes_auto", "agent-run", json.dumps(payload, ensure_ascii=False, default=str)]
-        shown = json.dumps({**payload, "attach": _masked(attach)}, ensure_ascii=False, default=str)
-        logger.debug("启动演奏进程：%s", [*cmd[:-1], shown])
+        HISTORY.begin(task, attach)
+        payload: dict[str, Any] = {"task": task, "attach": attach, "controller": _controller_info(context)}
+        if task in IDLE_TASKS and HISTORY.tasks:
+            payload["rerun_since"] = HISTORY.since  # 演奏进程看开关决定重不重跑
+        elif task in IDLE_TASKS and _flag(attach, RERUN_KEY, False):
+            logger.info("这次在挂机前面没有运行别的任务，日期变更后不用重跑")
 
         def stopping() -> bool:
             return context.tasker.stopping
 
         while True:
-            try:
-                with UPDATE.busy():
-                    result = run_worker(cmd, cwd=ROOT, should_stop=stopping, should_update=UPDATE.hot_ready)
-            except UpdateBusyError as e:
-                logger.error("%s", e)
+            result = _work(payload, stopping)
+            if result is None:
+                HISTORY.end(stopped=False, last=_reruns(task, attach))
                 UPDATE.report()
                 return False
-            if result.returncode != EXIT_UPDATE or result.stopped or stopping():
+            if task not in IDLE_TASKS or result.returncode != EXIT_RERUN or result.stopped or stopping():
                 break
-            # 挂机为热更新在安全的时机退出了：等换上新代码，用同样的参数重新启动
-            UPDATE.wait_applied(stopping)
+            # 挂机在游戏日期变更后退出了：按顺序重跑前面的任务，再用同样的参数接着挂机
+            _rerun(context, stopping)
             if stopping():
                 break
-        if result.stopped or stopping():
+            payload["rerun_since"] = HISTORY.since
+            payload["continues"] = True
+        stopped = result.stopped or stopping()
+        HISTORY.end(stopped, last=_reruns(task, attach))
+        if stopped:
             logger.info("已停止")
-        elif result.returncode:
-            logger.error("任务结束，退出码 %d（详细日志见 data/ournotes.log）", result.returncode)
-            _report_memory(result.out_of_memory)
+        else:
+            _report_exit(result)
         UPDATE.report()
         return result.returncode == 0
+
+
+def _work(payload: Mapping[str, Any], stopping: Callable[[], bool]) -> WorkerResult | None:
+    """运行一个演奏进程；挂机为热更新退出时等换上新代码，用同样的参数重新启动。正在更新、启动不了时返回 None。"""
+    cmd = [sys.executable, "-m", "ournotes_auto", "agent-run", json.dumps(payload, ensure_ascii=False, default=str)]
+    shown = json.dumps({**payload, "attach": _masked(payload["attach"])}, ensure_ascii=False, default=str)
+    logger.debug("启动演奏进程：%s", [*cmd[:-1], shown])
+    while True:
+        try:
+            with UPDATE.busy():
+                result = run_worker(cmd, cwd=ROOT, should_stop=stopping, should_update=UPDATE.hot_ready)
+        except UpdateBusyError as e:
+            logger.error("%s", e)
+            return None
+        if result.returncode != EXIT_UPDATE or result.stopped or stopping():
+            return result
+        # 挂机为热更新在安全的时机退出了：等换上新代码，用同样的参数重新启动
+        UPDATE.wait_applied(stopping)
+        if stopping():
+            return result
+
+
+def _rerun(context: Context, stopping: Callable[[], bool]) -> None:
+    """按顺序重跑这次运行里挂机前面的任务（选项同当时，出错了接着跑下一个），手动停止时不再跑。"""
+    tasks = list(HISTORY.tasks)
+    HISTORY.since = HISTORY.clock()
+    for i, (task, attach) in enumerate(tasks, 1):
+        if stopping():
+            return
+        logger.info("重跑挂机前面的任务（%d/%d）", i, len(tasks))
+        result = _work({"task": task, "attach": attach, "controller": _controller_info(context), "continues": True}, stopping)
+        if result is not None and not result.stopped and not stopping():
+            _report_exit(result)
+
+
+def _report_exit(result: WorkerResult) -> None:
+    """演奏进程出错退出时提示看详细日志（停止的不算）。"""
+    if result.returncode:
+        logger.error("任务结束，退出码 %d（详细日志见 data/ournotes.log）", result.returncode)
+        _report_memory(result.out_of_memory)
 
 
 def _report_memory(out_of_memory: bool) -> None:
@@ -166,6 +257,40 @@ def _ensure_stats_card(root: Path = ROOT) -> None:
     logger.info("设置页加上了「统计与成就」卡片，下次打开界面时显示")
 
 
+def _started(pid: int) -> float | None:
+    """进程启动的时刻（Unix 时间）；读不到（不是 Windows、进程已退出等）返回 None。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    except (ImportError, AttributeError, OSError):
+        return None
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.GetProcessTimes.argtypes = [wintypes.HANDLE, *[ctypes.POINTER(wintypes.FILETIME)] * 4]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    times = [wintypes.FILETIME() for _ in range(4)]
+    try:
+        if not k32.GetProcessTimes(h, *map(ctypes.byref, times)):
+            return None
+    finally:
+        k32.CloseHandle(h)
+    ticks = times[0].dwHighDateTime << 32 | times[0].dwLowDateTime
+    return ticks / 1e7 - 11644473600  # FILETIME 是 1601 年起的 100ns 数
+
+
+def _launched() -> float:
+    """这次打开界面的时刻（谱面站连不上时，到下次打开程序再下载曲目列表、封面，#108）。MXU 每次开始任务都启动新的
+    Agent，所以看界面（父进程）；读不到、或父进程已退出 PID 被后来的进程占了时，用 Agent 自己启动的时刻。"""
+    me = _started(os.getpid()) or time.time()
+    ui = _started(os.getppid())
+    return ui if ui is not None and ui <= me else me
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     setup_logging()
@@ -177,6 +302,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("注册 Agent 动作失败")
         return 1
     logger.debug("Agent %s 启动（%s），连接标识 %s", __version__, os.environ.get("PI_CLIENT_NAME", "未知界面"), argv[-1])
+    os.environ[LAUNCHED_ENV] = str(_launched())
     _ensure_stats_page()
     _ensure_stats_card()
     if not AgentServer.start_up(argv[-1]):

@@ -15,10 +15,12 @@ from ournotes_auto import sources
 from ournotes_auto.config import Config
 from ournotes_auto.nav import navigator
 from ournotes_auto.nav.arena import rank_up_like
+from ournotes_auto.nav.jacket import JacketMatcher
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import (
     ARENA_AP_ROI,
+    ARENA_JACKET_ROI,
     ARENA_TIER_ROI,
     CLEAR_MARK_ROI,
     CP_RADIO,
@@ -33,6 +35,7 @@ from ournotes_auto.nav.song_select import BTN_DIFFICULTY
 from ournotes_auto.records import RecordStore, game_day
 from ournotes_auto.result_reader import OcrItem
 from ournotes_auto.runner import (
+    ArenaMissed,
     CpExhausted,
     GameUpdateRequired,
     LbExhausted,
@@ -40,6 +43,7 @@ from ournotes_auto.runner import (
     ScreenFrozen,
     ServerMaintenance,
 )
+from test_jacket import jacket
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MODEL_DIR = Path("resource") / "model" / "ocr"
@@ -230,6 +234,154 @@ def test_start_arena_foreign_language(monkeypatch):
     song = nav.start_arena()
     assert (song.difficulty, song.level) == ("expert", 24)
     assert [s for s, _ in game.taps] == ["arena_top", "arena_match_confirm"]
+
+
+@pytest.mark.parametrize("played", ["playing", "live_clear"])
+def test_start_arena_missed_difficulty_stops(monkeypatch, played):
+    """#111：难度选择页没认出来、对局就开始了（看到演奏画面或 LIVE CLEAR）：第一次照常报错重试，
+    连着第二局还这样时抛 ArenaMissed 让任务停下（不一局接一局白打、白白消耗 LB）；中间认出过难度选择页就重新数。"""
+    monkeypatch.setitem(TRANSITIONS, "arena_top", [((1140, 640), "arena_match_confirm")])
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), played)])
+    game = ForeignArenaGame("arena_top")
+    nav = make_nav(game, game, game, arena=True)
+    nav.save_debug = lambda *a: None
+    fake_clock(monkeypatch, nav)
+    with pytest.raises(NavigationError) as e:
+        nav.start_arena()
+    assert not isinstance(e.value, ScreenFrozen)
+    # 认出了难度选择页：重新数
+    game.state = "arena_top"
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), "arena_difficulty")])
+    nav.start_arena()
+    game.state = "arena_top"
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), played)])
+    with pytest.raises(NavigationError) as e:
+        nav.start_arena()
+    assert not isinstance(e.value, ScreenFrozen)
+    game.state = "arena_top"
+    with pytest.raises(ArenaMissed):
+        nav.start_arena()
+
+
+class FlickerArenaGame(FakeGame):
+    """进难度选择页之前依次看到 ``frames``，其中有被认成了对局开始后才有的画面的单帧，然后是难度选择页。"""
+
+    def __init__(self, *frames: str):
+        super().__init__("arena_top")
+        self.frames = list(frames)
+
+    def grab(self):
+        if self.state == "flash":
+            if self.frames:
+                return self.frames.pop(0), 0.0
+            self.state = "arena_difficulty"
+        return super().grab()
+
+
+@pytest.mark.parametrize("frames", [("playing",), ("live_clear",), ("live_clear", "arena_matching", "playing")])
+def test_start_arena_one_frame_misread(monkeypatch, frames):
+    """#111 的保底：只有一帧像演奏画面或 LIVE CLEAR 不算漏认，照常认歌演奏（原来这局直接不打）；
+    中间隔着别的画面的两次单帧也不算连着。"""
+    monkeypatch.setitem(TRANSITIONS, "arena_top", [((1140, 640), "arena_match_confirm")])
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), "flash")])
+    game = FlickerArenaGame(*frames)
+    nav = make_nav(game, game, game, arena=True)
+    nav.save_debug = lambda *a: None
+    fake_clock(monkeypatch, nav)
+    song = nav.start_arena()
+    assert (song.difficulty, song.level) == ("expert", 24)
+    assert nav._arena_missed == 0
+
+
+class JacketArenaGame(FakeGame):
+    """#107：难度选择页截的是真图，右边大封面依次是 ``covers``（看完了停在最后一张）；``scroll`` 时封面下的长曲名
+    在框里滚动，每次读到的都是不同的一截；``levels`` 是前几次读到的 EXPERT 等级（之后是 24）。"""
+
+    def __init__(self, *covers: np.ndarray, scroll: bool = True, levels: tuple[int, ...] = ()):
+        super().__init__("arena_top")
+        x, y, w, h = ARENA_JACKET_ROI
+        self.images = []
+        for cover in covers:
+            image = np.full((720, 1280, 3), 30, np.uint8)
+            image[y : y + h, x : x + w] = cv2.resize(cover, (w, h), interpolation=cv2.INTER_AREA)
+            self.images.append(image)
+        self.scroll = scroll
+        self.levels = levels
+        self.reads = 0
+
+    def grab(self):
+        if self.state != "arena_difficulty":
+            return self.state, 0.0
+        return self.images[min(self.reads, len(self.images) - 1)], 0.0
+
+    def read(self, frame, roi=None):
+        if not isinstance(frame, np.ndarray):
+            return super().read(frame, roi)
+        self.reads += 1
+        level = str(self.levels[self.reads - 1]) if self.reads <= len(self.levels) else "24"
+        items = []
+        for it in load_items("arena_difficulty"):
+            if self.scroll and it.text == "端程山":
+                it = OcrItem(it.x, it.y, it.w, it.h, f"长曲名的第{self.reads}截")
+            elif it.text == "24":
+                it = OcrItem(it.x, it.y, it.w, it.h, level)
+            items.append(it)
+        return items
+
+
+def jacket_arena_nav(monkeypatch, game, jackets) -> GameNavigator:
+    monkeypatch.setitem(TRANSITIONS, "arena_top", [((1140, 640), "arena_match_confirm")])
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), "arena_difficulty")])
+    nav = make_nav(game, game, game, arena=True)
+    nav._jackets = jackets
+    nav.saved = []
+    nav.save_debug = lambda name, frame=None: nav.saved.append(name)
+    fake_clock(monkeypatch, nav)
+    return nav
+
+
+def test_start_arena_song_by_jacket(monkeypatch):
+    """#107：激奏舞台的难度选择页先认右边的大封面（长曲名在框里滚动，每次读到的都不一样，原来一直等不到两次一致，
+    只能拿最后读到的一截去匹配曲名，经常认不出）；连续两次认出同一首就采用，不用等曲名。"""
+    game = JacketArenaGame(jacket(5))
+    nav = jacket_arena_nav(monkeypatch, game, JacketMatcher({100000 + i: jacket(i) for i in range(10)}))
+    song = nav.start_arena()
+    assert song.jacket is not None and song.jacket[0] == 100005
+    assert (song.difficulty, song.level) == ("expert", 24)
+    assert game.reads == 2 and not nav.saved
+
+
+@pytest.mark.parametrize(
+    "covers, levels, reads",
+    [((jacket(3), jacket(5)), (), 3), ((jacket(5),), (24, 2), 4)],
+    ids=["cover_changing", "level_misread"],
+)
+def test_start_arena_song_jacket_stable(monkeypatch, covers, levels, reads):
+    """#107：转盘刚停时封面可能还在变，要连续两次是同一首；某一次等级读错了也不采用那一次（等级对不上封面就不打了）。"""
+    game = JacketArenaGame(*covers, levels=levels)
+    nav = jacket_arena_nav(monkeypatch, game, JacketMatcher({100000 + i: jacket(i) for i in range(10)}))
+    song = nav.start_arena()
+    assert song.jacket is not None and song.jacket[0] == 100005
+    assert song.level == 24
+    assert game.reads == reads
+
+
+@pytest.mark.parametrize("jackets", ["unknown", "empty", "broken"])
+def test_start_arena_song_title_fallback(monkeypatch, jackets):
+    """#107 的兜底：封面认不出（不在曲库里，留一张截图；一张封面都没有时截图没用，不留）
+    或者封面加载失败（记警告，不报错）时照旧按曲名认歌。"""
+    game = JacketArenaGame(jacket(99), scroll=False)
+    if jackets == "broken":
+        matcher = Future()
+        matcher.set_exception(OSError("network down"))
+    else:
+        matcher = JacketMatcher({100000 + i: jacket(i) for i in range(10 if jackets == "unknown" else 0)})
+    nav = jacket_arena_nav(monkeypatch, game, matcher)
+    song = nav.start_arena()
+    assert song.jacket is None
+    assert (song.title, song.level) == ("端程山", 24)
+    assert nav.saved == (["arena_song"] if jackets == "unknown" else [])
+    assert nav._jackets is None if jackets == "broken" else nav._jackets is matcher
 
 
 def test_read_arena_result_foreign_language(monkeypatch):
