@@ -86,6 +86,7 @@ from .screens import (
     LbRows,
     Rect,
     Screen,
+    arena_failed_like,
     arena_guess,
     band_confirm_song,
     center,
@@ -115,7 +116,7 @@ from .screens import (
     title_startable,
 )
 from .account import BTN_MENU_CLOSE, AccountMixin
-from .arena import ARENA_SCREENS, ArenaMixin
+from .arena import ARENA_FAILED_GUESS_S, ARENA_OPTIONS_WAIT_S, ARENA_RETAP_S, ARENA_SCREENS, ArenaMixin
 from .challenge import BTN_CP_CANCEL, CHALLENGE_SCREENS, CP_CANCEL_ROI, ChallengeMixin
 from .daily import DailyMixin
 from .song_select import (
@@ -349,6 +350,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         self._arena_lb: int | None = None  # 激奏舞台这一局开始时的 LB 消耗设置
         self._rank_up_taps = 0  # 激奏舞台段位提升画面点了几次（轮流点两处）
         self._arena_missed = 0  # 激奏舞台连续几局对局开始了却没认出难度选择页
+        self._match_failed_at = -ARENA_RETAP_S  # 上次点激奏舞台匹配失败弹窗「关闭」的时刻
+        self._failed_like_at: float | None = None  # 开始看到像匹配失败、但认不出文字的弹窗的时刻
+        self._options_since = 0.0  # 这次开始看到演出前选项设置的时刻（激奏舞台里等它自己过去）
         self._band_templates: dict[str, np.ndarray] | None = None  # 激奏舞台首页的乐队标志（第一次用时加载）
         self._side_templates: dict[str, np.ndarray | None] = {}  # 主界面左侧入口的图标（第一次用时加载）
         cp = config.game.challenge_cost
@@ -419,6 +423,15 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         guessed = False
         if screen is Screen.UNKNOWN and self.arena and (guess := arena_guess(items)) is not None:
             screen, guessed = guess, True
+        # 匹配失败的弹窗（#113）认不出文字时：中间偏下只有「关闭」、停了 ARENA_FAILED_GUESS_S 没过去才算
+        if screen is Screen.UNKNOWN and self.arena and arena_failed_like(items):
+            now = time.monotonic()
+            if self._failed_like_at is None:
+                self._failed_like_at = now
+            if now - self._failed_like_at >= ARENA_FAILED_GUESS_S:
+                screen, guessed = Screen.ARENA_MATCH_FAILED, True
+        else:
+            self._failed_like_at = None
         if screen != self.last_screen:
             logger.debug("画面：%s%s", screen, "（认不出文字，按位置猜的）" if guessed else "")
         self.prev_screen, self.last_screen = self.last_screen, screen
@@ -617,6 +630,14 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         elif screen is Screen.LB_RECOVERED:
             self.tap(self._button(items, "OK", BTN_LB_RECOVERED_OK, LB_RECOVERED_OK_ROI), "OK")
         elif screen is Screen.LIVE_OPTIONS:
+            now = time.monotonic()
+            if self.prev_screen is not screen:
+                self._options_since = now
+            if self.arena and now - self._options_since < ARENA_OPTIONS_WAIT_S:
+                # 激奏舞台里是点了准备完毕后弹出的（#111），点取消会撤回准备：不点，等对局开始
+                if self.prev_screen is not screen:
+                    logger.info("激奏舞台里的演出前选项设置不点取消（会撤回准备），等对局开始")
+                return True
             self.tap(self._button(items, "取消", BTN_OPTIONS_CANCEL), "取消")
         elif screen is Screen.SETTINGS:
             self.tap(BTN_BACK, "返回")

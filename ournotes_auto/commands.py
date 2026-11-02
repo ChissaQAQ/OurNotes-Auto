@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from .config import Config, parse_daily_time
-from .context import SetupError, open_context
+from .context import SetupError, game_restarter, open_context
 from .context import open_device as _device
 from .context import open_ocr as _ocr
 from .release import EXIT_RERUN, EXIT_UPDATE
@@ -351,13 +351,6 @@ def _game_navigator(cfg: Config, args, source, touch):
     from .device import adb
     from .nav.navigator import GameNavigator
 
-    def restart_app() -> None:
-        # 见 context.open_context 里的同名函数（#58）：不能重启后立刻 refresh_display_id()。
-        before = source.ipc.display_id
-        adb.restart_app(cfg.device)
-        source.ipc.wait_for_game_display(stop=args.stop)
-        logger.debug("重启游戏后重新解析 display_id：%s → %s", before, source.ipc.display_id)
-
     source.ipc.refresh_display_id()
     return GameNavigator(
         cfg,
@@ -365,7 +358,7 @@ def _game_navigator(cfg: Config, args, source, touch):
         touch,
         _ocr(cfg),
         args.stop,
-        restart_app=restart_app,
+        restart_app=game_restarter(cfg, source, args.stop),
         app_running=lambda: adb.app_running(cfg.device),
         app_in_front=lambda: adb.app_in_front(cfg.device),
     )

@@ -143,6 +143,26 @@ def load_jackets_async(cfg: Config, catalog: Catalog) -> Future:
     return future
 
 
+def game_restarter(cfg: Config, source, stop: threading.Event):
+    """导航器用的重启游戏（``GameNavigator(restart_app=...)``）。adb 出错时抛 ``NavigationError``：
+    这次导航照常算失败，不会当作意外错误把整个任务停掉（比如本机网络端口用光、adb 启动不了时）。"""
+    from .device import adb
+    from .runner import NavigationError
+
+    def restart_app() -> None:
+        # 重启后不能立刻 refresh_display_id()：游戏进程还没建好新的 display 时它会退到
+        # "default"，可能返回 0（模拟器桌面）并被一直用下去，之后对着桌面 OCR 永远认不出画面（#58）。
+        before = source.ipc.display_id
+        try:
+            adb.restart_app(cfg.device)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise NavigationError(f"重启游戏失败：{e}") from e
+        source.ipc.wait_for_game_display(stop=stop)
+        logger.debug("重启游戏后重新解析 display_id：%s → %s", before, source.ipc.display_id)
+
+    return restart_app
+
+
 @dataclass
 class TaskContext:
     cfg: Config
@@ -176,14 +196,6 @@ def open_context(
     with open_device(cfg) as (source, touch):
         from .device import adb
 
-        def restart_app() -> None:
-            # 重启后不能立刻 refresh_display_id()：游戏进程还没建好新的 display 时它会退到
-            # "default"，可能返回 0（模拟器桌面）并被一直用下去，之后对着桌面 OCR 永远认不出画面（#58）。
-            before = source.ipc.display_id
-            adb.restart_app(cfg.device)
-            source.ipc.wait_for_game_display(stop=stop)
-            logger.debug("重启游戏后重新解析 display_id：%s → %s", before, source.ipc.display_id)
-
         store = RecordStore(data_dir)
         nav = GameNavigator(
             cfg,
@@ -192,7 +204,7 @@ def open_context(
             ocr,
             stop,
             jackets=jackets,
-            restart_app=restart_app,
+            restart_app=game_restarter(cfg, source, stop),
             app_running=lambda: adb.app_running(cfg.device),
             store=store,
             app_in_front=lambda: adb.app_in_front(cfg.device),

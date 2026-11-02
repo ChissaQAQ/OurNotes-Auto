@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ..config import DeviceConfig
-from .adb import adb_path, adb_serial
+from .adb import adb_path, adb_serial, connect
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ class MinitouchTouch:
         return r.stdout
 
     def start(self) -> None:
-        subprocess.run([self._adb, "connect", self._serial], check=True, capture_output=True, timeout=15)
+        connect(self._adb, self._serial, 15)
         info = self._run("shell", "dumpsys", "input")
         screen = self._bind(info)
         if screen is not None and screen.orientation is not None:
