@@ -12,6 +12,7 @@
   （:meth:`~ournotes_auto.nav.navigator.GameNavigator._prepare_lb`），在难度选择页记一次「全部消耗」。
 - 难度选择页上也有「消耗LB」，不点。
 - 难度选择页先认右边的大封面，认不出再按封面下的曲名认歌（#107：长曲名在框里滚动，OCR 读到的只是一截）。
+- 点了准备完毕后可能弹出和自由演出一样的演出前选项设置（#111，日服见到过），点「演出」（取消会撤回准备）。
 - 演奏画面左上角有 SCORE，看到它时歌还没开始（约 2 秒后第一个音符），从这时开始首音符同步；
   没有暂停按钮，所以不能从头重试。
 - 结算页的判定数和自由演出的读法一样。
@@ -28,7 +29,7 @@ import numpy as np
 
 from ..player.guard import load_template
 from ..result_reader import OcrItem
-from ..runner import ArenaMissed, ArenaOutcome, SongLabel
+from ..runner import ArenaMissed, ArenaNoMatch, ArenaOutcome, NavigationError, SongLabel
 from .jacket import crop_jacket
 from .screens import (
     ARENA_AP_ROI,
@@ -45,6 +46,7 @@ from .screens import (
     arena_placement,
     arena_result,
     arena_song,
+    center,
     find,
 )
 
@@ -66,7 +68,11 @@ ARENA_ROOM_S = 90.0
 BTN_ARENA_EXPERT = (1200, 545)  # 难度选择
 BTN_ARENA_READY = (1140, 640)  # 难度选择：准备完毕
 ARENA_READY_ROI: Rect = (1000, 610, 280, 60)
-# 点了准备完毕后弹出的演出前选项设置（#111）不点取消；停了这么久还在（不是对局里的，如上次自由演出留下的）才点
+# 点了准备完毕后这么久内弹出的演出前选项设置（#111）是这次准备弹的：和自由演出一样点「演出」（取消会撤回准备）。
+# 认出按钮上的字才点（难度选择页上这附近是「全部消耗」，不能按坐标点），只点一次
+ARENA_OPTIONS_TAP_S = 10.0
+ARENA_OPTIONS_START_ROI: Rect = (700, 580, 160, 60)  # 演出前选项设置右边的「演出」（English 的「LIVE」认成演出首页）
+# 没点（认不出字）或不是这次准备弹的演出前选项设置也不点取消；停了这么久还在（如上次自由演出留下的）才点
 ARENA_OPTIONS_WAIT_S = 45.0
 BTN_ARENA_RESULT_NEXT = (640, 660)  # 结果弹窗：下一步
 ARENA_RESULT_NEXT_ROI: Rect = (440, 630, 400, 60)
@@ -89,6 +95,10 @@ ARENA_MAX_RETAPS = 3
 ARENA_PLAYED = frozenset((Screen.LIVE_END, Screen.ARENA_RESULT, Screen.ARENA_RANKING, Screen.ARENA_RANK_UP))
 ARENA_PLAYED_LOOKS = 2  # 连着看到这么多次才算（进难度选择页的转场中一帧认错不算，不能因此丢一局）
 ARENA_MAX_MISSED = 2
+# 匹配时的画面：到了时限停在这些画面（不在匹配房间里）就是没匹配到对局（:class:`ArenaNoMatch`，不算失败）
+ARENA_MATCH_SCREENS = frozenset(
+    (Screen.ARENA_TOP, Screen.ARENA_MATCH_CONFIRM, Screen.ARENA_MATCHING, Screen.ARENA_MATCH_FAILED, Screen.LB_RECOVER)
+)
 ARENA_SCREENS = frozenset(
     (
         Screen.ARENA_MATCH_CONFIRM,
@@ -137,6 +147,7 @@ class ArenaMixin:
     _rank_up_taps: int
     _arena_missed: int
     _match_failed_at: float
+    _ready_at: float
     _band_templates: dict[str, np.ndarray] | None
 
     def _enter_arena(self, items: list[OcrItem]) -> bool:
@@ -163,6 +174,7 @@ class ArenaMixin:
             if not (it := find(items, "准备完毕", ARENA_READY_ROI, exact=True)):
                 return False
             self.tap((round(it.x + it.w / 2), round(it.y + it.h / 2)), "准备完毕")
+            self._ready_at = time.monotonic()
         elif screen is Screen.ARENA_RESULT:
             self.tap(self._button(items, "下一步", BTN_ARENA_RESULT_NEXT, ARENA_RESULT_NEXT_ROI), "下一步")
         elif screen is Screen.ARENA_RANKING:
@@ -172,6 +184,20 @@ class ArenaMixin:
             self._rank_up_taps += 1
         else:
             return False
+        return True
+
+    def _arena_options_start(self, items: list[OcrItem]) -> bool:
+        """点了准备完毕后 ARENA_OPTIONS_TAP_S 内弹出的演出前选项设置（#111）：和自由演出一样点「演出」。
+        认出按钮上的字才点，只点一次（弹窗淡出时再点会点到难度选择页上）；点了返回 True。"""
+        if time.monotonic() - self._ready_at >= ARENA_OPTIONS_TAP_S:
+            return False
+        it = find(items, "演出", ARENA_OPTIONS_START_ROI, exact=True) or find(
+            items, "演出首页", ARENA_OPTIONS_START_ROI, exact=True
+        )
+        if it is None:
+            return False
+        self._ready_at = -ARENA_OPTIONS_TAP_S
+        self.tap(center(it), "演出")
         return True
 
     # ------------------------------------------------------------ 乐队
@@ -225,8 +251,8 @@ class ArenaMixin:
         在难度选择页认出封面、读出曲名和 EXPERT 等级后返回（倒计时约 28 秒，要赶紧认歌、准备）。
 
         LB 的处理同 :meth:`start_live`（``lb_short`` 也一样）。匹配失败（没找到对手、匹配出错）时关掉弹窗重新匹配。
-        ``timeout_s`` 内没匹配到：还在「正在匹配」就取消，报错（在匹配房间里就多等一会儿，见 ARENA_ROOM_S；
-        这时不再开始新的匹配）。
+        ``timeout_s`` 内没匹配到：还在「正在匹配」就取消，抛 :class:`ArenaNoMatch`（在匹配房间里就多等一会儿，
+        见 ARENA_ROOM_S；这时不再开始新的匹配，到时还在房间里时照常报错）。
         没认出难度选择页、对局就开始了（连着看到演奏画面或 :data:`ARENA_PLAYED`）时报错，连续 ARENA_MAX_MISSED 局
         都这样时抛 :class:`ArenaMissed` 让任务停下。
         """
@@ -305,6 +331,7 @@ class ArenaMixin:
                 busy_at = now  # 转盘
             elif screen is Screen.LIVE_OPTIONS:
                 busy_at = now  # 点了准备完毕后的弹窗（#111），不点取消（会撤回准备），等对局开始
+                self._arena_options_start(items)
             elif screen in RELOGIN_SCREENS:
                 raise self._fail("游戏回到了标题画面，没有开始对局")
             elif not self._common_step(screen, items):
@@ -317,7 +344,9 @@ class ArenaMixin:
             else:
                 room = "；还在匹配房间里，对局可能还会开始"
         raise self._fail(
-            f"{timeout_s:.0f}s 内没有匹配到对局{f'（匹配失败 {failed} 次，这个时段可能没人）' if failed else ''}{room}"
+            f"{timeout_s:.0f}s 内没有匹配到对局{f'（匹配失败 {failed} 次，这个时段可能没人）' if failed else ''}{room}",
+            # 房间里的对局可能还会开始、停在别的画面（卡住等）：照常算失败
+            ArenaNoMatch if screen in ARENA_MATCH_SCREENS and not room else NavigationError,
         )
 
     def _arena_song(self, items: list[OcrItem]) -> SongLabel:
@@ -353,17 +382,22 @@ class ArenaMixin:
     def arena_ready(self, timeout_s: float = 150.0) -> None:
         """难度选择页：EXPERT → 准备完毕，等其他人都准备好、演奏画面出现（左上角 SCORE）后立即返回。
 
-        为了尽快看到演奏画面，这里只识别左上角一小块，不判断别的画面；``timeout_s`` 内没出现时报错。
+        为了尽快看到演奏画面，这里主要识别左上角一小块；只在点了准备完毕后 ARENA_OPTIONS_TAP_S 内再看整个画面，
+        弹出演出前选项设置（#111）时点「演出」。``timeout_s`` 内没出现演奏画面时报错。
         """
         self.tap(BTN_ARENA_EXPERT, "EXPERT")
         self._sleep(0.6)
         self.tap(BTN_ARENA_READY, "准备完毕")
-        ready_at = time.monotonic()
+        ready_at = self._ready_at = time.monotonic()
         while time.monotonic() - ready_at < timeout_s:
             frame, _ = self.source.grab()
             if find(self.ocr.read(frame, PLAY_SCORE_ROI), "SCORE"):
                 logger.debug("点准备完毕 %.1fs 后进入演奏画面", time.monotonic() - ready_at)
                 return
+            if time.monotonic() - self._ready_at < ARENA_OPTIONS_TAP_S:
+                screen, items = self.look(still_ok=True)  # 等其他人准备时画面不动是正常的
+                if screen is Screen.LIVE_OPTIONS and self._arena_options_start(items):
+                    logger.info("点准备完毕后弹出了演出前选项设置，点「演出」")
             self._sleep(0.1)
         self.look()
         raise self._fail(f"点准备完毕后 {timeout_s:.0f}s 没有进入演奏画面")

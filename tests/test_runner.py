@@ -16,7 +16,16 @@ from ournotes_auto.player.session import PlayOutcome, SyncFailed
 from ournotes_auto.player.sync import SyncResult
 from ournotes_auto.records import RecordStore
 from ournotes_auto.result_reader import ResultCounts
-from ournotes_auto.runner import IDLE_DAILY_JOBS, ArenaOutcome, Runner, SongLabel, next_daily_time
+from ournotes_auto.runner import (
+    ARENA_NO_MATCH_S,
+    IDLE_DAILY_JOBS,
+    ArenaNoMatch,
+    ArenaOutcome,
+    NavigationError,
+    Runner,
+    SongLabel,
+    next_daily_time,
+)
 from ournotes_auto.sources import make_source
 
 
@@ -1007,6 +1016,63 @@ def test_arena_rotate_bands(tmp_path):
     assert [c for c in nav.calls if c.startswith(("band:", "arena:"))] == [
         "band:mygo", "arena:stop", "band:avemujica", "arena:stop", "band:mewtype", "arena:stop"
     ]
+
+
+class NoMatchNav(ArenaNav):
+    """激奏舞台匹配：``matches`` 依次是每次匹配的结果（False 为到了时限也没匹配到对局，用完了一直没匹配到），
+    每次匹配过 300 秒。"""
+
+    def __init__(self, now, matches=()):
+        super().__init__()
+        self.now, self.matches = now, list(matches)
+
+    def start_arena(self, lb_short="zero"):
+        self.now[0] += 300
+        if not (self.matches and self.matches.pop(0)):
+            self.calls.append("no_match")
+            raise ArenaNoMatch("300s 内没有匹配到对局")
+        return super().start_arena(lb_short)
+
+    def go_home(self):
+        self.calls.append("home")
+
+
+def no_match_runner(tmp_path, matches=()):
+    now = [0.0]
+    runner, nav, _ = make_arena(tmp_path, NoMatchNav(now, matches), max_plays=0)
+    runner.clock = lambda: now[0]
+    return runner, nav
+
+
+def test_arena_no_match_moves_on(tmp_path):
+    """#113：激奏舞台一直没匹配到对局（这个时段没人）不算失败、不按连续失败停下，从第一次匹配起
+    ARENA_NO_MATCH_S（1 小时）都没匹配到才回主界面结束，接着跑后面的任务。"""
+    runner, nav = no_match_runner(tmp_path)
+    stats = runner.run()
+    assert stats.failures == 0 and stats.plays == 0
+    assert stats.no_match == ARENA_NO_MATCH_S / 300 and stats.unmatched
+    assert nav.calls[-2:] == ["no_match", "home"] and nav.calls.count("home") == 1
+    assert "没匹配到对局 12 次，提前结束" in stats.summary()
+
+
+def test_arena_no_match_reset_by_match(tmp_path):
+    """中间匹配到过对局：从那以后重新计时。"""
+    runner, nav = no_match_runner(tmp_path, [False] * 11 + [True])
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0 and stats.unmatched
+    assert stats.no_match == 11 + ARENA_NO_MATCH_S / 300
+
+
+def test_arena_no_match_go_home_fails(tmp_path):
+    """结束时回不到主界面：照样结束（后面的任务自己会导航），不算失败。"""
+    runner, nav = no_match_runner(tmp_path)
+
+    def go_home():
+        raise NavigationError("回不到主界面")
+
+    nav.go_home = go_home
+    stats = runner.run()
+    assert stats.unmatched and stats.failures == 0
 
 def test_runner_skips_close_when_stopped(tmp_path):
     from ournotes_auto.runner import NavigationError

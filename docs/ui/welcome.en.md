@@ -1,3 +1,10 @@
+# What's New in v0.2.3.2
+
+- Arena: when a 5-minute matching attempt finds no match (maybe nobody is playing at this hour), it no longer counts as a failure, and the log counts these separately. If there's still no match 1 hour after the first miss, it goes back to the Home screen and ends the task (as a normal finish), and the tasks after it run (#113). If it's already in a matching room but the round doesn't start, that still counts as a failure
+- Arena: when the "Pre-LIVE Option Settings" popup (「ライブ前オプション設定」 on the Japanese server, #111) appears after tapping Ready, it now taps "LIVE" like in Free LIVE (「ライブ」 on the Japanese server) instead of waiting for the popup to go away; if the button text can't be recognized, it waits as before
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.3.2
+
 # What's New in v0.2.3.1
 
 - Arena now recognizes the "match failed" (no opponent found) and "match error" popups, taps Close and matches again, instead of not recognizing them and restarting the game after two and a half minutes (#113, #116). Each attempt matches for up to 5 minutes; if there's still no match, it counts as one failure and the log says how many times matching failed. If it's already in a matching room (members gathered, can't cancel) by then, it waits up to 90 more seconds but doesn't start a new match

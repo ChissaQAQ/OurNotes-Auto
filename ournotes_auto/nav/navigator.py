@@ -116,7 +116,14 @@ from .screens import (
     title_startable,
 )
 from .account import BTN_MENU_CLOSE, AccountMixin
-from .arena import ARENA_FAILED_GUESS_S, ARENA_OPTIONS_WAIT_S, ARENA_RETAP_S, ARENA_SCREENS, ArenaMixin
+from .arena import (
+    ARENA_FAILED_GUESS_S,
+    ARENA_OPTIONS_TAP_S,
+    ARENA_OPTIONS_WAIT_S,
+    ARENA_RETAP_S,
+    ARENA_SCREENS,
+    ArenaMixin,
+)
 from .challenge import BTN_CP_CANCEL, CHALLENGE_SCREENS, CP_CANCEL_ROI, ChallengeMixin
 from .daily import DailyMixin
 from .song_select import (
@@ -353,6 +360,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         self._match_failed_at = -ARENA_RETAP_S  # 上次点激奏舞台匹配失败弹窗「关闭」的时刻
         self._failed_like_at: float | None = None  # 开始看到像匹配失败、但认不出文字的弹窗的时刻
         self._options_since = 0.0  # 这次开始看到演出前选项设置的时刻（激奏舞台里等它自己过去）
+        self._ready_at = -ARENA_OPTIONS_TAP_S  # 激奏舞台上次点准备完毕的时刻（之后弹出的演出前选项设置点「演出」）
         self._band_templates: dict[str, np.ndarray] | None = None  # 激奏舞台首页的乐队标志（第一次用时加载）
         self._side_templates: dict[str, np.ndarray | None] = {}  # 主界面左侧入口的图标（第一次用时加载）
         cp = config.game.challenge_cost
@@ -633,6 +641,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
             now = time.monotonic()
             if self.prev_screen is not screen:
                 self._options_since = now
+            if self.arena and self._arena_options_start(items):  # 刚点了准备完毕弹出的（#111）：点「演出」
+                return True
             if self.arena and now - self._options_since < ARENA_OPTIONS_WAIT_S:
                 # 激奏舞台里是点了准备完毕后弹出的（#111），点取消会撤回准备：不点，等对局开始
                 if self.prev_screen is not screen:
