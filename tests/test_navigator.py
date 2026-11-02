@@ -14,7 +14,7 @@ import pytest
 from ournotes_auto import sources
 from ournotes_auto.config import Config
 from ournotes_auto.nav import navigator
-from ournotes_auto.nav.arena import ARENA_OPTIONS_WAIT_S, rank_up_like
+from ournotes_auto.nav.arena import ARENA_OPTIONS_TAP_S, ARENA_OPTIONS_WAIT_S, rank_up_like
 from ournotes_auto.nav.jacket import JacketMatcher
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
@@ -36,6 +36,7 @@ from ournotes_auto.records import RecordStore, game_day
 from ournotes_auto.result_reader import OcrItem
 from ournotes_auto.runner import (
     ArenaMissed,
+    ArenaNoMatch,
     CpExhausted,
     GameUpdateRequired,
     LbExhausted,
@@ -456,10 +457,11 @@ def test_start_arena_match_failed_fading(monkeypatch):
 
 
 def test_start_arena_match_failed_until_timeout(monkeypatch):
-    """一直匹配失败（这个时段没人）：到了 timeout_s 报错，说明失败了几次（不是「点了 4 次 LIVE START」）。"""
+    """一直匹配失败（这个时段没人）：到了 timeout_s 抛 ArenaNoMatch（不算失败，另外计时），说明失败了几次
+    （不是「点了 4 次 LIVE START」）。"""
     game = MatchFailGame(*["arena_match_failed"] * 100)
     nav = match_fail_nav(monkeypatch, game)
-    with pytest.raises(NavigationError, match=r"匹配失败 \d+ 次"):
+    with pytest.raises(ArenaNoMatch, match=r"匹配失败 \d+ 次"):
         nav.start_arena(timeout_s=60)
     assert game.state in ("arena_top", "arena_match_confirm", "arena_match_failed")
 
@@ -498,8 +500,27 @@ def test_start_arena_room_waits_past_timeout(monkeypatch):
     assert song.level == 24
     game = StayArenaGame("arena_members", 200)
     nav = stay_arena_nav(monkeypatch, game)
-    with pytest.raises(NavigationError, match="30s 内没有匹配到对局；还在匹配房间里，对局可能还会开始"):
+    with pytest.raises(NavigationError, match="30s 内没有匹配到对局；还在匹配房间里，对局可能还会开始") as e:
         nav.start_arena(timeout_s=30)
+    assert not isinstance(e.value, ArenaNoMatch)  # 对局可能还会开始：照常算失败
+
+
+class BlankArenaGame(StayArenaGame):
+    """匹配确认点 OK 后停在什么字都没有的画面（卡住等）。"""
+
+    def __init__(self):
+        super().__init__("blank", 1000)
+
+    def read(self, frame, roi=None):
+        return [] if frame == "blank" else super().read(frame, roi)
+
+
+def test_start_arena_stuck_not_no_match(monkeypatch):
+    """到了 timeout_s 停在匹配以外的画面（卡住等）：照常算失败，不当成没匹配到对局。"""
+    nav = stay_arena_nav(monkeypatch, game := BlankArenaGame())
+    with pytest.raises(NavigationError, match="30s 内没有匹配到对局") as e:
+        nav.start_arena(timeout_s=30)
+    assert not isinstance(e.value, ArenaNoMatch) and game.state == "stay"
 
 
 @pytest.mark.parametrize("after", ["arena_match_failed", "arena_matching"])
@@ -510,7 +531,7 @@ def test_start_arena_no_new_match_after_timeout(monkeypatch, after):
     game = StayArenaGame("arena_members", 45, after=after)
     nav = stay_arena_nav(monkeypatch, game)
     start = navigator.time.monotonic()
-    with pytest.raises(NavigationError, match="30s 内没有匹配到对局"):
+    with pytest.raises(ArenaNoMatch, match="30s 内没有匹配到对局"):
         nav.start_arena(timeout_s=30)
     assert [s for s, _ in game.taps] == ["arena_top", "arena_match_confirm", after]
     assert navigator.time.monotonic() - start < 60  # 房间散了就不等了（不用等到多等的时限）
@@ -542,6 +563,39 @@ def test_live_options_cancel_in_arena_waits(monkeypatch, arena):
     assert len(game.taps) == 1 and math.dist(game.taps[0][1], (499, 611)) < 5
     waited = now[0] - start
     assert waited > ARENA_OPTIONS_WAIT_S if arena else waited == 1
+
+
+@pytest.mark.parametrize("lang", ["", "zh_hant_", "en_", "ja_", "ko_"])
+def test_arena_ready_live_options_start(monkeypatch, lang):
+    """#111：点了准备完毕后弹出演出前选项设置（日服见到过），和自由演出一样点右边的「演出」（ライブ、LIVE……），
+    不点取消（会撤回准备），也不干等它（原来一直等到超时）。"""
+    options = f"{lang}live_options"
+    monkeypatch.setitem(TRANSITIONS, "arena_difficulty", [((1140, 640), options)])
+    monkeypatch.setitem(TRANSITIONS, options, [((782, 611), "playing"), ((499, 611), "arena_difficulty")])
+    game = FakeGame("arena_difficulty")
+    nav = make_nav(game, game, game, arena=True)
+    nav.save_debug = lambda *a: None
+    fake_clock(monkeypatch, nav)
+    nav.arena_ready()
+    assert game.state == "playing"
+    assert [s for s, _ in game.taps] == ["arena_difficulty", "arena_difficulty", options]
+    assert math.dist(game.taps[-1][1], (782, 611)) < 10
+
+
+def test_live_options_after_ready_in_arena(monkeypatch):
+    """激奏舞台里刚点了准备完毕（ARENA_OPTIONS_TAP_S 内）弹出的演出前选项设置点「演出」，只点一次（弹窗淡出时
+    不再点）；过了这个时间才出现的照旧先等着。"""
+    monkeypatch.setitem(TRANSITIONS, "live_options", [])  # 点了也还在（淡出中）
+    game = FakeGame("live_options")
+    nav = make_nav(game, game, game, arena=True)
+    now = fake_clock(monkeypatch, nav)
+    nav._ready_at = now[0] - 1
+    for _ in range(3):
+        assert nav._common_step(*nav.look())
+    assert len(game.taps) == 1 and math.dist(game.taps[0][1], (782, 611)) < 10
+    game.taps.clear()
+    nav._ready_at = now[0] - ARENA_OPTIONS_TAP_S
+    assert nav._common_step(*nav.look()) and not game.taps
 
 
 def test_read_arena_result_foreign_language(monkeypatch):

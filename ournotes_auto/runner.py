@@ -47,6 +47,8 @@ IDLE_DAILY_JOBS = ("missions", "pass", "limited", "beginner", "tgw", "recruit", 
 RERUN_DELAY_S = 300.0
 # 游戏出帧率按最近这么多次同步的中位数看（见 loop.min_fps）
 FPS_WINDOW = 5
+# 激奏舞台从第一次没匹配到对局算起，这么久都没匹配到（这个时段没人）就结束，接着跑后面的任务
+ARENA_NO_MATCH_S = 3600.0
 
 
 def next_daily_time(now: float, at: tuple[int, int]) -> float:
@@ -72,6 +74,10 @@ class GameUpdateRequired(ScreenFrozen):
 class ArenaMissed(ScreenFrozen):
     """激奏舞台连着几局对局开始了、却没认出难度选择页（没适配的语言或版面）：再打也是不演奏、白白消耗 LB 拿最后一名，
     和画面卡住一样，任务立刻停下。"""
+
+
+class ArenaNoMatch(NavigationError):
+    """激奏舞台到了时限还没匹配到对局（这个时段可能没人）：不算失败，另外计时（见 :data:`ARENA_NO_MATCH_S`）。"""
 
 
 class ServerMaintenance(NavigationError):
@@ -201,6 +207,10 @@ class Navigator(Protocol):
         """重启游戏，等到重新进入游戏（主界面）；不能重启时返回 False。"""
         ...
 
+    def go_home(self) -> None:
+        """回到主界面。"""
+        ...
+
     # 以下为激奏舞台（``loop.arena``，这时 ensure_band_confirm 进入的是激奏舞台首页）
 
     def arena_band(self) -> str | None:
@@ -212,7 +222,8 @@ class Navigator(Protocol):
         ...
 
     def start_arena(self, lb_short: str = "zero") -> SongLabel:
-        """点 LIVE START 开始匹配，转盘定歌后在难度选择页返回封面、曲名和 EXPERT 等级（LB 同 :meth:`start_live`）。"""
+        """点 LIVE START 开始匹配，转盘定歌后在难度选择页返回封面、曲名和 EXPERT 等级（LB 同 :meth:`start_live`）；
+        到了时限还没匹配到时抛 :class:`ArenaNoMatch`。"""
         ...
 
     def arena_ready(self) -> None:
@@ -256,10 +267,13 @@ class RunStats:
     maintenance: bool = False  # 因服务器维护停止
     restart: bool = False  # 为换上新版本退出（挂机），Agent 换完后用同样的参数重新启动
     rerun: bool = False  # 游戏日期变更后退出（挂机），Agent 重跑完前面的任务后用同样的参数重新启动
+    no_match: int = 0  # 激奏舞台到了时限还没匹配到对局的次数（不算在 failures 里）
+    unmatched: bool = False  # 激奏舞台 ARENA_NO_MATCH_S 都没匹配到对局，提前结束（不算失败）
 
     def summary(self) -> str:
         skips = f"；跳过 {self.skips} 次" if self.skips else ""
-        return f"共演奏 {self.plays} 局：FC {self.full_combo}，AP {self.all_perfect}，失败 {self.failures}{skips}"
+        no_match = f"；没匹配到对局 {self.no_match} 次{'，提前结束' if self.unmatched else ''}" if self.no_match else ""
+        return f"共演奏 {self.plays} 局：FC {self.full_combo}，AP {self.all_perfect}，失败 {self.failures}{skips}{no_match}"
 
 
 class FrameRateWatch:
@@ -348,6 +362,7 @@ class Runner:
             logger.warning("限了局数（打完就结束），日期变更后不重跑前面的任务")
         self.frame_rate = FrameRateWatch(lc.min_fps)
         self._warned_memory = False  # 这次运行提醒过电脑内存快用完了
+        self._no_match_since: float | None = None  # 激奏舞台从这时开始的匹配起一直没匹配到对局
 
     def _identify(self):
         label = self.nav.selected_song()
@@ -404,7 +419,14 @@ class Runner:
         band = self.nav.arena_band()
         logger.info("激奏舞台：开始匹配（乐队 %s）", band or "认不出")
         self._status("match", band or "")
-        label = self.nav.start_arena(self._lb_short())
+        started = self.clock()
+        try:
+            label = self.nav.start_arena(self._lb_short())
+        except ArenaNoMatch:
+            if self._no_match_since is None:
+                self._no_match_since = started
+            raise
+        self._no_match_since = None
         song = chart = None
         try:
             song, basis = identify_song(self.catalog, label, "expert")
@@ -793,6 +815,24 @@ class Runner:
         if self._rerun_at is not None and self.wall_clock() >= self._rerun_at:
             raise RerunTasks
 
+    def _arena_unmatched(self) -> bool:
+        """激奏舞台从第一次没匹配到对局起过了 :data:`ARENA_NO_MATCH_S` 还没匹配到：回主界面、结束这个任务
+        （不算失败，接着跑后面的任务），返回 True；没到时限返回 False，接着匹配。"""
+        since = self._no_match_since
+        if since is None or self.clock() - since < ARENA_NO_MATCH_S:
+            return False
+        logger.warning(
+            "激奏舞台 %.0f 分钟都没有匹配到对局（这个时段可能没人），结束，接着跑后面的任务", (self.clock() - since) / 60
+        )
+        try:
+            self.nav.go_home()
+        except ScreenFrozen:
+            raise  # 画面卡住照常算失败
+        except (NavigationError, TimeoutError) as e:  # 后面的任务自己会导航
+            logger.warning("回主界面失败：%s", e)
+        self.stats.unmatched = True
+        return True
+
     def run(self) -> RunStats:
         if self.tracker is not None:
             self.tracker.start()
@@ -866,6 +906,14 @@ class Runner:
                 continue
             except ScreenFrozen:
                 raise
+            except ArenaNoMatch as e:  # 这个时段可能没人：不算失败，另外计时
+                if self.stop.is_set():
+                    break
+                logger.warning("%s", e)
+                self.stats.no_match += 1
+                if self._arena_unmatched():
+                    break
+                continue
             except (NavigationError, TimeoutError, InterruptedError) as e:  # InterruptedError：同步时被停止
                 if self.stop.is_set():
                     break

@@ -81,6 +81,13 @@ def test_run_rerun_tasks(monkeypatch):
     assert calls == ["launch", "open", "run"] and code == EXIT_RERUN == 76
 
 
+@pytest.mark.parametrize("unmatched, code", [(True, 0), (False, 1)])
+def test_run_arena_no_match_ends_normally(monkeypatch, unmatched, code):
+    """#113：激奏舞台很久都没匹配到对局（这个时段没人）就结束，算正常结束，接着跑后面的任务（之前失败过一局也一样）。"""
+    stats = RunStats(failures=1, no_match=12, unmatched=unmatched)
+    assert fake_run(monkeypatch, launched=False, stats=stats)[1] == code
+
+
 def test_run_passes_update_event(monkeypatch):
     """args.update 作为第 9 个参数传给 Runner；没有它时（不是从命令行入口来的）传 None。"""
     update = threading.Event()

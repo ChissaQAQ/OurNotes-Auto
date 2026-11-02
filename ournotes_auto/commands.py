@@ -330,8 +330,8 @@ def cmd_run(cfg: Config, args) -> int:
         return EXIT_UPDATE
     if stats.rerun:
         return EXIT_RERUN
-    # 服务器维护时任务算失败（打过几局也一样，没打完）
-    return 0 if (stats.plays or not stats.failures) and not stats.maintenance else 1
+    # 服务器维护时任务算失败（打过几局也一样，没打完）；激奏舞台很久都没匹配到对局（这个时段没人）算正常结束
+    return 0 if (stats.plays or not stats.failures or stats.unmatched) and not stats.maintenance else 1
 
 
 def _launch_game(cfg: Config) -> bool:
