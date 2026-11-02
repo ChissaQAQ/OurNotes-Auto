@@ -14,7 +14,7 @@ import pytest
 from ournotes_auto import sources
 from ournotes_auto.config import Config
 from ournotes_auto.nav import navigator
-from ournotes_auto.nav.arena import rank_up_like
+from ournotes_auto.nav.arena import ARENA_OPTIONS_WAIT_S, rank_up_like
 from ournotes_auto.nav.jacket import JacketMatcher
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
@@ -382,6 +382,166 @@ def test_start_arena_song_title_fallback(monkeypatch, jackets):
     assert (song.title, song.level) == ("端程山", 24)
     assert nav.saved == (["arena_song"] if jackets == "unknown" else [])
     assert nav._jackets is None if jackets == "broken" else nav._jackets is matcher
+
+
+FAIL_POPUPS = ("arena_match_failed", "arena_match_error")
+
+
+class MatchFailGame(FakeGame):
+    """#113、#116：匹配确认点 OK 后依次弹出 ``fails`` 里的匹配失败弹窗（点关闭回到首页），用完了才进难度选择页。
+    ``foreign`` 时激奏舞台各页的字认不出（只认得「取消」「关闭」）；``fade`` 是点了关闭后弹窗还看得到的次数（淡出）。"""
+
+    def __init__(self, *fails: str, foreign: bool = False, fade: int = 0):
+        super().__init__("arena_top")
+        self.fails = list(fails)
+        self.foreign = foreign
+        self.fade = fade
+        self.fading: list[str] = []
+        self.grabs: list[str] = []
+
+    def grab(self):
+        frame = self.fading.pop() if self.fading else self.state
+        self.grabs.append(frame)
+        return frame, 0.0
+
+    def tap(self, x, y):
+        before = self.state
+        super().tap(x, y)
+        if before == "arena_match_confirm" and self.state == "arena_difficulty" and self.fails:
+            self.state = self.fails.pop(0)
+        elif before in FAIL_POPUPS and self.state == "arena_top":
+            self.fading = [before] * self.fade
+
+    def read(self, frame, roi=None):
+        items = super().read(frame, roi)
+        if not (self.foreign and frame.startswith("arena_")):
+            return items
+        han = re.compile(f"[{chr(0x4E00)}-{chr(0x9FFF)}]+")
+        keep = ("取消", "关闭")
+        return [it if it.text in keep else OcrItem(it.x, it.y, it.w, it.h, han.sub("ア", it.text)) for it in items]
+
+
+def match_fail_nav(monkeypatch, game) -> GameNavigator:
+    monkeypatch.setitem(TRANSITIONS, "arena_top", [((1140, 640), "arena_match_confirm")])
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), "arena_difficulty")])
+    for popup in FAIL_POPUPS:
+        monkeypatch.setitem(TRANSITIONS, popup, [((640, 568), "arena_top")])
+    nav = make_nav(game, game, game, arena=True)
+    nav.save_debug = lambda *a: None
+    fake_clock(monkeypatch, nav)
+    return nav
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_start_arena_match_failed_retries(monkeypatch, foreign):
+    """#113、#116：没找到对手、匹配出错时点关闭回到首页重新匹配（原来认不出弹窗，当成意外画面报错）。
+    字认不出的语言里，只有「关闭」的弹窗停了几秒没过去才当成匹配失败。"""
+    game = MatchFailGame(*FAIL_POPUPS, foreign=foreign)
+    nav = match_fail_nav(monkeypatch, game)
+    song = nav.start_arena()
+    assert (song.difficulty, song.level) == ("expert", 24)
+    top, confirm, failed, error = "arena_top", "arena_match_confirm", *FAIL_POPUPS
+    assert [s for s, _ in game.taps] == [top, confirm, failed, top, confirm, error, top, confirm]
+    assert all(math.dist(p, (640, 568)) < 30 for s, p in game.taps if s in FAIL_POPUPS)
+    for popup in FAIL_POPUPS:
+        assert game.grabs.count(popup) >= 4 if foreign else game.grabs.count(popup) == 1
+
+
+def test_start_arena_match_failed_fading(monkeypatch):
+    """点了关闭后弹窗还在淡出：不重复点。"""
+    game = MatchFailGame(*FAIL_POPUPS, fade=2)
+    nav = match_fail_nav(monkeypatch, game)
+    nav.start_arena()
+    assert len([p for _, p in game.taps if math.dist(p, (640, 568)) < 30]) == 2
+
+
+def test_start_arena_match_failed_until_timeout(monkeypatch):
+    """一直匹配失败（这个时段没人）：到了 timeout_s 报错，说明失败了几次（不是「点了 4 次 LIVE START」）。"""
+    game = MatchFailGame(*["arena_match_failed"] * 100)
+    nav = match_fail_nav(monkeypatch, game)
+    with pytest.raises(NavigationError, match=r"匹配失败 \d+ 次"):
+        nav.start_arena(timeout_s=60)
+    assert game.state in ("arena_top", "arena_match_confirm", "arena_match_failed")
+
+
+class StayArenaGame(FakeGame):
+    """匹配确认点 OK 后先停在 ``stay`` 画面看 ``looks`` 次，再进 ``after``（默认难度选择页）。"""
+
+    def __init__(self, stay: str, looks: int, after: str = "arena_difficulty"):
+        super().__init__("arena_top")
+        self.stay, self.looks, self.after = stay, looks, after
+
+    def grab(self):
+        if self.state == "stay":
+            if self.looks:
+                self.looks -= 1
+                return self.stay, 0.0
+            self.state = self.after
+        return super().grab()
+
+
+def stay_arena_nav(monkeypatch, game) -> GameNavigator:
+    monkeypatch.setitem(TRANSITIONS, "arena_top", [((1140, 640), "arena_match_confirm")])
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), "stay")])
+    nav = make_nav(game, game, game, arena=True)
+    nav.save_debug = lambda *a: None
+    fake_clock(monkeypatch, nav)
+    return nav
+
+
+def test_start_arena_room_waits_past_timeout(monkeypatch):
+    """进了匹配房间（成员到齐、不能取消）时到了 timeout_s 也多等一会儿：不然对局开始后没人操作，白白消耗 LB；
+    但不会一直等下去。"""
+    game = StayArenaGame("arena_members", 60)
+    nav = stay_arena_nav(monkeypatch, game)
+    song = nav.start_arena(timeout_s=30)
+    assert song.level == 24
+    game = StayArenaGame("arena_members", 200)
+    nav = stay_arena_nav(monkeypatch, game)
+    with pytest.raises(NavigationError, match="30s 内没有匹配到对局；还在匹配房间里，对局可能还会开始"):
+        nav.start_arena(timeout_s=30)
+
+
+@pytest.mark.parametrize("after", ["arena_match_failed", "arena_matching"])
+def test_start_arena_no_new_match_after_timeout(monkeypatch, after):
+    """过了 timeout_s 房间才匹配失败（或者散了又回到正在匹配）：不再开始新的匹配，不然新房间到多等的时限又得丢下。"""
+    monkeypatch.setitem(TRANSITIONS, "arena_match_failed", [((640, 568), "arena_top")])
+    monkeypatch.setitem(TRANSITIONS, "arena_matching", [((639, 570), "arena_top")])
+    game = StayArenaGame("arena_members", 45, after=after)
+    nav = stay_arena_nav(monkeypatch, game)
+    start = navigator.time.monotonic()
+    with pytest.raises(NavigationError, match="30s 内没有匹配到对局"):
+        nav.start_arena(timeout_s=30)
+    assert [s for s, _ in game.taps] == ["arena_top", "arena_match_confirm", after]
+    assert navigator.time.monotonic() - start < 60  # 房间散了就不等了（不用等到多等的时限）
+
+
+def test_start_arena_live_options_not_cancelled(monkeypatch):
+    """#111：对局开始前弹出的演出前选项设置不点取消（点了会撤回准备，日服直接退出了对局），等它自己过去。"""
+    game = StayArenaGame("live_options", 5)
+    nav = stay_arena_nav(monkeypatch, game)
+    song = nav.start_arena()
+    assert song.level == 24
+    assert [s for s, _ in game.taps] == ["arena_top", "arena_match_confirm"]
+
+
+@pytest.mark.parametrize("arena", [True, False])
+def test_live_options_cancel_in_arena_waits(monkeypatch, arena):
+    """#111：激奏舞台任务里看到演出前选项设置先不点取消，停了 ARENA_OPTIONS_WAIT_S 还在（上次自由演出留下的等）才点；
+    自由演出照旧马上点取消。"""
+    game = FakeGame("live_options")
+    nav = make_nav(game, game, game, arena=arena)
+    now = fake_clock(monkeypatch, nav)
+    start = now[0]
+    for _ in range(100):
+        if game.state != "live_options":
+            break
+        nav._common_step(*nav.look())
+        now[0] += 1
+    assert game.state == "band_confirm"
+    assert len(game.taps) == 1 and math.dist(game.taps[0][1], (499, 611)) < 5
+    waited = now[0] - start
+    assert waited > ARENA_OPTIONS_WAIT_S if arena else waited == 1
 
 
 def test_read_arena_result_foreign_language(monkeypatch):
@@ -2224,7 +2384,7 @@ class ChallengeGame(FakeGame):
 
     乐曲选择页左边是 ``songs``，第 ``sel`` 首选中、总在中间那一行（y=324），点哪一行就选中哪一首；点难度按钮
     改 ``diff``。右侧面板是选中的歌，(曲名, 难度) 在 ``ap`` 里时有 ALL PERFECT 标记；面板在点击后要再过 ``lag``
-    次识别才跟上（模拟切换动画）。
+    次识别才跟上（模拟切换动画）。选中的歌有 AP 过的难度时，选中行的曲名左边有「ALL」标志（同实测的位置）。
     消耗设置弹窗按选中项画出白色单选按钮，点 OK 才改 ``cost``、点取消还原；选中的消耗比 ``held`` 多时 OK 点不动，
     弹出「挑战pt不足。」。顶栏和弹窗上的 CP 持有数按 ``held`` 改写，``bar`` ``popup`` 指定顶栏、弹窗的识别结果（模拟读错）。"""
 
@@ -2287,6 +2447,8 @@ class ChallengeGame(FakeGame):
         if name == "challenge_song_select":  # 换成 songs 里的歌
             items = [it for it in items if it.y < 60 or not 250 <= it.x + it.w / 2 <= 540 or it.text.startswith("Lv")]
             items = [it for it in items if not in_roi(it, SELECT_TITLE_ROI) and not in_roi(it, CLEAR_MARK_ROI)]
+            if any(s == self.songs[self.sel] for s, _ in self.ap):
+                items.append(OcrItem(268, 317, 28, 15, "ALL"))
             items += [OcrItem(300, cy - 12, 160, 24, title) for _, title, cy in self.rows()]
             if self.stale:
                 self.stale -= 1
@@ -2490,6 +2652,16 @@ def test_next_challenge_song_single():
     nav = challenge_nav(game)
     nav.next_challenge_song()
     assert game.sel == 0 and game.taps == []
+
+
+def test_next_challenge_song_ap_badge():
+    """选中的歌已 AP 时曲名左边的「ALL」标志不算一行（原来把它当成下一行，点了还是这首，报「没换成下一首」）。"""
+    songs = ["A曲", "B曲", "C曲"]
+    game = ChallengeGame("challenge_song_select", songs=songs, ap={(s, "expert") for s in songs})
+    nav = challenge_nav(game)
+    for sel in (1, 2, 0):
+        nav.next_challenge_song()
+        assert game.sel == sel
 
 
 @pytest.mark.parametrize("lag", [0, 1])

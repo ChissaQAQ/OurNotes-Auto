@@ -8,8 +8,8 @@
 
 国际服与日服谱面一致，国际服曲名（含简体中文）与封面缩略图从 haneoka.org 获取，仅用于识别曲目。
 
-连不上时少等（#108）：某个主机下载失败后记在缓存目录里，到下次打开程序前过期的索引直接用旧缓存、缺的封面先不下载；
-谱面照常重试。每个进程对每个主机说明一次连不上的原因（错误归类、走的代理还是直连、解析到的 IP）。
+连不上时少等（#108）：某个主机下载失败后记在缓存目录里，到下次打开程序前过期的索引直接用旧缓存、缺的封面先不下载、
+还没下载过的国际服曲目表只试一次；谱面照常重试。每个进程对每个主机说明一次连不上的原因（错误归类、走的代理还是直连、解析到的 IP）。
 """
 
 from __future__ import annotations
@@ -113,9 +113,16 @@ class BdonClient:
             raise ValueError(f"校验失败：{asset}")
 
     def _cached(
-        self, rel: str, url: str, max_age_s: float | None = None, asset: str | None = None, optional: bool = False
+        self,
+        rel: str,
+        url: str,
+        max_age_s: float | None = None,
+        asset: str | None = None,
+        optional: bool = False,
+        soft: bool = False,
     ) -> bytes:
-        """``optional``：可有可无的文件，主机这次打开程序后下载失败过就先不下载（抛出 :class:`HostDown`）。"""
+        """``optional``：可有可无的文件，主机这次打开程序后下载失败过就先不下载（抛出 :class:`HostDown`）。
+        ``soft``：没有也能凑合的文件（国际服曲目表），还没有缓存、主机这次打开程序后下载失败过时只试一次。"""
         retries = 3
         path = self.cache / rel
         if path.exists():
@@ -128,6 +135,8 @@ class BdonClient:
                 retries = 1
         elif optional and self._is_down(url):
             raise HostDown(f"{urlsplit(url).hostname} 这次打开程序后下载失败过，下次打开程序再下载 {url}")
+        elif soft and self._is_down(url):
+            retries = 1
         try:
             raw = self._get(url, retries)
         except (ConnectionError, ChartNotFound):
@@ -189,15 +198,29 @@ class BdonClient:
 
     def intl_songs(self, refresh: bool = False) -> dict[int, dict[str, Any]]:
         """haneoka 的国际服曲目表（musicId → 条目，含 musicTitle[日/英/繁/简/韩] 与 jacketThumbUrl）；
-        获取失败时返回空表。"""
+        获取失败时返回空表（还没有缓存时，这次打开程序后失败过就每次只试一次）。"""
         url = self.cfg.titles_url
         if not url:
             return {}
         ttl = 0.0 if refresh else self.cfg.index_ttl_hours * 3600
         try:
-            data = json.loads(self._cached("intl_songs.json", url, max_age_s=ttl))
+            data = json.loads(self._cached("intl_songs.json", url, max_age_s=ttl, soft=True))
         except (ConnectionError, ChartNotFound, ValueError) as e:
-            logger.warning("获取国际服曲目表失败：%s", e)
+            if (self.cache / "intl_songs.json").exists():
+                logger.warning("获取国际服曲目表失败：%s", e)
+            else:
+                # 404 时网站连得上，开代理没用
+                hint = (
+                    "可以开着代理软件（如 TUN 模式）打开一次程序，下载好之后连不上时会用这份缓存"
+                    if isinstance(e, ConnectionError)
+                    else "网站返回 404，曲目表的地址可能变了"
+                )
+                logger.warning(
+                    "获取国际服曲目表失败：%s。还没有下载过曲目表，只能按谱面站的日文曲名认歌（译名不一样的歌可能认不出），"
+                    "封面也认不出；%s",
+                    e,
+                    hint,
+                )
             return {}
         return {int(mid): song for mid, song in data.items()}
 
@@ -232,7 +255,7 @@ def explain_failure(url: str, err: Exception | None) -> None:
     logger.warning(
         "下载不了 %s（%s），%s。浏览器能打开这个网站时，多半是浏览器走了代理插件、自动代理脚本、HTTP/3 或安全 DNS，"
         "本程序用不了这些；开着代理软件的话，请在「网络代理」里填它的端口。下次打开程序前，过期的曲目列表先用旧缓存、"
-        "缺的封面先不下载",
+        "缺的封面先不下载、还没下载过的国际服曲目表只试一次",
         host,
         failure_kind(err),
         route(url),

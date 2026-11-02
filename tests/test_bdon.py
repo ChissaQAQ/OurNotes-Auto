@@ -159,6 +159,51 @@ def test_jacket_skipped_when_host_down(tmp_path, sleeps):
     assert len(c.http.urls) == 3  # 这次打开程序后主机失败过：后面缺的封面先不下载
 
 
+def test_intl_songs_without_cache_tries_once_when_host_down(tmp_path, sleeps, caplog, monkeypatch):
+    """还没下载过国际服曲目表、主机这次打开程序后失败过：后面每次只试一次（#108：每个任务白等一分多钟）。"""
+    caplog.set_level(logging.WARNING, logger=bdon.logger.name)
+    c = client(tmp_path, RESET, RESET, RESET)
+    assert c.intl_songs() == {}
+    assert len(c.http.urls) == 3  # 这次打开程序第一次：照常重试
+    assert "还没有下载过曲目表，只能按谱面站的日文曲名认歌" in caplog.text
+    assert "开着代理软件（如 TUN 模式）打开一次程序" in caplog.text
+    # 这次打开程序后面的任务（新的演奏进程，界面没关）只试一次
+    monkeypatch.setenv(bdon.LAUNCHED_ENV, str(time.time() - 3600))
+    again = client(tmp_path, RESET)
+    assert again.intl_songs() == {}
+    assert len(again.http.urls) == 1 and again.http.timeouts == [(10, 30)]
+    # 一次就下载成功了：存下缓存，标记清掉
+    ok = client(tmp_path, response(200, json.dumps({"7": {"musicTitle": ["a"]}}).encode()))
+    assert ok.intl_songs() == {7: {"musicTitle": ["a"]}}
+    assert len(ok.http.urls) == 1
+    assert not down_file(tmp_path, "haneoka.org").exists()
+    # 下次打开程序：照常重试
+    (tmp_path / "intl_songs.json").unlink()
+    down_file(tmp_path, "haneoka.org").touch()
+    monkeypatch.setenv(bdon.LAUNCHED_ENV, str(time.time() + 1))
+    fresh = client(tmp_path, RESET, RESET, response(200, b"{}"))
+    assert fresh.intl_songs() == {}
+    assert len(fresh.http.urls) == 3
+
+
+def test_intl_songs_with_cache_short_message(tmp_path, sleeps, caplog):
+    caplog.set_level(logging.WARNING, logger=bdon.logger.name)
+    (tmp_path / "intl_songs.json").write_bytes(b"not json")
+    c = client(tmp_path)
+    assert c.intl_songs() == {}  # 缓存坏了：返回空表
+    failed = [r.getMessage() for r in caplog.records if r.getMessage().startswith("获取国际服曲目表失败")]
+    assert len(failed) == 1 and "还没有下载过" not in failed[0]
+
+
+def test_intl_songs_404_no_proxy_hint(tmp_path, sleeps, caplog):
+    """网站返回 404（地址变了）：连得上，不叫人开代理。"""
+    caplog.set_level(logging.WARNING, logger=bdon.logger.name)
+    c = client(tmp_path, response(404))
+    assert c.intl_songs() == {}
+    assert "还没有下载过曲目表" in caplog.text and "404" in caplog.text
+    assert "代理软件" not in caplog.text
+
+
 def test_down_before_launch_ignored(tmp_path, sleeps, monkeypatch):
     """上次打开程序时记下的失败不算：这次打开后照常下载。"""
     stale_index(tmp_path)
@@ -189,7 +234,7 @@ def test_explain_once_per_host(tmp_path, sleeps, caplog):
     want = (
         "下载不了 haneoka.org（连接被中途断开），直连。浏览器能打开这个网站时，多半是浏览器走了代理插件、自动代理脚本、"
         "HTTP/3 或安全 DNS，本程序用不了这些；开着代理软件的话，请在「网络代理」里填它的端口。"
-        "下次打开程序前，过期的曲目列表先用旧缓存、缺的封面先不下载"
+        "下次打开程序前，过期的曲目列表先用旧缓存、缺的封面先不下载、还没下载过的国际服曲目表只试一次"
     )
     assert explained == [want]
 

@@ -16,6 +16,7 @@ from ournotes_auto.nav.screens import (
     all_perfect_mark,
     arena_ap_text,
     arena_ap_total,
+    arena_failed_like,
     arena_guess,
     arena_placement,
     arena_result,
@@ -88,6 +89,7 @@ def load(name: str) -> list[OcrItem]:
         ("challenge_song_select", Screen.CHALLENGE_SONG_SELECT),  # 没有分类、筛选、随机，只有活动的几首歌
         ("challenge_song_select_last", Screen.CHALLENGE_SONG_SELECT),
         ("challenge_song_select_ap", Screen.CHALLENGE_SONG_SELECT),  # 选中的歌已 AP（右侧有 ALL PERFECT）
+        ("challenge_song_select_all_badge", Screen.CHALLENGE_SONG_SELECT),
         ("challenge_band_confirm", Screen.CHALLENGE_BAND_CONFIRM),  # 右下是「CP 设置」，顶栏是 CP
         ("challenge_cp_setting", Screen.CP_SETTING),
         ("challenge_cp_setting_short", Screen.CP_SETTING),
@@ -157,6 +159,8 @@ def load(name: str) -> list[OcrItem]:
         ("arena_match_confirm", Screen.ARENA_MATCH_CONFIRM),
         ("arena_matching", Screen.ARENA_MATCHING),  # 「正在匹配」，中间的转圈图写着 Now Loading
         ("arena_members", Screen.ARENA_MATCHING),  # 成员已确定，等转盘
+        ("arena_match_failed", Screen.ARENA_MATCH_FAILED),  # 「匹配失败」没找到对手（#113）
+        ("arena_match_error", Screen.ARENA_MATCH_FAILED),  # 「匹配错误」（#116）
         ("arena_difficulty", Screen.ARENA_DIFFICULTY),
         ("arena_result", Screen.ARENA_RESULT),
         ("arena_result_4th", Screen.ARENA_RESULT),
@@ -336,6 +340,20 @@ def test_arena_guess_only_arena_pages():
             assert arena_guess(foreign(items)) is None, path.stem
 
 
+@pytest.mark.parametrize("name", ["arena_match_failed", "arena_match_error"])
+def test_arena_match_failed(name):
+    """匹配失败、匹配错误（#113、#116）：标题没读到也认得；有「前往帮助」的不是；字认不出时只要有「关闭」就像。"""
+    items = load(name)
+    assert classify([it for it in items if it.y > 200]) is Screen.ARENA_MATCH_FAILED
+    assert classify([*items, OcrItem(700, 551, 100, 35, "前往帮助")]) is not Screen.ARENA_MATCH_FAILED
+    assert arena_failed_like(items)
+    assert classify(foreign(items)) is Screen.UNKNOWN and not arena_failed_like(foreign(items))  # 「关闭」也认不出
+    close_kept = [a if a.text == "关闭" else b for a, b in zip(items, foreign(items))]
+    assert classify(close_kept) is Screen.UNKNOWN and arena_failed_like(close_kept)
+    assert not arena_failed_like([*close_kept, OcrItem(500, 400, 80, 30, "星钻")])
+    assert not arena_failed_like(load("arena_matching"))
+
+
 def test_arena_top_lb():
     """激奏舞台首页右上角的 LB 持有数、恢复倒计时和乐队确认页的在同一个位置。"""
     assert lb_bar_held(load("arena_top")) == 10 and lb_bar_timer(load("arena_top")) is None
@@ -383,6 +401,10 @@ def test_challenge_rows():
     rows = challenge_rows(load("challenge_song_select_ap"))  # 选中中间那首，选中行的曲名截断了
     assert [t for t, _ in rows] == ["梦我梦中", "これはぼくたちの生存の", "オリオンをなぞる"]
     assert challenge_selected(rows) == 1
+    # 选中最后一首、它已 AP：选中行右移，曲名左边的「ALL」标志落进曲名的范围，和曲名在同一行
+    rows = challenge_rows(load("challenge_song_select_all_badge"))
+    assert [t for t, _ in rows] == ["怪物", "潜在表明", "Crucifix X"]
+    assert challenge_selected(rows) == 2
 
 
 @pytest.mark.parametrize(
@@ -391,6 +413,7 @@ def test_challenge_rows():
         ("challenge_song_select", "梦我梦中", False),  # 没打过：HIGH SCORE 0
         ("challenge_song_select_last", "オリオンをなぞる", False),
         ("challenge_song_select_ap", "これはぼくたちの生存のあらて", True),  # 面板上是完整曲名（末尾读错）
+        ("challenge_song_select_all_badge", "Crucifix X", True),
     ],
 )
 def test_select_panel(name, title, ap):

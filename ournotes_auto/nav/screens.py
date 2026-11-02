@@ -29,6 +29,8 @@ class Screen(StrEnum):
     ARENA_TOP = "激奏舞台"  # 首页：右上角 LB，下面「消耗LB」「LIVE START」，乐队图标右边 ▶▶ 换乐队
     ARENA_MATCH_CONFIRM = "激奏舞台-匹配确认"  # 左取消右 OK
     ARENA_MATCHING = "激奏舞台-匹配中"  # 「正在匹配」弹窗、匹配房间（等成员到齐）
+    # 「匹配失败」（没找到对手，#113）「匹配错误」（#116）弹窗：中间偏下只有「关闭」，关掉回到首页
+    ARENA_MATCH_FAILED = "激奏舞台-匹配失败"
     ARENA_DIFFICULTY = "激奏舞台-难度选择"
     ARENA_RESULT = "激奏舞台-结果"  # 演奏后弹出的「结果 3rd AP+15」（名次、段位分），下方「下一步」
     ARENA_RANKING = "激奏舞台-排名"  # 各玩家的名次、分数（「演出记录」切到判定数），右下「下一步」
@@ -241,6 +243,9 @@ ARENA_BANDS = ("mygo", "avemujica", "mewtype", "millsage", "dumbrock")
 ARENA_TOP_MARKS = ("LIVE", "消耗LB", "全部消耗", "交换所")
 TOP_CENTER_ROI: Rect = (440, 10, 400, 60)  # 顶部正中的标题：匹配确认、难度选择
 ARENA_MATCHING_ROI: Rect = (440, 90, 400, 60)  # 「正在匹配」弹窗的标题
+# 「匹配失败」「匹配错误」弹窗：标题和「正在匹配」同一个位置，「关闭」在 (640,568)；标题读错时看正文
+ARENA_FAILED_CLOSE_ROI: Rect = (440, 540, 400, 60)
+ARENA_FAILED_TEXTS = ("未找到对手", "匹配过程中")
 ARENA_RESULT_ROI: Rect = (440, 270, 500, 60)  # 结果弹窗的「结果 3rd AP+15」
 ARENA_AP_ROI: Rect = (690, 425, 90, 45)  # 结果弹窗上加分后的段位分
 ARENA_TIER_ROI: Rect = (400, 490, 480, 50)  # 段位提升：左右两个段位名
@@ -479,6 +484,12 @@ def _arena(items: list[OcrItem]) -> Screen | None:
         find(items, "匹配", TITLE_ROI, exact=True) and find(items, "表情", exact=True)
     ):
         return Screen.ARENA_MATCHING
+    if (
+        find(items, "关闭", ARENA_FAILED_CLOSE_ROI, exact=True)
+        and not find(items, "前往帮助")
+        and (find(items, "匹配", ARENA_MATCHING_ROI) or any(find(items, text) for text in ARENA_FAILED_TEXTS))
+    ):
+        return Screen.ARENA_MATCH_FAILED
     if find(items, "难度选择", TOP_CENTER_ROI):
         return Screen.ARENA_DIFFICULTY
     if any(in_roi(it, ARENA_RESULT_ROI) and _compact(it.text).startswith("结果") for it in items):
@@ -528,6 +539,16 @@ def arena_guess(items: list[OcrItem]) -> Screen | None:
         return arena_placement(items) is not None or row(ARENA_PT_Y, lambda t: re.fullmatch(r"\d+PT", t)) >= 2
 
     return next((s for y, s in ARENA_GEKISOU_ROWS if row(y, ARENA_GEKISOU.search) >= 2 and page(s)), None)
+
+
+def arena_failed_like(items: list[OcrItem]) -> bool:
+    """像匹配失败的弹窗：中间偏下只有「关闭」（标题、正文认不出时用，见 ``GameNavigator.look``，要停住一阵才算），
+    不是激奏舞台的说明，也没有购买、星钻之类的字。"""
+    return (
+        find(items, "关闭", ARENA_FAILED_CLOSE_ROI, exact=True) is not None
+        and not find(items, "前往帮助")
+        and not any(find(items, text) for text in (*OK_POPUP_BLOCK, *ARENA_GUESS_BLOCK))
+    )
 
 
 def _challenge_song_select(items: list[OcrItem]) -> bool:
@@ -805,23 +826,31 @@ def cp_bar_held(items: list[OcrItem]) -> int | None:
 # 挑战演出乐曲选择页：左边是活动指定的几首歌，选中的一行在中间（曲名字大一些），上下各露出两行；
 # 点别的行就选中它并滚到中间。列表不循环，选中第一首时上面是空的
 CHALLENGE_ROW_X = (250, 540)  # 曲名中心 x 的范围（左边是「Lv.26」、右边是「MV」标志）
+CHALLENGE_SAME_ROW = 20  # 中心 y 相差不到这么多的算同一行（行距约 100）
 CHALLENGE_SELECTED_Y = 324
 CHALLENGE_ROW_TAP_X = 420
 _CHALLENGE_NOT_TITLE = re.compile(r"\W?L\s*[vV]|[\d\s.|Il!]+$|\W?\w?MV$")
 
 
 def challenge_rows(items: list[OcrItem]) -> list[tuple[str, float]]:
-    """挑战演出乐曲选择页上能看到的各行 (曲名, 中心 y)，从上到下。"""
-    rows = []
-    for it in items:
+    """挑战演出乐曲选择页上能看到的各行 (曲名, 中心 y)，从上到下。
+
+    选中的一行整体右移，曲名左边的圆形标志（已 AP 的歌是「ALL」）也落进曲名的 x 范围：同一行只取最宽的一段。
+    """
+    rows: list[tuple[str, float, float]] = []
+    for it in sorted(items, key=lambda it: it.cy):
         t = _compact(it.text)
         cx = it.x + it.w / 2
         if len(t) < 2 or not CHALLENGE_ROW_X[0] <= cx <= CHALLENGE_ROW_X[1] or not 60 <= it.cy <= 640:
             continue
         if _CHALLENGE_NOT_TITLE.match(t):
             continue
-        rows.append((it.text.strip(), it.cy))
-    return sorted(rows, key=lambda r: r[1])
+        if rows and it.cy - rows[-1][1] < CHALLENGE_SAME_ROW:
+            if it.w > rows[-1][2]:
+                rows[-1] = (it.text.strip(), it.cy, it.w)
+            continue
+        rows.append((it.text.strip(), it.cy, it.w))
+    return [(t, cy) for t, cy, _ in rows]
 
 
 def challenge_selected(rows: list[tuple[str, float]]) -> int | None:

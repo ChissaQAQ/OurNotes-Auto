@@ -1,3 +1,14 @@
+# What's New in v0.2.3.1
+
+- Arena now recognizes the "match failed" (no opponent found) and "match error" popups, taps Close and matches again, instead of not recognizing them and restarting the game after two and a half minutes (#113, #116). Each attempt matches for up to 5 minutes; if there's still no match, it counts as one failure and the log says how many times matching failed. If it's already in a matching room (members gathered, can't cancel) by then, it waits up to 90 more seconds but doesn't start a new match
+- Japanese-server Arena: the 「ライブ前オプション設定」 popup that appears after tapping 「準備完了」 is no longer canceled (canceling withdraws your ready, #111); 「難易度選択」 and 「準備完了」 are now recognized by their text
+- If the International song list has never been downloaded and a download has already failed since you opened the program, later tasks try only once (#108). The log explains how this affects song recognition and what to do
+- Retries when adb can't connect to the emulator. When other programs have used up this PC's network ports and adb can't start, the log names the program with the most connections
+- An adb error while restarting the game now counts as one failure and the task continues (it still stops after 5 failures in a row), instead of stopping the whole task right away
+- Challenge LIVE: when the selected song is already AP (the "ALL" badge left of the title), switching songs and checking for AP no longer go wrong
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.3.1
+
 # What's New in v0.2.3
 
 > **Note**: The Arena (new in v0.2.1) hasn't been fully tested yet, and it hasn't actually been played on the Japanese server. You may run into all kinds of problems. Please report problems in the GitHub Issues.

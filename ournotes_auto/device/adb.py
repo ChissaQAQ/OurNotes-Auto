@@ -2,14 +2,88 @@
 
 from __future__ import annotations
 
+import csv
 import logging
 import re
 import subprocess
+import tempfile
+import time
+from collections import Counter
 from pathlib import Path
 
 from ..config import INTL_PACKAGES, INTL_PLAY_PACKAGE, DeviceConfig
 
 logger = logging.getLogger(__name__)
+
+# adb 的后台服务没在运行时 connect 会先启动它，启动失败时退出码为 1（比如别的程序的 adb 正好在重启它）：隔一会儿再试
+CONNECT_TRIES = 3
+CONNECT_RETRY_S = 2.0
+# adb 后台服务的日志（Windows 上在 %TEMP%）：本机的网络端口用光时它建不了内部连接，日志里是这两种
+# （安全软件拦了本机回环连接时 socketpair 也会失败，但报的是别的原因，不算）
+ADB_LOG = Path(tempfile.gettempdir()) / "adb.log"
+ADB_LOG_TAIL = 16384
+PORTS_GONE = re.compile(r"no buffer space|cannot create service socket ?pair", re.I)
+# netstat 里 TIME_WAIT 的连接记在 PID 0 名下，PID 4 是 System：都结束不了，不算
+SYSTEM_PIDS = ("0", "4")
+
+
+class AdbError(subprocess.SubprocessError):
+    """adb 命令失败：消息里带上 adb 的输出和看得出来的原因。"""
+
+
+def connect(adb: str, serial: str, timeout_s: float) -> None:
+    """``adb connect``，失败时隔一会儿重试，都失败时抛 :class:`AdbError`。"""
+    for attempt in range(1, CONNECT_TRIES + 1):
+        try:
+            subprocess.run([adb, "connect", serial], check=True, capture_output=True, timeout=timeout_s)
+            return
+        except subprocess.CalledProcessError as e:
+            if attempt == CONNECT_TRIES:
+                raise AdbError(f"adb connect {serial} 失败：{_output(e)}{ports_hint()}") from e
+            logger.debug("adb connect %s 失败（%s），%.0fs 后重试", serial, _output(e), CONNECT_RETRY_S)
+            time.sleep(CONNECT_RETRY_S)
+
+
+def _output(e: subprocess.CalledProcessError) -> str:
+    """adb 的输出连成一行；没有输出时为退出码。"""
+    raw = b"".join(x for x in (e.stdout, e.stderr) if isinstance(x, bytes))
+    lines = [s.strip() for s in raw.decode("utf-8", "replace").splitlines() if s.strip()]
+    return " / ".join(lines) or f"退出码 {e.returncode}"
+
+
+def ports_hint() -> str:
+    """adb 后台服务最近一次启动时因为本机的网络端口用光而失败时的说明（带上连接最多的进程），否则为空串。
+    端口用光时电脑上要联网的程序都会时不时失败，模拟器也可能连不上网，光重试没用（实测是别的程序的连接
+    一直不关，占满了 Windows 的临时端口）。"""
+    try:
+        with ADB_LOG.open("rb") as f:
+            f.seek(max(0, f.seek(0, 2) - ADB_LOG_TAIL))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    m = PORTS_GONE.search(tail.rsplit("--- adb starting", 1)[-1])
+    if not m:
+        return ""
+    hog = _port_hog()
+    who = f"连接最多的是 {hog}，结束它或重启电脑后恢复" if hog else "重启电脑后恢复"
+    return f"。本机的网络端口用光了，adb 启动不了（{ADB_LOG} 里有「{m.group(0)}」）：{who}"
+
+
+def _port_hog() -> str:
+    """TCP 连接最多的进程「名字（PID，连接数）」（不算系统进程），查不到时为空串。"""
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True, timeout=15).stdout
+        rows = (line.split() for line in out.decode("ascii", "replace").splitlines())
+        counts = Counter(r[-1] for r in rows if len(r) >= 4 and r[0] == "TCP" and r[-1] not in SYSTEM_PIDS)
+        if not counts:
+            return ""
+        pid, n = counts.most_common(1)[0]
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, timeout=15)
+        line = out.stdout.decode("oem", "replace").strip()
+    except (OSError, subprocess.SubprocessError, LookupError):
+        return ""
+    name = next(csv.reader([line]))[0] if line.startswith('"') else ""
+    return f"{name or '未知进程'}（PID {pid}，{n} 个连接）"
 
 
 def adb_path(cfg: DeviceConfig) -> str:
@@ -32,7 +106,7 @@ def _runner(cfg: DeviceConfig, timeout_s: float):
     def run(*args: str, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run([adb, *args], check=check, capture_output=True, timeout=timeout_s)
 
-    run("connect", serial)
+    connect(adb, serial, timeout_s)
     return serial, run
 
 

@@ -33,6 +33,7 @@ from .jacket import crop_jacket
 from .screens import (
     ARENA_AP_ROI,
     ARENA_BANDS,
+    ARENA_FAILED_CLOSE_ROI,
     ARENA_JACKET_ROI,
     MATCH_OK_ROI,
     OK_POPUP_BLOCK,
@@ -56,9 +57,17 @@ BTN_MATCH_OK = (782, 660)  # 匹配确认：左取消右 OK（MATCH_OK_ROI 在 s
 BTN_MATCH_CANCEL = (498, 660)
 MATCH_CANCEL_ROI: Rect = (340, 630, 300, 60)
 MATCHING_CANCEL_ROI: Rect = (440, 540, 400, 60)  # 「正在匹配」弹窗的取消（匹配房间里没有）
+BTN_MATCH_FAILED_CLOSE = (640, 568)  # 匹配失败、匹配错误弹窗的「关闭」
+# 认不出文字的语言里，只有「关闭」的弹窗（见 arena_failed_like）停了这么久才当成匹配失败
+ARENA_FAILED_GUESS_S = 3.0
+# 匹配房间（成员到齐、不能取消）里到了 timeout_s 也再等这么久：等对局开始或匹配失败（约 80 秒），
+# 不然这局开始后没人操作，白白消耗 LB
+ARENA_ROOM_S = 90.0
 BTN_ARENA_EXPERT = (1200, 545)  # 难度选择
 BTN_ARENA_READY = (1140, 640)  # 难度选择：准备完毕
 ARENA_READY_ROI: Rect = (1000, 610, 280, 60)
+# 点了准备完毕后弹出的演出前选项设置（#111）不点取消；停了这么久还在（不是对局里的，如上次自由演出留下的）才点
+ARENA_OPTIONS_WAIT_S = 45.0
 BTN_ARENA_RESULT_NEXT = (640, 660)  # 结果弹窗：下一步
 ARENA_RESULT_NEXT_ROI: Rect = (440, 630, 400, 60)
 BTN_ARENA_RANKING_NEXT = (1140, 660)  # 排名：下一步
@@ -84,6 +93,7 @@ ARENA_SCREENS = frozenset(
     (
         Screen.ARENA_MATCH_CONFIRM,
         Screen.ARENA_MATCHING,
+        Screen.ARENA_MATCH_FAILED,
         Screen.ARENA_DIFFICULTY,
         Screen.ARENA_RESULT,
         Screen.ARENA_RANKING,
@@ -126,6 +136,7 @@ class ArenaMixin:
     _arena_lb: int | None
     _rank_up_taps: int
     _arena_missed: int
+    _match_failed_at: float
     _band_templates: dict[str, np.ndarray] | None
 
     def _enter_arena(self, items: list[OcrItem]) -> bool:
@@ -135,13 +146,19 @@ class ArenaMixin:
 
     def _arena_step(self, screen: Screen, items: list[OcrItem]) -> bool:
         """不在对局中时遇到激奏舞台对局的画面（上次中途停下等）：匹配确认点取消、正在匹配能取消就取消，
-        已经进了对局就跟着走完（难度选择点准备完毕，结果、排名点下一步）。做了操作返回 True。"""
+        匹配失败点关闭，已经进了对局就跟着走完（难度选择点准备完毕，结果、排名点下一步）。做了操作返回 True。"""
         if screen is Screen.ARENA_MATCH_CONFIRM:
             self.tap(self._button(items, "取消", BTN_MATCH_CANCEL, MATCH_CANCEL_ROI), "取消（匹配）")
         elif screen is Screen.ARENA_MATCHING:
             if not (it := find(items, "取消", MATCHING_CANCEL_ROI, exact=True)):
                 return False  # 匹配房间：等对局开始
             self.tap((round(it.x + it.w / 2), round(it.y + it.h / 2)), "取消匹配")
+        elif screen is Screen.ARENA_MATCH_FAILED:
+            now = time.monotonic()
+            if now - self._match_failed_at < ARENA_RETAP_S:
+                return False  # 刚点过，弹窗还在淡出
+            self._match_failed_at = now
+            self.tap(self._button(items, "关闭", BTN_MATCH_FAILED_CLOSE, ARENA_FAILED_CLOSE_ROI), "关闭（匹配失败）")
         elif screen is Screen.ARENA_DIFFICULTY:
             if not (it := find(items, "准备完毕", ARENA_READY_ROI, exact=True)):
                 return False
@@ -207,17 +224,19 @@ class ArenaMixin:
         """激奏舞台首页：（按配置设好 LB 消耗后）LIVE START → 匹配确认 OK → 等匹配、转盘定歌，
         在难度选择页认出封面、读出曲名和 EXPERT 等级后返回（倒计时约 28 秒，要赶紧认歌、准备）。
 
-        LB 的处理同 :meth:`start_live`（``lb_short`` 也一样）。``timeout_s`` 内没匹配到：还在「正在匹配」就取消，报错。
+        LB 的处理同 :meth:`start_live`（``lb_short`` 也一样）。匹配失败（没找到对手、匹配出错）时关掉弹窗重新匹配。
+        ``timeout_s`` 内没匹配到：还在「正在匹配」就取消，报错（在匹配房间里就多等一会儿，见 ARENA_ROOM_S；
+        这时不再开始新的匹配）。
         没认出难度选择页、对局就开始了（连着看到演奏画面或 :data:`ARENA_PLAYED`）时报错，连续 ARENA_MAX_MISSED 局
         都这样时抛 :class:`ArenaMissed` 让任务停下。
         """
         want, auto_pick = self._prepare_lb(lb_short)
         self._jackets_or_none()  # 封面还在后台加载就在开始匹配前等它（难度选择页的倒计时里等不起）
         self.tap(BTN_ARENA_START, "LIVE START")
-        deadline = time.monotonic() + timeout_s
+        end = deadline = time.monotonic() + timeout_s
         busy_at = time.monotonic()  # 上次点按钮、或看到对局在进行的时刻
         confirmed = False
-        retaps = recovers = played = 0
+        retaps = recovers = played = failed = 0
         items: list[OcrItem] = []
         screen = Screen.UNKNOWN
         while time.monotonic() < deadline:
@@ -243,11 +262,17 @@ class ArenaMixin:
                     )
                 raise self._fail("没认出激奏舞台的难度选择页，对局已经开始了，这局没有演奏")
             played = 0
+            # 过了 timeout_s 只在已经进了的匹配房间里接着等，不再开始新的匹配（新房间到多等的时限又得丢下）
+            late = now >= end
             if screen is Screen.ARENA_MATCH_CONFIRM:
+                if late:
+                    break
                 self.tap(self._button(items, "OK", BTN_MATCH_OK, MATCH_OK_ROI), "OK（开始匹配）")
                 confirmed = True
                 busy_at = now
             elif screen is Screen.ARENA_TOP:
+                if late:
+                    break
                 if now - busy_at > (ARENA_CONFIRMED_RETAP_S if confirmed else ARENA_RETAP_S):
                     if retaps >= ARENA_MAX_RETAPS:
                         raise self._fail(f"点了 {ARENA_MAX_RETAPS + 1} 次 LIVE START 都没有开始匹配")
@@ -256,20 +281,44 @@ class ArenaMixin:
                     busy_at = now
                     confirmed = False
             elif screen is Screen.LB_RECOVER:
+                if late:
+                    break
                 recovers = self._on_lb_recover(items, want, auto_pick, lb_short, recovers)
                 self.tap(BTN_ARENA_START, "LIVE START")
                 busy_at = time.monotonic()
                 confirmed = False
-            elif screen in (Screen.ARENA_MATCHING, Screen.UNKNOWN):
-                busy_at = now  # 匹配中、转盘
+            elif screen is Screen.ARENA_MATCH_FAILED:
+                # 没找到对手（#113）或匹配出错（#116）：关掉弹窗回到首页，过 ARENA_RETAP_S 再点 LIVE START
+                if self._arena_step(screen, items):
+                    failed += 1
+                    logger.info("激奏舞台匹配失败（没找到对手或匹配出错），关掉弹窗重新匹配")
+                busy_at = now
+                confirmed = False
+                retaps = 0
+            elif screen is Screen.ARENA_MATCHING:
+                busy_at = now
+                if not find(items, "取消", MATCHING_CANCEL_ROI, exact=True):
+                    deadline = max(deadline, min(now + ARENA_ROOM_S, end + ARENA_ROOM_S))
+                elif late:
+                    break  # 房间散了又回到「正在匹配」：取消
+            elif screen is Screen.UNKNOWN:
+                busy_at = now  # 转盘
+            elif screen is Screen.LIVE_OPTIONS:
+                busy_at = now  # 点了准备完毕后的弹窗（#111），不点取消（会撤回准备），等对局开始
             elif screen in RELOGIN_SCREENS:
                 raise self._fail("游戏回到了标题画面，没有开始对局")
             elif not self._common_step(screen, items):
                 raise self._fail("开始激奏舞台匹配后出现意外画面")
-        if screen is Screen.ARENA_MATCHING and (it := find(items, "取消", MATCHING_CANCEL_ROI, exact=True)):
-            self.tap((round(it.x + it.w / 2), round(it.y + it.h / 2)), "取消匹配")
-            self._sleep(self.settle_s)
-        raise self._fail(f"{timeout_s:.0f}s 内没有匹配到对局")
+        room = ""
+        if screen is Screen.ARENA_MATCHING:
+            if it := find(items, "取消", MATCHING_CANCEL_ROI, exact=True):
+                self.tap((round(it.x + it.w / 2), round(it.y + it.h / 2)), "取消匹配")
+                self._sleep(self.settle_s)
+            else:
+                room = "；还在匹配房间里，对局可能还会开始"
+        raise self._fail(
+            f"{timeout_s:.0f}s 内没有匹配到对局{f'（匹配失败 {failed} 次，这个时段可能没人）' if failed else ''}{room}"
+        )
 
     def _arena_song(self, items: list[OcrItem]) -> SongLabel:
         """难度选择页右边的封面、封面下的曲名和 EXPERT 等级：转盘刚停时可能还在动画中，连续两次认出同一首封面
