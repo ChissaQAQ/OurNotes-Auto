@@ -1732,6 +1732,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
             combo = page_combo
         counts = ResultCounts({j: v[0] for j, v in totals.items()}, {}, {}, score, combo)
         rc = merge(counts, fast, slow)
+        logger.debug("结算分列 FAST %s，SLOW %s", rc.fast, rc.slow)
         if len(rc.fast) < len(fast):
             logger.warning("FAST/SLOW 读数与总数矛盾，已丢弃：总数 %s，FAST %s，SLOW %s", counts.counts, fast, slow)
             self.save_debug("result_timing")

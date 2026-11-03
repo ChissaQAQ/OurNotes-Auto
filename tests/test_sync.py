@@ -18,14 +18,18 @@ W, H = 1280, 720
 def render(geo: Geometry, span: Span, y_lead: float, height_px: float, rng) -> np.ndarray:
     frame = np.full((H, W, 3), 40, np.uint8)
     frame += rng.integers(0, 4, frame.shape, dtype=np.uint8)
+    draw_note(frame, geo, span, y_lead, height_px)
+    return frame
+
+
+def draw_note(frame: np.ndarray, geo: Geometry, span: Span, y_lead: float, height_px: float) -> None:
     if y_lead <= 0:
-        return frame
+        return
     y0 = max(int(y_lead - height_px), 0)
     for y in range(y0, min(int(y_lead), H)):
         x0 = int(geo.x_at(span.left, y))
         x1 = int(geo.x_at(span.right, y))
         frame[y, x0:x1] = (250, 240, 255)
-    return frame
 
 
 def simulate(true_geo, tracker_geo, fps, tau_s, rng, jitter_s=0.002, params=None, render_fps=0.0):
@@ -292,20 +296,23 @@ def draw_bar_lines(frame: np.ndarray, geo: Geometry, ys) -> None:
 
 
 @pytest.mark.parametrize("on_note", [False, True])
-def test_tracker_ignores_bar_lines(on_note):
-    """开了「小节线显示」：比首音符先落下的小节线不能当成首音符（#18），压在首音符中间的小节线不影响跟踪。"""
+@pytest.mark.parametrize("spans", [[Span(8, 14)], [Span(0, 8), Span(14, 22)]], ids=["narrow", "wide"])
+def test_tracker_ignores_bar_lines(on_note, spans):
+    """开了「小节线显示」：比首音符先落下的小节线不能当成首音符（#18），压在首音符中间的小节线不影响跟踪。
+    首音符占满两侧、中间只剩几个位置能看小节线时也一样（#120 壱雫空 EXPERT）。"""
     geo = Geometry(W, H)
-    span = Span(8, 14)
     tau_s, arrival = 0.835, 12.3456
 
     def run(params):
         rng = np.random.default_rng(9)
-        tr = NoteTracker(geo, params, 5000.0, [span])
+        tr = NoteTracker(geo, params, 5000.0, spans)
         t = arrival - 4.5 * tau_s
         while t < arrival + 1.0:
             y = geo.note_y(arrival - t, tau_s)
             height = 0.04 * (y - geo.motion_horizon_y)
-            frame = render(geo, span, y, height, rng)
+            frame = render(geo, spans[0], y, height, rng)
+            for span in spans[1:]:
+                draw_note(frame, geo, span, y, height)
             # 每 1.2s 一条小节线，最近的一条比首音符早 0.6s 到达判定线；等静止时就有小节线在动
             ys = [geo.note_y(arrival - 0.6 - 1.2 * k - t, tau_s) for k in range(4)]
             if on_note:

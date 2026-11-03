@@ -66,10 +66,11 @@ logger = logging.getLogger(__name__)
 
 _Y_SIGMA_PX = 0.35  # 前沿 y 的量化误差（像素，标准差）
 _T_SIGMA_S = 0.004  # 截图时刻相对游戏内时间的抖动（秒，标准差）；MuMu 60fps 实测拟合残差约 5ms
-# 检查小节线的采样位置（横向单位），去掉首音符区间两侧 _BAR_GAP 个单位以内的；剩下不到 _BAR_MIN_PROBES 个就不检查
+# 检查小节线的采样位置（横向单位），去掉首音符区间两侧 _BAR_GAP 个单位以内的；剩下不到 _BAR_MIN_PROBES 个就不检查。
+# 首音符占满两侧时只剩中间几个（如壱雫空 EXPERT 是 [0,8] 和 [14,22]，剩 6 个），不检查就会跟上小节线（#120）
 _BAR_UNITS = np.arange(0.75, 23.5, 0.5)
 _BAR_GAP = 1.5
-_BAR_MIN_PROBES = 8
+_BAR_MIN_PROBES = 5
 _BAR_MAX_H = 0.012  # 小节线最多这么高（屏高比例，720p 约 9 像素）；更高的整行变化是转场、闪光
 # 前沿这么久没往下走就不是音符（音符在跟踪区顶部也约 50 像素/秒），是停在轨道上的提示，如比首音符先出现的倒计时
 _STILL_S = 0.5
@@ -243,6 +244,8 @@ class NoteTracker:
                 np.rint([[geometry.x_at(u, y) for u in units] for y in ys]).astype(np.intp), 0, w - 1
             )
         else:
+            if params.bar_line_ratio > 0:
+                logger.debug("首音符以外只有 %d 个位置能看小节线，不检查小节线", len(units))
             self._probe_y = self._probe_x = None
         self._bar_h = max(2, round(_BAR_MAX_H * h))
         width = mask.shape[1] + (0 if self._probe_x is None else self._probe_x.shape[1])

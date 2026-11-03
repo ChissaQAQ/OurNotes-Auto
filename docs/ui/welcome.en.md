@@ -1,3 +1,10 @@
+# What's New in v0.2.3.3
+
+- Flick notes (including flicks at the start and end of long notes) used to land twenty-some milliseconds later than taps, so results leaned SLOW. Flicks now press and swipe 24 ms early by default (#114). Auto-correction had pulled the overall offset a bit earlier to make up for the late flicks; it moves back by itself after a few rounds, so there's no need to change any settings
+- With the game's "Bar line display" on, a few charts whose first notes cover both sides of the lanes (such as 壱雫空 EXPERT) mistook a bar line for the first note, so the whole round was about 1 second early and life quickly hit zero. Fixed (#120)
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.3.3
+
 # What's New in v0.2.3.2
 
 - Arena: when a 5-minute matching attempt finds no match (maybe nobody is playing at this hour), it no longer counts as a failure, and the log counts these separately. If there's still no match 1 hour after the first miss, it goes back to the Home screen and ends the task (as a normal finish), and the tasks after it run (#113). If it's already in a matching room but the round doesn't start, that still counts as a failure

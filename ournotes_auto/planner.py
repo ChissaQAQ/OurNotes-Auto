@@ -482,6 +482,7 @@ class Planner:
             times.add(start + k * step)
             k += 1
         pts = [at(t) for t in sorted(times)]
+        settled = start  # 起点的动作做完、回到路径上的时刻
         if slide.head is SlideHead.FLICK:
             # 起点滑动：按下后先朝指定方向划出，再在 head_flick_return_ms 内慢慢回到路径上。
             # 以前划完 2ms 就瞬间拉回（反向跳约 56px），偶尔起点判 MISS（everscape、KOHAKU），
@@ -501,12 +502,23 @@ class Planner:
                 w = 1.0 - (t - t1) / ret if ret > 0 else 0.0
                 rest.append((t, x + ox * w, y + oy * w) if w > 0 else (t, x, y))
             pts = [(t0, pts[0][1], pts[0][2])] + flick + rest
+            settled = t1 + ret
         elif slide.head in (SlideHead.TRACE, SlideHead.NONE) and p.trace_lead_ms > 0:
             pts.insert(0, (start - p.trace_lead_ms, pts[0][1], pts[0][2]))
 
         _, ex, ey = pts[-1]
         if slide.tail is SlideTail.FLICK:
-            pts += self._flick_points(end, ex, ey, slide.tail_direction)
+            # 终点滑动也提前 flick_lead_ms 划出，但要等起点的动作做完、经过最后一个中继；
+            # 划出点不在终点区间里（两侧留出 POSITION_EDGE，终点前路径还在横移）时照旧在终点划
+            t0 = max([end - p.flick_lead_ms, settled] + [c for c in slide.checkpoints if c < end])
+            tail = slide.nodes[-1].span
+            q0 = at(t0)
+            if t0 < end and self.geo.x_at(tail.left + POSITION_EDGE) <= q0[1] <= self.geo.x_at(tail.right - POSITION_EDGE):
+                pts = [q for q in pts if q[0] < t0] + [q0]
+            else:
+                t0 = end
+            _, ex, ey = pts[-1]
+            pts += self._flick_points(t0, ex, ey, slide.tail_direction)
         elif slide.tail in (SlideTail.TRACE, SlideTail.NONE):
             pts.append((end + p.trace_hold_ms, ex, ey))
         elif slide.tail is SlideTail.RELEASE:
