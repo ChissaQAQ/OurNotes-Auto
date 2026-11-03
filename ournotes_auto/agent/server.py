@@ -35,6 +35,9 @@ SECRET_KEYS = ("notify_target",)  # 等于密码的选项（推送地址），�
 PROXY_PASSWORD = re.compile(r"(?<=:)[^:@/]*(?=@)")  # 代理地址 user:pass@host:port 里的密码，日志里不记
 IDLE_TASKS = ("idle", "arena_idle")  # 挂机（和 params.IDLE_TASKS 一致）：开着「每天重跑前面的任务」时日期变更后退出（EXIT_RERUN）
 RERUN_KEY = "rerun_daily"  # 「每天重跑前面的任务」开关（attach 里的键）
+RUN_TASKS = ("repeat", "clear_lb", "idle", "ap", "challenge", "arena", "arena_idle")  # 连续演奏的任务（和 params.RUN_TASKS 一致）
+FINISH_KEY = "finish_song_on_stop"  # 「停止时打完当前这首」开关（attach 里的键）：只对连续演奏的任务生效
+FINISH_SONG_MAX_S = 600.0  # 打完这首最多等这么久，还没结束就立即停止
 NO_RERUN = frozenset((*IDLE_TASKS, "records", "notify_test"))  # 不重跑的任务：挂机本身、不打歌的（打开统计窗口会弹出窗口）
 # MFAA 的 Agent 常驻：上一个任务结束这么久以后才开始的任务算新的一次运行（界面上又点了一次开始）；MXU 每次开始都启动新的 Agent
 RUN_GAP_S = 60.0
@@ -164,10 +167,17 @@ def _work(payload: Mapping[str, Any], stopping: Callable[[], bool]) -> WorkerRes
     cmd = [sys.executable, "-m", "ournotes_auto", "agent-run", json.dumps(payload, ensure_ascii=False, default=str)]
     shown = json.dumps({**payload, "attach": _masked(payload["attach"])}, ensure_ascii=False, default=str)
     logger.debug("启动演奏进程：%s", [*cmd[:-1], shown])
+    finish = payload["task"] in RUN_TASKS and _flag(payload["attach"], FINISH_KEY, False)
     while True:
         try:
             with UPDATE.busy():
-                result = run_worker(cmd, cwd=ROOT, should_stop=stopping, should_update=UPDATE.hot_ready)
+                result = run_worker(
+                    cmd,
+                    cwd=ROOT,
+                    should_stop=stopping,
+                    should_update=UPDATE.hot_ready,
+                    finish_s=FINISH_SONG_MAX_S if finish else 0.0,
+                )
         except UpdateBusyError as e:
             logger.error("%s", e)
             return None

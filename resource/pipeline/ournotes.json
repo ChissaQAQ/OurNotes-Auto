@@ -19,6 +19,7 @@
             "game_language": "default",
             "watch_combo": false,
             "restart_low_fps": true,
+            "finish_song_on_stop": false,
             "debug_log": false,
             "check_update": true,
             "auto_update": true,

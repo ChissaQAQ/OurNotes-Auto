@@ -109,10 +109,13 @@ def run_worker(
     poll_s: float = 0.2,
     grace_s: float = 20.0,
     exit_drain_s: float = 1.0,
+    finish_s: float = 0.0,
 ) -> WorkerResult:
     """运行子进程直到结束。在调用线程里轮询 ``should_stop``（Agent 的 context 只能在回调线程里用）；
     返回真时经标准输入发送 stop，``grace_s`` 秒内没退出就强制结束。``should_update`` 返回真时发送一次 update
-    （新版本已下载，挂机到安全的时机以退出码 ``release.EXIT_UPDATE`` 退出）。"""
+    （新版本已下载，挂机到安全的时机以退出码 ``release.EXIT_UPDATE`` 退出）。
+    ``finish_s`` 大于 0 时（开着「停止时打完当前这首」）先发 finish：正在打歌就打完这首再退出；
+    ``finish_s`` 秒后还没退出再发 stop，照常计 ``grace_s``。"""
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1")
     proc = subprocess.Popen(
         list(cmd),
@@ -126,6 +129,7 @@ def run_worker(
     q: queue.Queue[bytes | None] = queue.Queue()
     threading.Thread(target=_pump, args=(proc.stdout, q), name="worker-output", daemon=True).start()
     stop_at: float | None = None
+    finish_at: float | None = None  # 发 finish 的时刻
     exited_at: float | None = None
     killed = False
     update_sent = False
@@ -147,19 +151,33 @@ def run_worker(
                 exited_at = exited_at or now
                 if q.empty() and now - exited_at > exit_drain_s:
                     break
-            elif stop_at is None:
+            elif stop_at is None and finish_at is None:
                 if should_stop():
-                    logger.info("正在停止…")
-                    stop_at = now
-                    _send(proc, b"stop\n")
+                    if finish_s > 0:
+                        logger.info(
+                            "正在停止：开着「停止时打完当前这首」，正在打歌就打完这首歌再停（最多等 %.0f 分钟）；"
+                            "要立即停止请退出界面",
+                            finish_s / 60,
+                        )
+                        finish_at = now
+                        _send(proc, b"finish\n")
+                    else:
+                        logger.info("正在停止…")
+                        stop_at = now
+                        _send(proc, b"stop\n")
                 elif not update_sent and should_update():
                     update_sent = True
                     _send(proc, b"update\n")
+            elif stop_at is None:
+                if now - finish_at > finish_s:
+                    logger.warning("打完这首歌等了 %.0f 分钟还没结束，立即停止", finish_s / 60)
+                    stop_at = now
+                    _send(proc, b"stop\n")
             elif not killed and now - stop_at > grace_s:
                 logger.warning("演奏进程 %.0f 秒内没有退出，强制结束", grace_s)
                 proc.kill()
                 killed = True
-        return WorkerResult(proc.wait(), stop_at is not None, killed, oom)
+        return WorkerResult(proc.wait(), stop_at is not None or finish_at is not None, killed, oom)
     finally:
         if proc.poll() is None:  # on_line / should_stop 出错
             proc.kill()

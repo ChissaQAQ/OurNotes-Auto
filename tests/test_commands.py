@@ -89,13 +89,17 @@ def test_run_arena_no_match_ends_normally(monkeypatch, unmatched, code):
 
 
 def test_run_passes_update_event(monkeypatch):
-    """args.update 作为第 9 个参数传给 Runner；没有它时（不是从命令行入口来的）传 None。"""
+    """args.update 作为第 9 个参数、args.gate（「停止时打完当前这首」）作为第 11 个参数传给 Runner；
+    没有它们时（不是从命令行入口来的）传 None。"""
+    from ournotes_auto.songgate import SongGate
+
     update = threading.Event()
-    fake_run(monkeypatch, launched=False, update=update)
-    assert len(runner.Runner.args) == 10 and runner.Runner.args[8] is update
+    gate = SongGate(threading.Event())
+    fake_run(monkeypatch, launched=False, update=update, gate=gate)
+    assert len(runner.Runner.args) == 11 and runner.Runner.args[8] is update and runner.Runner.args[10] is gate
     assert not hasattr(build_parser().parse_args(["run"]), "update")
     fake_run(monkeypatch, launched=False)
-    assert len(runner.Runner.args) == 10 and runner.Runner.args[8] is None
+    assert len(runner.Runner.args) == 11 and runner.Runner.args[8] is None and runner.Runner.args[10] is None
 
 
 def test_run_passes_tracker(monkeypatch):

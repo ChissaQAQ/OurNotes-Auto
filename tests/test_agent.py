@@ -767,6 +767,24 @@ def test_interface_tasks_match_agent():
     assert seen == set(TASKS)
 
 
+def test_stop_after_song_option():
+    """全局选项「停止时打完当前这首」（#115）：默认关，写 OurNotesParam 的 finish_song_on_stop（Agent 按它决定停止时
+    要不要先打完这首），5 种语言都有标签和说明。"""
+    interface = _load("interface.json")
+    assert "StopAfterSong" in interface["global_option"]
+    option = _load("tasks/common.json")["option"]["StopAfterSong"]
+    assert (option["type"], option["label"], option["description"]) == ("switch", "$opt.StopAfterSong", "$opt.StopAfterSong.desc")
+    cases = {c["name"]: c["pipeline_override"] for c in option["cases"]}
+    assert option["default_case"] == "No"
+    assert cases == {v: {"OurNotesParam": {"attach": {"finish_song_on_stop": v == "Yes"}}} for v in ("Yes", "No")}
+    assert _load("resource/pipeline/ournotes.json")["OurNotesParam"]["attach"]["finish_song_on_stop"] is False
+    assert len(interface["languages"]) == 5
+    for code, path in interface["languages"].items():
+        texts = _load(path)
+        assert texts["opt.StopAfterSong"].strip() and texts["opt.StopAfterSong.desc"].strip(), code
+    assert _load("locales/zh_cn.json")["opt.StopAfterSong"] == "停止时打完当前这首"
+
+
 # ---------------------------------------------------------------- 日志
 
 
@@ -826,7 +844,7 @@ def cli_main(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     watches = []
-    monkeypatch.setattr(cli, "start_stdin_watch", lambda stop, update=None: watches.append((stop, update)))
+    monkeypatch.setattr(cli, "start_stdin_watch", lambda stop, update=None, gate=None: watches.append((stop, update, gate)))
     root, added = logging.getLogger(), []
     level, setup = root.level, cli._setup_logging
 
@@ -866,8 +884,10 @@ def test_agent_run_bad_payload(cli_main, capsys):
 
 
 def test_agent_run_local_task(cli_main, capsys, monkeypatch):
-    """本地任务（打开统计窗口）不需要控制器；开始、完成各在界面上显示一行，命令拿到停止 / 更新两个事件和任务名。"""
+    """本地任务（打开统计窗口）不需要控制器；开始、完成各在界面上显示一行，命令拿到停止 / 更新两个事件、
+    打完这首再停的闸门和任务名。"""
     from ournotes_auto import cli
+    from ournotes_auto.songgate import SongGate
 
     main, watches = cli_main
     seen = []
@@ -876,7 +896,8 @@ def test_agent_run_local_task(cli_main, capsys, monkeypatch):
     [args] = seen
     assert (args.command, args.json_log, args.stdin_stop, args.verbose) == ("records", True, True, 0)
     assert args.label == "打开统计窗口"
-    assert watches == [(args.stop, args.update)]
+    assert watches == [(args.stop, args.update, args.gate)]
+    assert isinstance(args.gate, SongGate) and args.gate.stop is args.stop
     assert not args.stop.is_set() and not args.update.is_set()
     msgs = _ui_lines(capsys, logging.INFO)
     assert msgs[0] == "开始打开统计窗口" and msgs[-1] == "打开统计窗口完成"
@@ -897,7 +918,7 @@ def test_agent_run_device_task(cli_main, capsys, monkeypatch, mumu_root):
     assert (args.command, args.verbose) == ("start", 1)
     assert (cfg.device.backend, cfg.device.mumu_path, cfg.device.instance) == ("mumu", str(mumu_root), 1)
     assert (cfg.device.adb_serial, cfg.device.touch) == ("127.0.0.1:16416", "mumu")
-    assert watches == [(args.stop, args.update)]
+    assert watches == [(args.stop, args.update, args.gate)]
     msgs = _ui_lines(capsys, logging.INFO)
     assert msgs[0] == "开始启动游戏" and msgs[-1] == "启动游戏完成"
 
@@ -992,6 +1013,8 @@ if "lines" in sys.argv:  # 每行都回显，读到 stop 或输入结束为止�
         print(json.dumps({"level": "INFO", "name": "child", "msg": "got " + cmd}), flush=True)
         if cmd == "stop" or (cmd == "update" and "quit" in sys.argv):
             break
+if "slow" in sys.argv:  # 收到 finish 后这首歌还要打一会儿
+    time.sleep(1)
 if "hang" in sys.argv:
     time.sleep(60)
 if "openblas" in sys.argv:  # OpenBLAS 分配不到内存时直接 exit(1)
@@ -1043,6 +1066,35 @@ def test_run_worker_kill_after_grace(tmp_path):
     result, _ = _run(tmp_path, "0", "hang", should_stop=lambda: True, grace_s=0.3)
     assert result.stopped and result.killed and result.returncode != 0
     assert time.monotonic() - t0 < 20
+
+
+def test_run_worker_finish(tmp_path, caplog):
+    """开着「停止时打完当前这首」（finish_s > 0）：发 finish，等演奏进程打完这首自己退出，过了 grace_s 也不强制结束。"""
+    t0 = time.monotonic()
+    with caplog.at_level(logging.INFO, logger="ournotes_auto.agent.worker"):
+        result, lines = _run(
+            tmp_path, "0", "wait", "slow", should_stop=lambda: time.monotonic() - t0 > 0.3, finish_s=5, grace_s=0.3
+        )
+    assert (result.returncode, result.stopped, result.killed) == (0, True, False)
+    assert lines[-1] == (logging.INFO, "child", "got finish")
+    [msg] = [r.getMessage() for r in caplog.records if r.name == "ournotes_auto.agent.worker"]
+    assert "打完这首歌再停" in msg and "要立即停止请退出界面" in msg, msg
+
+
+def test_run_worker_finish_then_stop(tmp_path, caplog):
+    """打完这首等了 finish_s 还没结束：改发 stop（硬停），再过 grace_s 还不退出才强制结束；等的时候不发 update。
+    grace_s 留宽些：机器忙时子进程启动慢，强制结束前要来得及读到 finish、stop。"""
+    t0, updates = time.monotonic(), []
+    with caplog.at_level(logging.INFO, logger="ournotes_auto.agent.worker"):
+        result, lines = _run(
+            tmp_path, "0", "lines", "hang",
+            should_stop=lambda: True, should_update=lambda: updates.append(1) or True, finish_s=0.5, grace_s=2,
+        )
+    assert result.stopped and result.killed and result.returncode != 0
+    assert [msg for _, name, msg in lines if name == "child"] == ["开始", "got finish", "got stop"]
+    assert updates == [] and time.monotonic() - t0 < 20
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings[0].startswith("打完这首歌等了") and warnings[1].startswith("演奏进程"), warnings
 
 
 def test_run_worker_update_once(tmp_path):
@@ -1132,6 +1184,66 @@ def test_watch_stdin_without_update():
     src, seen = _feed(stop, None, "update\n", "stop\n", "update\n")
     _watch_stdin(stop, src, None)
     assert seen == [(False, False)] and stop.is_set()
+
+
+def test_watch_stdin_finish_outside_song():
+    """读到 finish 时没在打歌：立即停止，跟 stop 一样。"""
+    from ournotes_auto.cli import _watch_stdin
+    from ournotes_auto.songgate import SongGate
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    src, seen = _feed(stop, None, "finish\n", "x\n")
+    _watch_stdin(stop, src, None, gate)
+    assert seen[0] == (False, True) and stop.is_set() and gate.pending
+
+
+def test_watch_stdin_finish_in_song():
+    """读到 finish 时正在打歌：先不停止，这首打完（离开 song()）才停止。"""
+    from ournotes_auto.cli import _watch_stdin
+    from ournotes_auto.songgate import SongGate
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    song = gate.song()
+    song.__enter__()
+    seen = []
+
+    def src():
+        yield "finish\n"
+        seen.append(stop.is_set())
+        song.__exit__(None, None, None)
+        seen.append(stop.is_set())
+        yield "x\n"
+
+    _watch_stdin(stop, src(), None, gate)
+    assert seen == [False, True] and stop.is_set() and not gate.in_song
+
+
+def test_watch_stdin_stop_after_finish():
+    """等这首打完的时候又收到 stop（打完等太久）：立即停止，不再等。"""
+    from ournotes_auto.cli import _watch_stdin
+    from ournotes_auto.songgate import SongGate
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    song = gate.song()
+    song.__enter__()
+    src, seen = _feed(stop, None, "finish\n", "stop\n", "more\n")
+    _watch_stdin(stop, src, None, gate)
+    assert seen == [(False, False)] and stop.is_set() and gate.in_song
+    song.__exit__(None, None, None)
+    assert not gate.in_song
+
+
+def test_watch_stdin_finish_without_gate():
+    """没有 gate（不是打歌任务）时 finish 当 stop：立即停止。"""
+    from ournotes_auto.cli import _watch_stdin
+
+    stop = threading.Event()
+    src, seen = _feed(stop, None, "finish\n", "more\n")
+    _watch_stdin(stop, src)
+    assert seen == [] and stop.is_set()
 
 
 WATCH_CHILD = r"""

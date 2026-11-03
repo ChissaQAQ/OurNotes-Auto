@@ -1,3 +1,9 @@
+# What's New in v0.2.4
+
+- New global option "Finish Current Song on Stop" (off by default, #115): when on, clicking Stop during a song waits until that song finishes, its result is recorded and the result screen is left before stopping (up to 10 minutes), so the LB (Challenge Pts in CHALLENGE LIVE) already spent on it isn't wasted. When no song is being played (choosing songs, waiting for LB, Arena matchmaking, claiming dailies, etc.) it still stops right away; to stop right away while this is on, exit the UI (minimizing to the tray doesn't count)
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.4
+
 # What's New in v0.2.3.3
 
 - Flick notes (including flicks at the start and end of long notes) used to land twenty-some milliseconds later than taps, so results leaned SLOW. Flicks now press and swipe 24 ms early by default (#114). Auto-correction had pulled the overall offset a bit earlier to make up for the late flicks; it moves back by itself after a few rounds, so there's no need to change any settings

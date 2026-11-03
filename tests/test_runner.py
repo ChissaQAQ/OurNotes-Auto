@@ -1467,3 +1467,264 @@ def test_rerun_only_when_idle_forever(tmp_path, caplog, case):
     stats = runner.run()
     assert stats.plays == 3 and not stats.rerun and runner._rerun_at is None
     assert ("日期变更后不重跑前面的任务" in caplog.text) == (case == "max_plays")
+
+
+# ---------------------------------------------------------------- 停止时打完当前这首（#115）
+
+
+def _stoppable(method, stop):
+    def call(*a, **kw):
+        if stop.is_set():  # 真的导航在等画面时看到停止就抛错
+            raise NavigationError("已停止")
+        return method(*a, **kw)
+
+    return call
+
+
+def with_gate(runner):
+    """接上 SongGate（开着「停止时打完当前这首」）；导航、演奏像真的一样，已停止时抛错。"""
+    from ournotes_auto.songgate import SongGate
+
+    nav, stop, play = runner.nav, runner.stop, runner.session.play
+    for name in ("start_live", "retry_live", "read_result", "leave_result", "start_arena", "arena_ready", "read_arena_result"):
+        if hasattr(nav, name):
+            setattr(nav, name, _stoppable(getattr(nav, name), stop))
+
+    def stoppable_play(chart, stop_=None, retry=False):
+        if stop.is_set():
+            raise InterruptedError("同步被中止")
+        return play(chart, stop_, retry=retry)
+
+    runner.session.play = stoppable_play
+    gate = SongGate(stop)
+    runner = Runner(runner.cfg, nav, runner.session, runner.client, runner.catalog, runner.store, stop, runner.source, gate=gate)
+    return runner, gate
+
+
+@pytest.mark.parametrize("where", ["start_live", "play", "read_result"])
+def test_stop_after_song_finishes_it(tmp_path, where):
+    """打歌时点停止：这首打完、记下成绩、离开结算页后停止；不算失败，不再换歌，不恢复选曲页的设置。"""
+    runner, nav, store = make(tmp_path)
+    nav.diff = "hard"
+    runner.cfg.loop.max_plays = 0
+    runner.source = src = ApSource(songs=5)
+    runner, gate = with_gate(runner)
+    target = runner.session if where == "play" else nav
+    method = getattr(target, where)
+
+    def requested(*a, **kw):
+        assert gate.request() is True and not runner.stop.is_set()  # 正在打歌：先不停
+        return method(*a, **kw)
+
+    setattr(target, where, requested)
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0 and runner.stop.is_set() and not gate.in_song
+    assert nav.calls == ["ensure:hard", "start:zero", "result", "leave"]
+    assert len(store.history()) == 1
+    assert src.log == [("advance", True), ("done", 100008, "hard", True, True)]
+
+
+def test_stop_after_song_outside_song(tmp_path):
+    """还没点 LIVE START（认歌、取谱面时）点停止：立即停止，这首不打。"""
+    runner, nav, store = make(tmp_path)
+    runner, gate = with_gate(runner)
+    label = nav.selected_song
+
+    def selected():
+        assert gate.request() is False and runner.stop.is_set()  # 没在打歌：立即停止
+        return label()
+
+    nav.selected_song = selected
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 0 and nav.calls == ["ensure:expert"]
+    assert store.history() == []
+
+
+def test_stop_after_song_then_hard_stop(tmp_path):
+    """等这首打完时又被立即停止（等太久、关界面）：照常立即停止，不读结算，不算失败。"""
+    runner, nav, store = make(tmp_path)
+    runner, gate = with_gate(runner)
+
+    def play(chart, stop=None, retry=False):
+        assert gate.request() is True
+        runner.stop.set()
+        raise InterruptedError("同步被中止")
+
+    runner.session.play = play
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 0 and not gate.in_song
+    assert nav.calls == ["ensure:expert", "start:zero"]
+
+
+def test_stop_after_song_error_in_song(tmp_path, caplog):
+    """这首中途出错（如读不到结算）：也算这首结束了，停止，不再开始下一首；记下出错的原因，不报「打完了」。"""
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.max_failures = 3
+    runner, gate = with_gate(runner)
+    play = runner.session.play
+
+    def requested(chart, stop=None, retry=False):
+        gate.request()
+        return play(chart, stop, retry=retry)
+
+    def broken(expected_total=None):
+        raise NavigationError("读不到结算（截图 x.png）")
+
+    runner.session.play, nav.read_result = requested, broken
+    with caplog.at_level("INFO", logger="ournotes_auto.songgate"):
+        stats = runner.run()
+    assert runner.stop.is_set() and not gate.in_song and stats.plays == 0
+    assert [c for c in nav.calls if c.startswith("start")] == ["start:zero"]
+    assert "这首歌没打完（读不到结算（截图 x.png）），停止" in caplog.text and "打完了" not in caplog.text
+
+
+def test_stop_after_song_retries_sync(tmp_path):
+    """等这首打完时同步失败：照常从头重试（LB 已经花了），打完、记下再停止。"""
+    runner, nav, store = make(tmp_path, fails=1)
+    runner, gate = with_gate(runner)
+    start = nav.start_live
+
+    def requested(lb_short="zero"):
+        assert gate.request() is True
+        return start(lb_short)
+
+    nav.start_live = requested
+    stats = runner.run()
+    assert runner.session.retries == [False, True] and stats.plays == 1 and stats.failures == 0
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "result", "leave"] and runner.stop.is_set()
+    assert len(store.history()) == 1
+
+
+def test_stop_after_song_arena_matching(tmp_path):
+    """激奏舞台还在匹配时点停止：对局没开始，立即停止。"""
+    runner, nav, store = make_arena(tmp_path)
+    runner, gate = with_gate(runner)
+    start = nav.start_arena
+
+    def matching(lb_short="zero"):
+        assert gate.request() is False and runner.stop.is_set()
+        return start(lb_short)
+
+    nav.start_arena = matching
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 0 and "ready" not in nav.calls
+    assert store.arena_history() == []
+
+
+def test_stop_after_song_arena(tmp_path):
+    """激奏舞台匹配到对局之后点停止：打完这局、记下名次再停止。"""
+    runner, nav, store = make_arena(tmp_path)
+    runner, gate = with_gate(runner)
+    ready = nav.arena_ready
+
+    def requested():
+        assert gate.request() is True and not runner.stop.is_set()
+        ready()
+
+    nav.arena_ready = requested
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0 and runner.stop.is_set()
+    assert nav.calls == ["ensure:expert", "arena:zero", "ready", "arena_result", "leave"]
+    assert len(store.history()) == 1 and len(store.arena_history()) == 1
+
+
+def test_stop_after_song_while_waiting_lb(tmp_path):
+    """挂机等 LB 时点停止：没在打歌，立即停止。"""
+    runner, nav, starts, _ = idle(tmp_path, [(1, 600)])
+    runner, gate = with_gate(runner)
+
+    def wait(timeout=None):
+        runner.stop.waits.append(timeout)
+        assert gate.request() is False
+        return runner.stop.is_set()
+
+    runner.stop.wait = wait
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0 and len(starts) == 2 and len(runner.stop.waits) == 1
+
+
+def test_stop_after_song_maintenance(tmp_path, monkeypatch):
+    """挂机等这首打完时撞上维护：已经停了，不等开服、不重新登录，也不推送「开服后自动继续」。"""
+    from ournotes_auto import notify
+    from ournotes_auto.runner import ServerMaintenance
+
+    pushed = []
+    monkeypatch.setattr(notify, "push", lambda cfg, event, title, text, wait=True: pushed.append(event))
+    runner, nav, starts, _ = idle(tmp_path, [], exhausted_at=())
+    runner, gate = with_gate(runner)
+
+    def read_result(expected_total=None):
+        assert gate.request() is True
+        raise ServerMaintenance("服务器维护中")
+
+    nav.read_result = read_result
+    nav.relogin = lambda: pytest.fail("已经停了，不该重新登录等开服")
+    stats = runner.run()
+    assert runner.stop.is_set() and stats.plays == 0 and stats.failures == 0 and len(starts) == 1
+    assert pushed == [] and runner.stop.waits == []
+
+
+def test_song_gate():
+    """SongGate：打歌时收到停止请求等这首结束（出错也算）再停止，之后不再开始新的一首；
+    没在打歌时立即停止；立即停止（没收到请求）不拦着开始，照旧由导航自己停。"""
+    from ournotes_auto.songgate import SongGate
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    with gate.song():
+        assert gate.in_song
+        assert gate.request() is True and not stop.is_set()
+    assert stop.is_set() and not gate.in_song
+    with pytest.raises(NavigationError):
+        with gate.song():
+            pytest.fail("收到停止请求后不该开始新的一首")
+    assert not gate.in_song
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    assert gate.request() is False and stop.is_set()
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    with pytest.raises(ValueError):
+        with gate.song():
+            gate.request()
+            raise ValueError
+    assert stop.is_set() and not gate.in_song
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    stop.set()
+    with gate.song():
+        assert gate.in_song
+    assert not gate.in_song and not gate.pending
+
+
+def test_song_gate_race():
+    """停止请求正好在开始一首歌时到达（看过没收到请求、还没记下在打歌）：要么这首不开始，
+    要么打完这首再停止；不会开始了又被立即停止（点了 LIVE START 却不打，LB 白花）。"""
+    from ournotes_auto.songgate import SongGate
+
+    class Racy(SongGate):
+        def __init__(self, stop):
+            self.thread = None
+            super().__init__(stop)
+
+        @property
+        def in_song(self):
+            return self._in_song
+
+        @in_song.setter
+        def in_song(self, value):
+            if value and self.thread is None:  # 正要记下在打歌时收到停止请求
+                self.thread = threading.Thread(target=self.request)
+                self.thread.start()
+                self.thread.join(0.2)  # 有锁时请求等着锁；没锁的话请求在这里就做完了
+            self._in_song = value
+
+    stop = threading.Event()
+    gate = Racy(stop)
+    with gate.song():
+        assert not stop.is_set()  # 开始了这首就打完再停
+    gate.thread.join()
+    assert stop.is_set() and not gate.in_song
