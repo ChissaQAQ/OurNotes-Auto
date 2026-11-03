@@ -45,7 +45,9 @@ class TouchParams:
     flick_distance: float = 0.10  # 滑动距离
     flick_duration_ms: float = 30.0  # 滑动过程时长
     flick_steps: int = 3  # 滑动过程中的 move 次数
-    flick_lead_ms: float = 0.0  # 滑动音符提前按下的时间
+    # 滑动音符（含长条起点、终点的滑动）提前按下、划出的时间：游戏在划出一段距离后才判，
+    # 在原时刻按下划出要晚二十几毫秒（#114 实测）
+    flick_lead_ms: float = 24.0
     # 横滑时同一时刻划去的那一侧还有别的音符：起点反向挪开滑动距离的这个比例（1 为终点正好落在音符中心，0 为关闭）
     flick_neighbor_shift: float = 1.0
     slide_sample_ms: float = 8.0  # 长条移动的采样间隔

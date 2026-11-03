@@ -7,6 +7,7 @@ from ournotes_auto.planner import Action, Planner
 
 
 def make_planner(**kw):
+    kw.setdefault("flick_lead_ms", 0.0)  # 下面的时刻都按滑动不提前写，提前另见 test_flicks_lead_by_default
     return Planner(Geometry(1280, 720), TouchParams(**kw))
 
 
@@ -193,6 +194,8 @@ def test_flick_presses_early_when_tap_follows_in_same_place():
     g = _gesture(notes, "flick#2")
     # 按下离之后的点击超过 155ms（认领范围 130 + 余量 25），离之前的点击 50ms；按住不动，到原时刻再划
     assert [(t, round(y)) for t, _, y in g.points] == [(945, 571), (1000, 571), (1010, 547), (1020, 523), (1030, 499)]
+    # 滑动提前划出时从提前后的时刻再往前推
+    assert [t for t, _, _ in _gesture(notes, "flick#2", flick_lead_ms=24).points] == [946, 976, 986, 996, 1006]
     # 0 为关闭
     assert _gesture(notes, "flick#2", claim_guard_ms=0).start == 1000
 
@@ -224,6 +227,48 @@ def test_trace_and_slide_heads_press_early_on_conflict():
     assert _gesture([PointNote(2, 1000, NoteKind.TAP, Span(8, 16))], "slide", slides=[guide], trace_lead_ms=25).start == 975
 
 
+def test_flicks_lead_by_default():
+    # #114：游戏在划出一段距离后才判滑动，在原时刻按下划出要晚二十几毫秒：默认提前 24ms 按下划出
+    flick = PointNote(1, 1000, NoteKind.FLICK, Span(8, 16))
+    plan = Planner(Geometry(1280, 720), TouchParams()).plan(Chart(1, "expert", notes=[flick]))
+    assert plan.gestures[0].points[0][0] == 976
+
+
+def _tail_flick(nodes, checkpoints=(), head=SlideHead.TAP, **kw):
+    s = Slide(
+        1,
+        nodes,
+        head=head,
+        head_direction=FlickDirection.UP,
+        tail=SlideTail.FLICK,
+        tail_direction=FlickDirection.UP,
+        checkpoints=list(checkpoints),
+    )
+    planner = make_planner(slide_sample_ms=8, flick_duration_ms=30, flick_steps=3, **kw)
+    return planner, planner.plan(Chart(1, "expert", slides=[s])).gestures[0]
+
+
+def test_tail_flick_leads_like_point_flicks():
+    # #114：长条终点的滑动也提前划出：沿路径走到那个时刻的位置，再从那里划
+    nodes = [PathNode(0, Span(0, 6)), PathNode(400, Span(12, 18))]
+    planner, g = _tail_flick(nodes, flick_lead_ms=24)
+    assert [t for t, _, _ in g.points[-4:]] == [376, 386, 396, 406]
+    assert all(t < 376 for t, _, _ in g.points[:-4])
+    x = planner.geo.x_at(3 + 12 * 376 / 400)
+    assert all(p[1] == pytest.approx(x) for p in g.points[-4:])
+    assert [round(g.points[-4][2] - y) for _, _, y in g.points[-3:]] == [24, 48, 72]  # 向上
+    # 经过最后一个中继再划
+    assert _tail_flick(nodes, [390], flick_lead_ms=24)[1].points[-4][0] == 390
+    # 起点滑动回到路径上之后再划（-24ms 按下划出，划完再用 80ms 回到路径上）
+    short = [PathNode(0, Span(0, 6)), PathNode(100, Span(0, 6))]
+    assert _tail_flick(short, head=SlideHead.FLICK, flick_lead_ms=24)[1].points[-4][0] == 86
+    # 终点前还在横移、划出点不在终点区间里：照旧在终点划
+    fast = [PathNode(0, Span(0, 6)), PathNode(380, Span(0, 6)), PathNode(400, Span(18, 24))]
+    assert _tail_flick(fast, flick_lead_ms=24)[1].points[-4][0] == 400
+    # 0 为关闭
+    assert _tail_flick(nodes, flick_lead_ms=0)[1].points[-4][0] == 400
+
+
 # ---------------------------------------------------------------- 拟人化
 
 
@@ -232,6 +277,7 @@ def _by_id(plan):
 
 
 def _seeded(seed, **kw):
+    kw.setdefault("flick_lead_ms", 0.0)
     return Planner(Geometry(1280, 720), TouchParams(**kw), seed=seed)
 
 
