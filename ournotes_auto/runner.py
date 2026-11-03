@@ -10,6 +10,7 @@ import statistics
 import threading
 import time
 from collections import deque
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, NamedTuple, Protocol
@@ -26,6 +27,7 @@ from .records import ArenaResult, PlayResult, RecordStore, next_game_day
 from .result_reader import JUDGEMENTS, ResultCounts, timing_counts
 
 if TYPE_CHECKING:
+    from .songgate import SongGate
     from .sources import SongSource
     from .stats import Tracker
 
@@ -323,6 +325,7 @@ class Runner:
         source: SongSource | None = None,
         update: threading.Event | None = None,
         tracker: Tracker | None = None,
+        gate: SongGate | None = None,
     ):
         from .sources import make_source
 
@@ -336,6 +339,7 @@ class Runner:
         self.update = update or threading.Event()  # 新版本已下载（Agent 经标准输入通知）
         self.source = source or make_source(config, catalog, store)
         self.tracker = tracker  # 统计页（出错只记警告）
+        self.gate = gate  # 「停止时打完当前这首」：打歌时收到停止请求，打完这首再置位 stop
         self.stats = RunStats()
         self._maintenance_pushed = False  # 这次维护推送过了（重新登录出错回到这里时不再推送）
         self.clock = time.monotonic  # 定时领取录音室练习用（测试里换成假时钟）
@@ -403,14 +407,19 @@ class Runner:
             # 谱面站一时连不上：算这局失败，下一局再试（连续失败够多才停）
             raise NavigationError(str(e)) from e
         self.session.learned_offset_ms = self.store.learned_offset_ms + self._chart_offset(chart)
-        self.nav.start_live(lb_short)
-        outcome = self._play(chart)
-        counts = self.nav.read_result(chart.judged_count or None)
-        # 先记下这一局再离开结算页：离开时出错（如遇到没见过的结算页）也不丢记录
-        result = None if outcome is None else self._record(outcome, counts)
-        self.source.done(song, diff, result)
-        self._finish(result)
+        with self._song():
+            self.nav.start_live(lb_short)
+            outcome = self._play(chart)
+            counts = self.nav.read_result(chart.judged_count or None)
+            # 先记下这一局再离开结算页：离开时出错（如遇到没见过的结算页）也不丢记录
+            result = None if outcome is None else self._record(outcome, counts)
+            self.source.done(song, diff, result)
+            self._finish(result)
         return result
+
+    def _song(self) -> AbstractContextManager[None]:
+        """包住一首歌（从点 LIVE START 到离开结算页）：开着「停止时打完当前这首」时，这期间收到的停止请求等它结束再停止。"""
+        return nullcontext() if self.gate is None else self.gate.song()
 
     def _play_arena(self) -> PlayResult | None:
         """激奏舞台一局：开始匹配，在难度选择页认歌、取谱面，准备完毕后演奏，结算后记下乐队、名次、段位分和判定数
@@ -427,41 +436,42 @@ class Runner:
                 self._no_match_since = started
             raise
         self._no_match_since = None
-        song = chart = None
-        try:
-            song, basis = identify_song(self.catalog, label, "expert")
-            logger.info("曲目：%s（%d，expert，%s）", song.display_title(), song.music_id, basis)
-            chart = self.client.chart(song.music_id, "expert", song.display_title())
-        except ChartNotFound:
-            logger.error("谱面站没有 %d_expert，本局不演奏", song.music_id)
-        except (NavigationError, ConnectionError) as e:
-            logger.error("%s，本局不演奏", e)
-        level = song.level("expert") if song else label.level
-        self._status("play", f"{song.display_title() if song else label.title} · EXPERT{f' {level}' if level else ''}")
-        if chart is not None:
-            self.session.learned_offset_ms = self.store.learned_offset_ms + self._chart_offset(chart)
-        self.nav.arena_ready()
-        outcome = None if chart is None else self._play(chart)
-        arena = self.nav.read_arena_result((chart.judged_count or None) if chart else None)
-        rc = arena.counts
-        result = None if outcome is None or rc is None else self._record(outcome, rc)
-        self.store.append_arena(
-            ArenaResult(
-                band=band,
-                placement=arena.placement,
-                ap_gain=arena.ap_gain,
-                ap_total=arena.ap_total,
-                lb_cost=arena.lb_cost,
-                title=label.title,
-                music_id=None if song is None else song.music_id,
-                played=outcome is not None,
-                score=None if rc is None else rc.score,
-                **({} if rc is None else {j: rc.counts.get(j) for j in JUDGEMENTS}),
-                **({} if result is None else {"timestamp": result.timestamp}),  # 统计按时间认出这局的演奏记录
+        with self._song():  # 匹配到对局后退不出去：开着「停止时打完当前这首」时打完这局再停
+            song = chart = None
+            try:
+                song, basis = identify_song(self.catalog, label, "expert")
+                logger.info("曲目：%s（%d，expert，%s）", song.display_title(), song.music_id, basis)
+                chart = self.client.chart(song.music_id, "expert", song.display_title())
+            except ChartNotFound:
+                logger.error("谱面站没有 %d_expert，本局不演奏", song.music_id)
+            except (NavigationError, ConnectionError) as e:
+                logger.error("%s，本局不演奏", e)
+            level = song.level("expert") if song else label.level
+            self._status("play", f"{song.display_title() if song else label.title} · EXPERT{f' {level}' if level else ''}")
+            if chart is not None:
+                self.session.learned_offset_ms = self.store.learned_offset_ms + self._chart_offset(chart)
+            self.nav.arena_ready()
+            outcome = None if chart is None else self._play(chart)
+            arena = self.nav.read_arena_result((chart.judged_count or None) if chart else None)
+            rc = arena.counts
+            result = None if outcome is None or rc is None else self._record(outcome, rc)
+            self.store.append_arena(
+                ArenaResult(
+                    band=band,
+                    placement=arena.placement,
+                    ap_gain=arena.ap_gain,
+                    ap_total=arena.ap_total,
+                    lb_cost=arena.lb_cost,
+                    title=label.title,
+                    music_id=None if song is None else song.music_id,
+                    played=outcome is not None,
+                    score=None if rc is None else rc.score,
+                    **({} if rc is None else {j: rc.counts.get(j) for j in JUDGEMENTS}),
+                    **({} if result is None else {"timestamp": result.timestamp}),  # 统计按时间认出这局的演奏记录
+                )
             )
-        )
-        self.source.done(song, "expert", result)
-        self._finish(result)
+            self.source.done(song, "expert", result)
+            self._finish(result)
         return result
 
     def _finish(self, result: PlayResult | None) -> None:
@@ -896,6 +906,8 @@ class Runner:
                 # 挂机等到开服接着挂（这局没开始或中途被打断，不算失败；之后照常换歌）；其他任务直接失败
                 if not lc.wait_lb:
                     raise
+                if self.stop.is_set():  # 打完这首再停时撞上维护：已经停了，不等开服、不推送
+                    break
                 self._wait_maintenance(e)
                 continue
             except LbExhausted as e:

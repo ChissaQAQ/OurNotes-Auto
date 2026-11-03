@@ -54,6 +54,8 @@
     "opt.WatchCombo.desc": "Monitors the combo count during play and lists the notes around combo breaks in the log afterward",
     "opt.RestartLowFps": "Restart Game When Laggy",
     "opt.RestartLowFps.desc": "During continuous play, if the game gets laggy (frame rate below 50 over the last 5 syncs), restart it before the next song; when off, never restart for this reason",
+    "opt.StopAfterSong": "Finish Current Song on Stop",
+    "opt.StopAfterSong.desc": "If you click Stop while a song is being played, waits until that song finishes, its result is recorded and the result screen is left before stopping, so the LIVE BOOST (Challenge Pts in CHALLENGE LIVE) already spent on it isn't wasted (waits up to 10 minutes); when no song is being played (choosing songs, waiting for LB, Arena matchmaking, dailies, etc.), stops right away; to stop right away while this is on, exit the UI (minimizing to the tray doesn't count)",
     "opt.GameLanguage": "Game Language",
     "opt.GameLanguage.desc": "On the International server, match the language selected under \"Language\" in the Menu at the top right of the game's title screen; 한국어 needs a separate Korean text recognition model. For the Japanese server, choose \"日本語 (Japanese server)\"",
     "opt.GameLanguage.ja": "日本語 (Japanese server)",

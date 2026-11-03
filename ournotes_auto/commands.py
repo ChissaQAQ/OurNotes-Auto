@@ -318,7 +318,8 @@ def cmd_run(cfg: Config, args) -> int:
             "data", getattr(args, "label", None) or "命令行", cfg.loop.wait_lb, library=Library.from_catalog(ctx.catalog), continues=cfg.loop.continues
         )
         update = getattr(args, "update", None)
-        runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source, update, tracker)
+        gate = getattr(args, "gate", None)
+        runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source, update, tracker, gate)
         try:
             stats = runner.run()
         except KeyboardInterrupt:

@@ -233,10 +233,12 @@ ctx = SimpleNamespace(tasker=tasker, get_node_data=lambda name: {"attach": attac
 update = Mock()
 update.busy.return_value = nullcontext()
 seen = []
+finishes = []
 results = []
 
-def worker(cmd, cwd, should_stop, should_update):
+def worker(cmd, cwd, should_stop, should_update, finish_s=0.0):
     seen.append(json.loads(cmd[-1]))
+    finishes.append(finish_s)
     now[0] += 600
     out = results.pop(0)
     if callable(out):
@@ -337,6 +339,46 @@ update.busy.side_effect = [nullcontext(), server.UpdateBusyError("更新尚未�
 ok, msgs = run("idle", RERUN, OK, OK)
 assert ok is True and [p["task"] for p in seen[3:]] == ["idle", "daily", "idle"]
 assert "更新尚未完成" in msgs and "重跑挂机前面的任务（2/2）" in msgs, msgs
+''')
+
+
+def test_rerun_finish_song():
+    """开着「停止时打完当前这首」的挂机：重跑的不打歌任务立即停止，重新启动的挂机照样打完这首再停。"""
+    check(RERUN + '''
+attaches["idle"] = {"rerun_daily": True, "finish_song_on_stop": True}
+ok, msgs = run("idle", RERUN, OK, OK, stop)
+assert ok is False and msgs[-1] == "已停止"
+assert list(zip([p["task"] for p in seen[3:]], finishes[3:])) == [("idle", 600), ("start", 0), ("daily", 0), ("idle", 600)]
+assert finishes[:3] == [0, 0, 0]
+''')
+
+
+def test_finish_song_on_stop():
+    """「停止时打完当前这首」只对连续演奏的任务生效（交给 run_worker 最多等 10 分钟）；别的任务、没开时立即停止。"""
+    check('''
+from contextlib import nullcontext
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+from ournotes_auto.agent import params, server
+from ournotes_auto.agent.worker import WorkerResult
+assert server.RUN_TASKS == params.RUN_TASKS and server.FINISH_SONG_MAX_S == 600
+update = Mock()
+update.busy.return_value = nullcontext()
+
+def finish_s(task, attach):
+    ctx = SimpleNamespace(tasker=SimpleNamespace(stopping=False, controller=SimpleNamespace(info={})), get_node_data=lambda name: {"attach": attach})
+    with patch.object(server, "UPDATE", update), \\
+         patch.object(server, "run_worker", return_value=WorkerResult(0, False, False, False)) as worker:
+        assert server.OurNotesRun().run(ctx, SimpleNamespace(custom_action_param='{"task":"%s"}' % task)) is True
+    return worker.call_args.kwargs["finish_s"]
+
+for task in params.RUN_TASKS:
+    assert finish_s(task, {"finish_song_on_stop": True}) == 600, task
+for task in ("start", "daily", "switch_account", "records", "notify_test"):
+    assert finish_s(task, {"finish_song_on_stop": True}) == 0, task
+for value in (False, "No", "false"):
+    assert finish_s("idle", {"finish_song_on_stop": value}) == 0, value
+assert finish_s("idle", {}) == 0 and finish_s("repeat", {"finish_song_on_stop": "Yes"}) == 600
 ''')
 
 

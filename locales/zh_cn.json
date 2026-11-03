@@ -54,6 +54,8 @@
     "opt.WatchCombo.desc": "演奏时监视连击数，结束后在日志里列出断连处附近的音符",
     "opt.RestartLowFps": "卡顿时重启游戏",
     "opt.RestartLowFps.desc": "连续打歌时游戏变卡（最近 5 次同步测到的帧率低于 50）就在换歌前重启游戏；关掉后不因此重启",
+    "opt.StopAfterSong": "停止时打完当前这首",
+    "opt.StopAfterSong.desc": "点停止时如果正在打歌，等这首歌打完、记下成绩、离开结算页后再停，这局已经花掉的 LIVE BOOST（挑战演出是挑战pt）不浪费，最多等 10 分钟；没在打歌时（选歌、等 LB、激奏舞台匹配中、日常等）立即停止；开着时要立即停止，请退出界面（缩到托盘不算）",
     "opt.GameLanguage": "游戏语言",
     "opt.GameLanguage.desc": "国际服和游戏标题画面右上角菜单「选择语言」里选的一致，한국어要用单独的韩文文字识别模型；玩日服选「日本語（日服）」",
     "opt.GameLanguage.ja": "日本語（日服）",

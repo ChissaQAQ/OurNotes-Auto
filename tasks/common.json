@@ -213,6 +213,22 @@
             ],
             "default_case": "Yes"
         },
+        "StopAfterSong": {
+            "type": "switch",
+            "label": "$opt.StopAfterSong",
+            "description": "$opt.StopAfterSong.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "finish_song_on_stop": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "finish_song_on_stop": false } } }
+                }
+            ],
+            "default_case": "No"
+        },
         "GameLanguage": {
             "type": "select",
             "label": "$opt.GameLanguage",

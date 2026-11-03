@@ -16,6 +16,7 @@ from pathlib import Path
 from . import __version__, sysmem
 from .config import Config, apply_override, load_config, save_config
 from .logfile import file_handler
+from .songgate import SongGate
 
 logger = logging.getLogger("ournotes_auto")
 SECRET_SETTING = re.compile(r"(notify\.target\s*=).*", re.S)  # 推送地址等于密码，日志里不记（键前后有空格也认）
@@ -345,11 +346,18 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _watch_stdin(stop: threading.Event, src, update: threading.Event | None = None) -> None:
+def _watch_stdin(
+    stop: threading.Event, src, update: threading.Event | None = None, gate: SongGate | None = None
+) -> None:
     for line in src:
         cmd = line.strip()
         if cmd == "stop":
             break
+        if cmd == "finish":  # 开着「停止时打完当前这首」：正在打歌时打完这首再停止
+            if gate is None:
+                break
+            logger.info("收到停止请求，打完这首歌再停止" if gate.request() else "收到停止请求")
+            continue
         if cmd == "update" and update is not None:
             logger.debug("收到更新请求")
             update.set()
@@ -357,9 +365,11 @@ def _watch_stdin(stop: threading.Event, src, update: threading.Event | None = No
     stop.set()
 
 
-def start_stdin_watch(stop: threading.Event, update: threading.Event | None = None) -> None:
+def start_stdin_watch(
+    stop: threading.Event, update: threading.Event | None = None, gate: SongGate | None = None
+) -> None:
     """后台线程读标准输入，读到 stop 或输入关闭时置位 ``stop``，读到 update 时置位 ``update``（新版本已下载，
-    挂机在安全的时机退出、由 Agent 重新启动来换上新代码）。
+    挂机在安全的时机退出、由 Agent 重新启动来换上新代码），读到 finish 时交给 ``gate``（正在打歌时打完这首再停止）。
 
     读的是标准输入的私有副本，0 号句柄改指向 NUL：Windows 上同步管道有挂起的读时，
     别处查询标准输入句柄也会一起卡住——加载 numpy 等扩展 DLL 时 CRT 初始化就会查询，
@@ -370,7 +380,7 @@ def start_stdin_watch(stop: threading.Event, update: threading.Event | None = No
     os.dup2(null, 0)
     os.close(null)
     src = os.fdopen(fd, encoding="utf-8", errors="replace")
-    threading.Thread(target=_watch_stdin, args=(stop, src, update), name="stdin-stop", daemon=True).start()
+    threading.Thread(target=_watch_stdin, args=(stop, src, update, gate), name="stdin-stop", daemon=True).start()
 
 
 def _ensure_shortcut() -> None:
@@ -428,8 +438,10 @@ def _main(argv: list[str], label: str | None = None) -> int:
             return 2
     args.stop = threading.Event()  # 需要中途停止的命令用它；Ctrl+C 另外处理
     args.update = threading.Event()  # 挂机收到它后在安全的时机退出（退出码 EXIT_UPDATE），换上新版本再继续
+    args.gate = None  # 「停止时打完当前这首」：Agent 发来 finish 时正在打歌就打完这首再停止
     if args.stdin_stop:
-        start_stdin_watch(args.stop, args.update)
+        args.gate = SongGate(args.stop)
+        start_stdin_watch(args.stop, args.update, args.gate)
     from . import notify
     from .context import SetupError
     from .release import EXIT_RERUN, EXIT_UPDATE
