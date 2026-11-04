@@ -883,6 +883,25 @@ def test_agent_run_bad_payload(cli_main, capsys):
     assert watches == []  # 都没有开始执行
 
 
+def test_agent_run_mumu_lost_is_not_unexpected(cli_main, capsys, monkeypatch):
+    """MuMu 截图重试、重连后还是失败（模拟器卡死、闪退）：界面上说明原因、请重启 MuMu，不当作意外错误刷出调用栈（#119）。"""
+    from ournotes_auto import cli
+    from ournotes_auto.device.mumu_ipc import MuMuIpcError
+
+    main, _ = cli_main
+
+    def lost(cfg, args):
+        raise MuMuIpcError("nemu_capture_display", 4)
+
+    monkeypatch.setattr(cli, "cmd_records", lost)
+    assert main(["agent-run", json.dumps({"task": "records", "attach": {}, "controller": {}})]) == 1
+    errors = _ui_lines(capsys, logging.ERROR)
+    assert errors[-1] == (
+        "MuMu 模拟器连不上或截图失败：nemu_capture_display 失败（返回 4）。模拟器可能卡死或闪退了，请重启 MuMu 后再开始任务"
+    )
+    assert not any("意外错误" in m for m in errors)
+
+
 def test_agent_run_local_task(cli_main, capsys, monkeypatch):
     """本地任务（打开统计窗口）不需要控制器；开始、完成各在界面上显示一行，命令拿到停止 / 更新两个事件、
     打完这首再停的闸门和任务名。"""

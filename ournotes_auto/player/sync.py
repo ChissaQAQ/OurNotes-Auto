@@ -247,6 +247,8 @@ class NoteTracker:
             if params.bar_line_ratio > 0:
                 logger.debug("首音符以外只有 %d 个位置能看小节线，不检查小节线", len(units))
             self._probe_y = self._probe_x = None
+        # 要检查小节线却看不了：开着游戏的「小节线显示」时会跟上比首音符早的小节线、整首提前（#123）
+        self.bar_unchecked = params.bar_line_ratio > 0 and self._probe_x is None
         self._bar_h = max(2, round(_BAR_MAX_H * h))
         width = mask.shape[1] + (0 if self._probe_x is None else self._probe_x.shape[1])
         self.max_start_delay_s = params.max_start_delay_s if max_start_delay_s is None else max_start_delay_s

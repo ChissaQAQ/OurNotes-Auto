@@ -458,8 +458,15 @@ def _main(argv: list[str], label: str | None = None) -> int:
     except KeyboardInterrupt:
         logger.warning("已中断")
         return 130
-    except Exception:
-        logger.exception("意外错误")
+    except Exception as e:
+        from .device.mumu_ipc import MuMuIpcError
+
+        if isinstance(e, MuMuIpcError):
+            # 截图已经重试、重连过（见 device/mumu.py），多半是模拟器卡死、闪退了，不当作意外错误（#119）
+            logger.error("MuMu 模拟器连不上或截图失败：%s。模拟器可能卡死或闪退了，请重启 MuMu 后再开始任务", e)
+            logger.debug("出错的位置", exc_info=True)
+        else:
+            logger.exception("意外错误")
         code = 1
     finally:
         logging.getLogger().removeHandler(errors)

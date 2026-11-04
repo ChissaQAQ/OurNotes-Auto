@@ -1,3 +1,10 @@
+# What's New in v0.2.4.1
+
+- When MuMu screenshots fail (the game crashed, the emulator froze, etc.), it now retries and then reconnects, and carries on if that works; if it still fails, the log explains that MuMu can't be connected or its screenshots keep failing and asks you to restart MuMu, instead of reporting an unexpected error with a long traceback (#119)
+- A few charts whose opening notes cover both sides of the lanes (such as 潜在表明 EXPERT) can't be checked for bar lines during sync, so with the game's "Bar line display" on the whole round runs early and life hits zero. When life hits zero on such a chart, the log now suggests turning "Bar line display" off (#123)
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.4.1
+
 # What's New in v0.2.4
 
 - New global option "Finish Current Song on Stop" (off by default, #115): when on, clicking Stop during a song waits until that song finishes, its result is recorded and the result screen is left before stopping (up to 10 minutes), so the LB (Challenge Pts in CHALLENGE LIVE) already spent on it isn't wasted. When no song is being played (choosing songs, waiting for LB, Arena matchmaking, claiming dailies, etc.) it still stops right away; to stop right away while this is on, exit the UI (minimizing to the tray doesn't count)

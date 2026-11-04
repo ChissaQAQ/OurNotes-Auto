@@ -111,6 +111,7 @@ class PlaySession:
         self._baseline: tuple[str, np.ndarray] | None = None
         # 演出会挡住暂停按钮的谱面（看不到又自己回来了）：之后打这首时看不到也照常触控，免得每次都漏一段
         self._covered: set[str] = set()
+        self._bar_hinted: set[str] = set()  # 提示过关掉「小节线显示」的谱面（每首只提示一次）
         self.last_fps: float | None = None  # 最近一次 play 同步时测到的游戏出帧率（没同步出结果时为 None）
 
     @property
@@ -235,6 +236,14 @@ class PlaySession:
                 self._save_frame("debug/life", chart.key, guard.zero_frame, "判定生命值归零时")
             if self.cfg.play.sync.record_frames:
                 self._dump(tracker, chart, sync)  # 多半是同步跟错了，和同步失败一样保存
+            if tracker.bar_unchecked and chart.key not in self._bar_hinted:
+                self._bar_hinted.add(chart.key)
+                logger.warning(
+                    "%s %s 开头的音符占满轨道两侧，同步时检查不了小节线：游戏开着「小节线显示」时会把比首音符早的小节线"
+                    "当成首音符、整首提前，请在游戏设置里关掉「小节线显示」",
+                    chart.title or chart.music_id,
+                    chart.difficulty.upper(),
+                )
             raise LifeDepleted("演奏中生命值降到 0（整体对不上了）")
         if self.cfg.play.sync.record_frames and self.dump_success:
             self._dump(tracker, chart, sync)
