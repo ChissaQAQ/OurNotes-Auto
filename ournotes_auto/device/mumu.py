@@ -11,9 +11,14 @@ from pathlib import Path
 import numpy as np
 
 from ..config import DeviceConfig
-from .mumu_ipc import MuMuIpc
+from .mumu_ipc import RET_FAILED, MuMuIpc, MuMuIpcError
 
 logger = logging.getLogger(__name__)
+
+# 截图失败（游戏闪退后 display 没了、模拟器卡住等）时每隔 RECOVER_STEP_S 重试，持续 RECOVER_S 秒，再重连一次，
+# 都不行才抛出（#119：以前截图失败一次就当作意外错误把任务停掉）
+RECOVER_S = 10.0
+RECOVER_STEP_S = 1.0
 
 
 class MuMuFrameSource:
@@ -38,7 +43,7 @@ class MuMuFrameSource:
     def grab(self) -> tuple[np.ndarray, float]:
         with self._lock:
             while True:
-                raw = self.ipc.capture_raw()
+                raw = self._capture()
                 t = time.perf_counter()
                 sig = raw[::8, ::8, :3].copy()  # 抽样比较，约 0.1ms
                 changed = self._prev is None or not np.array_equal(sig, self._prev)
@@ -46,6 +51,34 @@ class MuMuFrameSource:
                     self._prev = sig
                     self._last = t
                     return np.ascontiguousarray(raw[::-1, :, 2::-1]), t
+
+    def _capture(self) -> np.ndarray:
+        """截一张；失败时先重试（每次按包名重新查游戏的 display），还不行就重连一次，都失败才抛 :class:`MuMuIpcError`。
+        重连后分辨率变了也抛出：坐标都是按原来的分辨率算的。"""
+        try:
+            return self.ipc.capture_raw()
+        except MuMuIpcError as e:
+            logger.warning("MuMu 截图失败（%s），%.0f 秒内重试", e, RECOVER_S)
+        deadline = time.monotonic() + RECOVER_S
+        while time.monotonic() < deadline:
+            time.sleep(RECOVER_STEP_S)
+            d = self.ipc.game_display_id()
+            if d >= 0 and d != self.ipc.display_id:
+                logger.debug("游戏的 display_id 变了：%s → %s", self.ipc.display_id, d)
+                self.ipc.display_id = d
+            try:
+                raw = self.ipc.capture_raw()
+            except MuMuIpcError:
+                continue
+            logger.info("MuMu 截图恢复了")
+            return raw
+        size = self.size
+        self.ipc.connect()  # 重新连接，重新查 display 和分辨率；连不上时抛 MuMuIpcError
+        if self.size != size:
+            raise MuMuIpcError(f"nemu_capture_display(分辨率从 {size[0]}x{size[1]} 变成了 {self.size[0]}x{self.size[1]})", RET_FAILED)
+        raw = self.ipc.capture_raw()
+        logger.info("重新连接 MuMu 后截图恢复了")
+        return raw
 
 
 class MuMuTouch:

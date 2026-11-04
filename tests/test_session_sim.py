@@ -173,3 +173,42 @@ def test_timed_source_merges_queued_stalls():
         t.join()
     (stall,) = src.stalls()  # 第二个线程排队等的是同一次卡顿
     assert 0.15 <= stall[1] - stall[0] < 0.3
+
+
+def test_life_zero_hints_bar_lines_once_when_unchecked(monkeypatch, caplog):
+    """首音符占满轨道两侧、检查不了小节线的谱面生命值归零时，提示关掉游戏的「小节线显示」，每首只提示一次（#123）。"""
+    from ournotes_auto.player import session as session_mod
+    from ournotes_auto.player.guard import LifeDepleted
+
+    class LifeZeroGuard:
+        def __init__(self, *args, **kwargs):
+            self.hold, self.abort = threading.Event(), threading.Event()
+            self.hidden, self.lost, self.life_zero, self.false_alarm, self.zero_frame = [], False, True, False, None
+
+        def start(self, stop):
+            return self.abort
+
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(session_mod, "PlayGuard", LifeZeroGuard)
+    wide = Chart(1, "expert", "潜在表明", notes=[PointNote(0, 3500, NoteKind.TAP, Span(0, 24))])
+    narrow = Chart(2, "expert", notes=[PointNote(0, 3500, NoteKind.TAP, Span(4, 8))])
+    cfg = Config()
+    cfg.play.sync.stable_frames = 10
+    cfg.play.sync.min_start_delay_s = 0  # 虚拟画面上没有暂停按钮、歌曲马上开始
+    session = PlaySession(cfg, SimGame(wide, now() + 0.3), LogTouch())
+    assert session.prepare(wide)[1].bar_unchecked
+    assert not session.prepare(narrow)[1].bar_unchecked
+    hints = []
+    for _ in range(2):
+        session.source = SimGame(wide, now() + 0.3)
+        caplog.clear()
+        with pytest.raises(LifeDepleted):
+            session.play(wide, stop=threading.Event())
+        hints.append([r.getMessage() for r in caplog.records if "小节线显示" in r.getMessage()])
+    assert len(hints[0]) == 1 and hints[0][0].startswith("潜在表明 EXPERT 开头的音符占满轨道两侧"), hints
+    assert hints[1] == []  # 同一首只提示一次
+
+    cfg.play.sync.bar_line_ratio = 0  # 自己关掉了小节线检查：不算「检查不了」
+    assert not PlaySession(cfg, SimGame(wide, now()), LogTouch()).prepare(wide)[1].bar_unchecked
