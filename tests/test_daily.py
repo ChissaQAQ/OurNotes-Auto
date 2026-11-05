@@ -30,6 +30,7 @@ from ournotes_auto.nav.daily import (
     free_recruit_ok,
     paid_gems,
     recruit_badge,
+    recruit_gift_ok,
     recruit_top,
     reward_close,
     reward_ok,
@@ -647,6 +648,12 @@ def test_recruit_helpers():
     assert recruit_top(near) is None
     for name in ("recruit_free", "recruit_ticket", "recruit_confirm"):
         assert recruit_top(load_items(name)) is None, name
+    gift = recruit_gift_ok(load_items("recruit_gift"))
+    assert gift is not None and math.dist(center(gift), (640, 660)) < 5
+    for extra in ("再次招募", "取消", "购买"):
+        assert recruit_gift_ok([*load_items("recruit_gift"), OcrItem(1089, 645, 96, 28, extra)]) is None, extra
+    for name in ("recruit_result", "recruit_confirm", "daily_gifts_confirm", "recruit_used"):
+        assert recruit_gift_ok(load_items(name)) is None, name
 
 
 def test_recruit_free_pull(clock, monkeypatch, tmp_path):
@@ -664,6 +671,30 @@ def test_recruit_free_pull(clock, monkeypatch, tmp_path):
     assert [p for s, p in game.taps if s == "recruit_confirm"] == [(782, 634)]
     assert len([p for s, p in game.taps if s == "recruit_free" and math.dist(p, (918, 562)) < 30]) == 1
     assert [p for s, p in game.taps if s == "recruit_result"] == [(867, 659)]
+    assert_no_paid_taps(game)
+
+
+def test_recruit_gift_popup(clock, monkeypatch, tmp_path):
+    """生日招募等送赠品：演出 SKIP 后弹出「获得招募赠品」，点 OK 后接着到招募结算（#128，以前认不出、90 秒后报错）。"""
+    monkeypatch.setattr(daily, "RECRUIT_SHOT_DIR", tmp_path / "recruit")
+    monkeypatch.setattr(daily, "log_image", lambda path: None)
+    routes = {"recruit_ticket": [((1206, 46), "recruit_gift")], "recruit_gift": [((640, 660), "recruit_result")]}
+    game = recruit_game(routes=routes)
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["recruit"]) == []
+    assert game.state == "home"
+    assert [p for s, p in game.taps if s == "recruit_gift"] == [(640, 660)]
+    assert len(list((tmp_path / "recruit").glob("*.jpg"))) == 1
+    assert_no_paid_taps(game)
+
+
+def test_go_home_closes_recruit_gift(clock):
+    """上次停在了「获得招募赠品」：回主界面时点 OK，再从招募结算点「招募TOP」。"""
+    game = recruit_game("recruit_gift", routes={"recruit_gift": [((640, 660), "recruit_result")]})
+    nav = daily_nav(game, clock)
+    nav.go_home()
+    assert game.state == "home"
+    assert [s for s, _ in game.taps] == ["recruit_gift", "recruit_result", "recruit_used"]
     assert_no_paid_taps(game)
 
 
