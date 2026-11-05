@@ -1,3 +1,9 @@
+# What's New in v0.2.4.2
+
+- Claim Dailies' free gacha pull: for gachas that give a bonus gift (such as birthday gachas), the gift popup that appears after skipping the animation is now closed with OK, instead of getting stuck for 90 seconds and reporting an error (#128). The gift goes to the gift box either way
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.4.2
+
 # What's New in v0.2.4.1
 
 - When MuMu screenshots fail (the game crashed, the emulator froze, etc.), it now retries and then reconnects, and carries on if that works; if it still fails, the log explains that MuMu can't be connected or its screenshots keep failing and asks you to restart MuMu, instead of reporting an unexpected error with a long traceback (#119)

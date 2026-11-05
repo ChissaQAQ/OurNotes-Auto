@@ -176,6 +176,8 @@ RECRUIT_DIALOG_BAD_FRAMES = 3  # 弹窗上连续这么多帧读不出「消耗0�
 RECRUIT_RESULT_TITLE_ROI: Rect = (440, 40, 400, 55)
 RECRUIT_TOP_ROI: Rect = (740, 630, 260, 60)
 RECRUIT_AGAIN_MIN_DX = 150  # 「招募TOP」离「再次招募」至少这么远才点
+# 生日招募等送赠品时，演出 SKIP 后弹出「获得招募赠品」（「以下道具已发送至礼物盒。」，只有 OK），标题比一般弹窗靠上（#128）
+RECRUIT_GIFT_TITLE_ROI: Rect = (400, 0, 480, 80)
 RECRUIT_TIMEOUT_S = 90.0  # 点了 OK 之后这么久没回到招募页就报错
 RECRUIT_SKIP_RETAP_S = 3.0
 RECRUIT_TOP_RETAP_S = 5.0
@@ -347,6 +349,15 @@ def recruit_top(items: list[OcrItem]) -> OcrItem | None:
     if any(abs(center(it)[0] - center(top)[0]) < RECRUIT_AGAIN_MIN_DX for it in again):
         return None
     return top
+
+
+def recruit_gift_ok(items: list[OcrItem]) -> OcrItem | None:
+    """「获得招募赠品」弹窗（赠品已发送至礼物盒）上的 OK；有「取消」「确定」「购买」「再次招募」时不认。"""
+    if find(items, "获得招募赠品", RECRUIT_GIFT_TITLE_ROI, exact=True) is None or find(items, "已发送至礼物盒") is None:
+        return None
+    if any(find(items, text, exact=True) for text in ("取消", "确定")) or find(items, "购买") or find(items, "再次招募"):
+        return None
+    return find(items, "OK", REWARD_OK_ROI, exact=True)
 
 
 def _gems_text(gems: tuple[int, int | None]) -> str:
@@ -586,6 +597,7 @@ class DailyMixin:
 
     def _settle_recruit(self, timeout_s: float = RECRUIT_TIMEOUT_S) -> Path | None:
         """确认招募之后：演出只点右上角的「SKIP」，到招募结算存一张截图，点「招募TOP」，等回到招募页。返回截图路径。
+        送赠品的招募（如生日招募）中途弹出「获得招募赠品」时点 OK（赠品已发送至礼物盒，#128）。
 
         这里不按通用流程处理画面（招募演出会被认成登录奖励等），认不出的画面什么都不点。
         """
@@ -609,6 +621,10 @@ class DailyMixin:
                 if top_at is None or now - top_at > RECRUIT_TOP_RETAP_S:
                     self.tap(center(top), "招募TOP")
                     top_at = now
+                continue
+            gift = recruit_gift_ok(items)
+            if gift is not None:
+                self.tap(center(gift), "OK（招募赠品）")
                 continue
             if top_at is not None and page_title(items) == "招募":
                 return shot
@@ -771,7 +787,7 @@ class DailyMixin:
 
     def _dismiss(self, screen: Screen, items: list[OcrItem]) -> bool:
         """关掉领取后（或打开页面时）弹出的已知弹窗，做了操作返回 True。"""
-        ok = reward_ok(items) or reward_close(items)
+        ok = reward_ok(items) or reward_close(items) or recruit_gift_ok(items)
         if find(items, "前往帮助", HELP_ROI):
             self._help_step(items)
         elif ok is not None:
