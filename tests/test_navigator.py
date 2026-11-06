@@ -1892,6 +1892,19 @@ def test_ensure_in_game_from_title():
     assert [s for s, _ in game.taps] == ["title", "login_bonus", "reward", "notice"]
 
 
+def test_ensure_in_game_closes_exchange_notice(monkeypatch):
+    """公告之后弹出上期活动交换所的提醒（#131）：点左边的「关闭」，不点右边的「前往交换所」。"""
+    monkeypatch.setitem(TRANSITIONS, "notice", [((640, 654), "event_exchange_notice")])
+    monkeypatch.setitem(TRANSITIONS, "event_exchange_notice", [((497, 570), "home"), ((781, 571), "event_page")])
+    game = FakeGame("title")
+    nav = make_nav(game, game, game)
+    nav.save_debug = lambda *a: None
+    fake_clock(monkeypatch, nav)
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert [s for s, _ in game.taps] == ["title", "login_bonus", "reward", "notice", "event_exchange_notice"]
+    assert tapped(game, (497, 570), radius=2) == ["event_exchange_notice"]
+
+
 def test_restart_game(monkeypatch):
     """游戏变卡了重启：重新登录，停在主界面；没法重启时什么都不做。"""
     game = FakeGame("song_select")
@@ -1974,6 +1987,20 @@ def test_connect_error_gives_up(monkeypatch):
     with pytest.raises(NavigationError, match="连接失败"):
         nav.ensure_in_game()
     assert len(tapped(game, (640, 572))) == navigator.MAX_CONNECT_RETRIES
+    # 任务下一轮还是连接失败：照样等一会儿、重新登录几次再报错，不一看到就报错（#130）
+    with pytest.raises(NavigationError, match="连接失败"):
+        nav.ensure_in_game()
+    assert len(tapped(game, (640, 572))) == 2 * navigator.MAX_CONNECT_RETRIES
+
+
+@pytest.mark.parametrize("state", ["home", "song_select", "arena_top"])
+def test_connect_errors_reset_in_game(state):
+    """进到游戏里（激奏舞台连着打时一直不回主界面）就重新计连接失败的次数（#130）。"""
+    game = FakeGame(state)
+    nav = make_nav(game, game, game, arena=state == "arena_top")
+    nav._connect_errors = navigator.MAX_CONNECT_RETRIES
+    nav.look()
+    assert nav._connect_errors == 0
 
 
 @pytest.mark.parametrize("call", ["ensure_band_confirm", "ensure_in_game", "go_home", "read_result"])

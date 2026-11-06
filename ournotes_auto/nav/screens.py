@@ -185,6 +185,7 @@ OK_POPUP_BLOCK = ("取消", "确定", "购买", "星钻", "恢复", "使用", "�
 CLOSE_ROI: Rect = (540, 620, 200, 70)
 POWER_TITLE_ROI: Rect = (440, 20, 400, 60)
 BOTTOM_LEFT_ROI: Rect = (360, 610, 280, 80)
+EXCHANGE_CLOSE_ROI: Rect = (400, 535, 200, 70)  # 活动交换所提醒的「关闭」在 (497,570)
 # 解锁提示：标题在上方中间（任务页左侧也有「乐曲解锁」「主页解锁」分页，不在这个范围），「关闭」在 (640,570)；
 # 沉浸式主页解锁（领通行证奖励后回主界面时弹出）的弹窗更大，标题在 (640,80)，「关闭」在 (640,613)
 UNLOCK_TITLES = ("乐曲解锁", "故事解锁", "沉浸式主页解锁")
@@ -408,6 +409,9 @@ def classify(items: list[OcrItem]) -> Screen:
         return Screen.POPUP
     # 乐队确认页上点到综合能力打开的「综合能力详情」：左下「关闭」、右下「乐队强化」
     if find(items, "综合能力详情", POWER_TITLE_ROI) and find(items, "关闭", BOTTOM_LEFT_ROI, exact=True):
+        return Screen.POPUP
+    # 启动后弹出的上期活动交换所提醒「活动奖励领取期将于…结束」：左「关闭」、右「前往交换所」，只点「关闭」（#131）
+    if find(items, "奖励领取期") and find(items, "关闭", EXCHANGE_CLOSE_ROI, exact=True):
         return Screen.POPUP
     if find(items, "关闭", UNLOCK_CLOSE_ROI, exact=True) and any(
         find(items, title, UNLOCK_TITLE_ROI, exact=True) for title in UNLOCK_TITLES

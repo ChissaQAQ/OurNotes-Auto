@@ -212,3 +212,28 @@ def test_life_zero_hints_bar_lines_once_when_unchecked(monkeypatch, caplog):
 
     cfg.play.sync.bar_line_ratio = 0  # 自己关掉了小节线检查：不算「检查不了」
     assert not PlaySession(cfg, SimGame(wide, now()), LogTouch()).prepare(wide)[1].bar_unchecked
+
+
+@pytest.mark.parametrize("rough, rough_ok, plays", [(True, True, True), (False, True, False), (True, False, False)])
+def test_rough_sync_plays_only_when_allowed(monkeypatch, rough, rough_ok, plays):
+    """同步不可信只是因为残差偏大（rough）：激奏舞台（rough_ok）照常演奏，不放弃这一局（#130）；
+    别的原因不可信（开始时刻不对、流速对不上），或者能重试的自由演出，照旧报同步失败。"""
+    from ournotes_auto.player.session import SyncFailed
+    from ournotes_auto.player.sync import NoteTracker, SyncResult
+
+    notes = [PointNote(i, 1000 + i * 250, NoteKind.TAP, Span(4, 8)) for i in range(4)]
+    chart = Chart(1, "expert", notes=notes)
+    cfg = Config()
+    cfg.play.guard_lost_s = 0
+    t0 = now() + 0.1
+    sync = SyncResult(t0 + 1.0, t0, [], -40.0, 0.835, 11.0, 1.0, 190.0, False, rough=rough)
+    monkeypatch.setattr(NoteTracker, "wait", lambda self, source, stop=None: sync)
+    touch = LogTouch()
+    session = PlaySession(cfg, SimGame(chart, t0), touch)
+    if plays:
+        outcome = session.play(chart, stop=threading.Event(), rough_ok=rough_ok)
+        assert outcome.sync is sync and len(touch.downs) == len(notes)
+    else:
+        with pytest.raises(SyncFailed):
+            session.play(chart, stop=threading.Event(), rough_ok=rough_ok)
+        assert touch.downs == []

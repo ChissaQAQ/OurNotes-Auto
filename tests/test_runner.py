@@ -101,11 +101,21 @@ class FakeClient:
 
 class FakeSession:
     def __init__(
-        self, fail=False, max_late=0.2, interrupt=False, stalls=(), fails=0, life_zeros=0, fps=(), interrupts=0
+        self,
+        fail=False,
+        max_late=0.2,
+        interrupt=False,
+        stalls=(),
+        fails=0,
+        life_zeros=0,
+        fps=(),
+        interrupts=0,
+        rough=False,
     ):
         """``fail``：同步总是失败；``fails``：前几次同步失败，之后成功；``life_zeros``：前几次演奏中生命值归零；
-        ``interrupt``：演奏总是被打断；``interrupts``：前几次被打断；``fps``：依次每次同步测到的出帧率（用完了是 60）。"""
-        self.fail, self.max_late, self.interrupt = fail, max_late, interrupt
+        ``interrupt``：演奏总是被打断；``interrupts``：前几次被打断；``fps``：依次每次同步测到的出帧率（用完了是 60）；
+        ``rough``：同步失败都只是残差偏大（``SyncResult.rough``）。"""
+        self.fail, self.max_late, self.interrupt, self.rough = fail, max_late, interrupt, rough
         self.interrupts = interrupts
         self.fps = list(fps)
         self.last_fps = None
@@ -115,13 +125,15 @@ class FakeSession:
         self.learned_offset_ms = 0.0
         self.retries: list[bool] = []  # 每次 play 的 retry 参数
 
-    def play(self, chart, stop=None, retry=False):
+    def play(self, chart, stop=None, retry=False, rough_ok=False):
         self.retries.append(retry)
         failed = self.fail or self.fails > 0
         self.fails -= 1
         self.last_fps = self.fps.pop(0) if self.fps else 60.0
-        sync = SyncResult(1.0, 0.0, [], -40.0, 0.835, 1.0, 1.0, 190.0, not failed, fps=self.last_fps)
-        if failed:
+        sync = SyncResult(
+            1.0, 0.0, [], -40.0, 0.835, 1.0, 1.0, 190.0, not failed, fps=self.last_fps, rough=failed and self.rough
+        )
+        if failed and not (rough_ok and sync.rough):
             raise SyncFailed("假失败", sync)
         self.interrupts -= 1
         if self.interrupt or self.interrupts >= 0:
@@ -646,7 +658,7 @@ def test_stop_during_sync_is_not_a_failure(tmp_path):
     """同步时被停止（sync 抛 InterruptedError）：正常结束，不当成意外错误。"""
     runner, nav, store = make(tmp_path)
 
-    def stopped(chart, stop=None, require_sync_ok=True, retry=False):
+    def stopped(chart, stop=None, require_sync_ok=True, retry=False, rough_ok=False):
         runner.stop.set()
         raise InterruptedError("同步被中止")
 
@@ -1003,6 +1015,23 @@ def test_arena_no_retry(tmp_path):
     assert store.history() == []
     (a,) = store.arena_history()
     assert not a.played and a.perfect == 1000
+
+
+def test_arena_plays_rough_sync(tmp_path):
+    """激奏舞台同步不可信只是因为残差偏大（#130）：照常演奏、记下结果，但不拿来修正 offset；
+    能重试的自由演出照旧从头重试。"""
+    runner, nav, store = make_arena(tmp_path, max_plays=1, fails=1, rough=True)
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0
+    assert "retry" not in nav.calls and runner.session.retries == [False]
+    (r,) = store.history()
+    assert r.offset_ms == 3.0 and store.learned_offset_ms == 0.0
+    (a,) = store.arena_history()
+    assert a.played
+    runner, nav, _ = make(tmp_path / "free", fails=1, rough=True)
+    runner.cfg.loop.max_plays = 1
+    runner.run()
+    assert "retry" in nav.calls and runner.session.retries == [False, True]
 
 
 def test_arena_rotate_bands(tmp_path):
@@ -1490,10 +1519,10 @@ def with_gate(runner):
         if hasattr(nav, name):
             setattr(nav, name, _stoppable(getattr(nav, name), stop))
 
-    def stoppable_play(chart, stop_=None, retry=False):
+    def stoppable_play(chart, stop_=None, retry=False, rough_ok=False):
         if stop.is_set():
             raise InterruptedError("同步被中止")
-        return play(chart, stop_, retry=retry)
+        return play(chart, stop_, retry=retry, rough_ok=rough_ok)
 
     runner.session.play = stoppable_play
     gate = SongGate(stop)
@@ -1545,7 +1574,7 @@ def test_stop_after_song_then_hard_stop(tmp_path):
     runner, nav, store = make(tmp_path)
     runner, gate = with_gate(runner)
 
-    def play(chart, stop=None, retry=False):
+    def play(chart, stop=None, retry=False, rough_ok=False):
         assert gate.request() is True
         runner.stop.set()
         raise InterruptedError("同步被中止")
@@ -1563,9 +1592,9 @@ def test_stop_after_song_error_in_song(tmp_path, caplog):
     runner, gate = with_gate(runner)
     play = runner.session.play
 
-    def requested(chart, stop=None, retry=False):
+    def requested(chart, stop=None, retry=False, rough_ok=False):
         gate.request()
-        return play(chart, stop, retry=retry)
+        return play(chart, stop, retry=retry, rough_ok=rough_ok)
 
     def broken(expected_total=None):
         raise NavigationError("读不到结算（截图 x.png）")

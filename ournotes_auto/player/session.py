@@ -153,15 +153,19 @@ class PlaySession:
         stop: threading.Event | None = None,
         require_sync_ok: bool = True,
         retry: bool = False,
+        rough_ok: bool = False,
     ) -> PlayOutcome:
         """需在进入演奏画面、首音符出现之前调用（通常在点击开始后立即调用）。
 
-        ``retry``：刚在暂停菜单点了重试（歌曲立即从头开始，沿用上一次的跟踪区基线，见 player/sync.py）。"""
+        ``retry``：刚在暂停菜单点了重试（歌曲立即从头开始，沿用上一次的跟踪区基线，见 player/sync.py）。
+        ``rough_ok``：同步不可信只是因为残差偏大时（``SyncResult.rough``）照常演奏，用于不能重试的激奏舞台。"""
         # 同步和演奏用最高优先级，打完恢复：导航、文字识别用不着，一直占着会抢别的程序的 CPU
         with raised_thread_priority():
-            return self._play(chart, stop, require_sync_ok, retry)
+            return self._play(chart, stop, require_sync_ok, retry, rough_ok)
 
-    def _play(self, chart: Chart, stop: threading.Event | None, require_sync_ok: bool, retry: bool) -> PlayOutcome:
+    def _play(
+        self, chart: Chart, stop: threading.Event | None, require_sync_ok: bool, retry: bool, rough_ok: bool
+    ) -> PlayOutcome:
         plan, tracker = self.prepare(chart, retry)
         self.last_fps = None
         try:
@@ -175,9 +179,11 @@ class PlaySession:
                 self._baseline = (chart.key, tracker.clean_baseline)
         self.last_fps = sync.fps or None
         if not sync.ok and require_sync_ok:
-            if self.cfg.play.sync.record_frames:
-                self._dump(tracker, chart, sync)
-            raise SyncFailed("首音符同步失败：" + "；".join(sync.notes), sync)
+            if not (rough_ok and sync.rough):
+                if self.cfg.play.sync.record_frames:
+                    self._dump(tracker, chart, sync)
+                raise SyncFailed("首音符同步失败：" + "；".join(sync.notes), sync)
+            logger.warning("首音符同步存疑（残差 %.1fms，外推误差 ±%.1fms），照常演奏", sync.rms_ms, sync.sigma_ms)
         offset = self.offset_ms
         lead_ms = (sync.t0 + (plan.first_ms + offset) / 1000 - now()) * 1000
         if lead_ms < 0:

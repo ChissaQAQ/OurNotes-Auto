@@ -1,3 +1,11 @@
+# What's New in v0.2.4.3
+
+- When the game shows the previous event's exchange reminder after launch ("the reward claim period ends on …"), it now taps Close (never "Go to Exchange") instead of getting stuck (#131)
+- Connection error retries: during long Arena runs that never return to the home screen, a few occasional disconnects used to make every later connection error fail at once, stopping after 5 failures within seconds. The count now resets once back in the game, and each error waits a while and logs in again (#130)
+- Arena: when the first-note sync is doubtful only because the game dropped frames, it now plays the song anyway instead of sitting out the match (#130). Such plays are not used to adjust the offset
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.4.3
+
 # What's New in v0.2.4.2
 
 - Claim Dailies' free gacha pull: for gachas that give a bonus gift (such as birthday gachas), the gift popup that appears after skipping the animation is now closed with OK, instead of getting stuck for 90 seconds and reporting an error (#128). The gift goes to the gift box either way

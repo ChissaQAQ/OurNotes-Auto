@@ -455,7 +455,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         if screen in (Screen.TITLE, Screen.DATE_CHANGE):
             self._filter_status = None  # 重新登录后游戏里的筛选不一定还是原来的
         if screen is Screen.HOME:
-            self._restarts = self._connect_errors = 0
+            self._restarts = 0
+        if screen in IN_GAME_SCREENS:  # 激奏舞台连着打时可以一直不回主界面（#130）
+            self._connect_errors = 0
         if screen is Screen.UNKNOWN:
             self._check_app()
         else:
@@ -702,6 +704,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         elif screen is Screen.CONNECT_ERROR:
             self._connect_errors += 1
             if self._connect_errors > MAX_CONNECT_RETRIES:
+                # 任务下一轮再看到「连接失败」时照样等一会儿、重新登录，不一看到就报错（#130）
+                self._connect_errors = 0
                 raise self._fail(f"连续 {MAX_CONNECT_RETRIES} 次重新登录都连接失败（网络或服务器问题）")
             logger.warning("连接失败（发生网络连接错误），%.0f 秒后回到标题画面重新登录", CONNECT_RETRY_WAIT_S)
             self._sleep(CONNECT_RETRY_WAIT_S)
