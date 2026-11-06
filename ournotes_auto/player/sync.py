@@ -94,6 +94,9 @@ class SyncResult:
     frames: int = 0
     notes: list[str] = field(default_factory=list)
     fps: float = 0.0  # 跟踪首音符期间游戏的出帧率（音符一直在动，每帧都不一样）
+    # 不可信只是因为残差偏大（游戏掉帧、截图时刻抖动）：样本够、外推误差小，流速和歌曲开始时刻也对得上。
+    # 不能重试的激奏舞台照常演奏（见 PlaySession.play），不白白放弃一局
+    rough: bool = False
 
 
 @dataclass
@@ -513,13 +516,17 @@ class NoteTracker:
         delay = t0 - self._begin_t
         if why := self._intro(delay):
             return self._rearm(crop, t_now, why)
-        if self.max_start_delay_s > 0 and delay > self.max_start_delay_s:
+        late = self.max_start_delay_s > 0 and delay > self.max_start_delay_s
+        if late:
             ok = False
             notes.append(f"推算的歌曲开始时刻在开始同步 {delay:.1f}s 后，跟踪到的多半不是第一个音符")
         span = t_now - self._first_seen if self._first_seen is not None else 0.0
         fps = (self._seen_frames - 1) / span if span > 0 else 0.0
-        if self.p.tau_s > 0 and abs(fit.tau / self.p.tau_s - 1) > 0.05:
+        tau_off = self.p.tau_s > 0 and abs(fit.tau / self.p.tau_s - 1) > 0.05
+        if tau_off:
             notes.append(f"τ={fit.tau:.3f}s 与配置的 {self.p.tau_s:.3f}s 相差较大，游戏流速可能已修改，建议重新校准")
+        enough = len(ts) >= self.p.min_samples and sigma_ms <= self.p.max_sigma_ms
+        rough = not ok and enough and not late and not tau_off
         result = SyncResult(
             arrival=arrival,
             t0=t0,
@@ -533,6 +540,7 @@ class NoteTracker:
             frames=self._frames,
             notes=notes,
             fps=fps,
+            rough=rough,
         )
         logger.debug(
             "同步%s：%d 个样本，%.0ffps，τ=%.3fs，残差 %.2fms，外推误差 ±%.2fms，距到达 %.0fms，歌曲开始于 %+.1fs（%s）",

@@ -526,13 +526,13 @@ class Runner:
 
         首音符同步失败、演奏中生命值归零（整体对不上了）、演奏中被暂停时从头重试，最多 ``loop.sync_retries`` 次：
         干等这首歌放完几乎拿不到分，这一局消耗的 LB 就浪费了（「终止」也拿不到演出奖励）。
-        激奏舞台没有暂停，不重试。
+        激奏舞台没有暂停，不重试；同步不可信只是因为残差偏大时照常演奏（见 ``SyncResult.rough``，#130）。
         """
         retries = 0
         while True:
             interrupted = False
             try:
-                return self.session.play(chart, self.stop, retry=retries > 0)
+                return self.session.play(chart, self.stop, retry=retries > 0, rough_ok=self.cfg.loop.arena)
             except (SyncFailed, SyncTimeout, LifeDepleted, PlayInterrupted) as e:
                 interrupted = isinstance(e, PlayInterrupted)
                 if retries >= self.cfg.loop.sync_retries or self.cfg.loop.arena or self.stop.is_set():
@@ -597,6 +597,8 @@ class Runner:
             why = f"本局执行不稳定（{late} 批迟到超过 4ms）"
         elif total and missed > 0.1 * total:
             why = f"GOOD/BAD/MISS 共 {missed} 个（总 {total}），可能同步到了错误的音符"
+        elif not outcome.sync.ok:
+            why = "首音符同步存疑"
         else:
             why = None
         if why is None:

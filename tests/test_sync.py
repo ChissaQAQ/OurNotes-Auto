@@ -78,6 +78,17 @@ def test_tracker_extrapolates_arrival(fps, tau_s):
     assert np.std(errs) < 1.5, errs
 
 
+def test_tracker_rough_when_only_residual_is_large():
+    """截图时刻抖得厉害（游戏掉帧）：残差超过上限、同步不可信，但样本多、外推误差小，到达时刻照样准，
+    标成 rough（激奏舞台照常演奏，#130）；流速对不上时不算。"""
+    geo = Geometry(W, H)
+    result, arrival = simulate(geo, geo, 60, 0.835, np.random.default_rng(0), jitter_s=0.03)
+    assert not result.ok and result.rough, result
+    assert abs((result.arrival - arrival) * 1000 - 15) < 8  # 减去截图时刻抖动的均值 15ms
+    off, _ = simulate(geo, geo, 60, 0.7, np.random.default_rng(0), jitter_s=0.03)
+    assert not off.ok and not off.rough, off
+
+
 @pytest.mark.parametrize("tau_s", [0.262, 0.835, 1.3])
 def test_center_lag_scales_with_tau(tau_s):
     """前沿比音符中间早到的时间与 τ 成正比：offset 是在流速 5.00（τ=0.835）下得到的，其他流速按 τ 之差修正。"""
@@ -353,7 +364,7 @@ def test_tracker_rejects_late_start():
 
     assert run(9.0).ok
     late = run(25.0)
-    assert not late.ok
+    assert not late.ok and not late.rough  # 激奏舞台也不照常演奏：会在歌放完以后还在点
     assert any("第一个音符" in n for n in late.notes), late.notes
 
 

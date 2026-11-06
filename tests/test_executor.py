@@ -167,7 +167,7 @@ def test_executor_priority_restored():
 def test_session_play_priority_restored():
     """同步和演奏整局都是最高优先级（里面 Executor 出来时不降下来），出了 play 恢复；出错也恢复。"""
 
-    def _play(chart, stop, require_sync_ok, retry):
+    def _play(chart, stop, require_sync_ok, retry, rough_ok):
         with raised_thread_priority():
             pass
         return _thread_priority()

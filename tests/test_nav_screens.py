@@ -153,6 +153,7 @@ def load(name: str) -> list[OcrItem]:
         ("story_player", Screen.UNKNOWN),
         ("daily_missions", Screen.UNKNOWN),  # 任务页左侧的「乐曲解锁」分页不算
         ("notice", Screen.POPUP),  # 登录后的公告
+        ("event_exchange_notice", Screen.POPUP),  # 上期活动交换所的提醒，左「关闭」右「前往交换所」（#131）
         # 激奏舞台（夹具里的玩家昵称都去掉了）
         ("arena_top", Screen.ARENA_TOP),
         ("arena_top_lb_timer", Screen.ARENA_TOP),  # LB 没满，右上角有恢复倒计时
