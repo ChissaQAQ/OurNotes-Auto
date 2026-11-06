@@ -104,12 +104,11 @@ class ChallengeRotate(_Source):
 
 
 class ArenaBands(_Source):
-    """激奏舞台：转盘定歌、只有 EXPERT，这里只选乐队。``current`` 不换；指定一个乐队时每局前确认是它；
-    ``rotate`` 从当前乐队开始按首页 ▶▶ 的顺序每队打 ``games`` 局再换下一队。"""
+    """激奏舞台：转盘定歌，打 ``difficulty``（默认 EXPERT，#134），这里只选乐队。``current`` 不换；指定一个乐队时
+    每局前确认是它；``rotate`` 从当前乐队开始按首页 ▶▶ 的顺序每队打 ``games`` 局再换下一队。"""
 
-    difficulty = "expert"
-
-    def __init__(self, band: str, games: int = 1):
+    def __init__(self, band: str, games: int = 1, difficulty: str = "expert"):
+        self.difficulty = difficulty
         self.band = band
         self.games = max(1, games)
         self._current: str | None = None
@@ -583,7 +582,7 @@ def make_source(cfg: Config, catalog: Catalog | None = None, store: RecordStore 
             raise ValueError("激奏舞台（loop.arena）和挑战演出（loop.challenge）不能同时打开")
         if cfg.loop.arena_band not in ARENA_BAND_MODES:
             raise ValueError(f"未知的激奏舞台乐队：{cfg.loop.arena_band}（可选 {'/'.join(ARENA_BAND_MODES)}）")
-        return ArenaBands(cfg.loop.arena_band, cfg.loop.arena_games_per_band)
+        return ArenaBands(cfg.loop.arena_band, cfg.loop.arena_games_per_band, difficulty)
     if cfg.loop.challenge and mode not in CHALLENGE_SONG_MODES:
         raise ValueError(f"挑战演出只能用 {'/'.join(CHALLENGE_SONG_MODES)} 选曲模式，而不是 {mode}")
     if mode == "rotate" and not cfg.loop.challenge:

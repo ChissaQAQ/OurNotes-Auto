@@ -120,7 +120,7 @@ def test_run_passes_tracker(monkeypatch):
 
 
 def test_run_arena_args(monkeypatch):
-    """--arena：激奏舞台只打 EXPERT、不跳过、至少 1% GREAT、时机偏移至少 ±16ms；--arena-band、--arena-games 选乐队和每个乐队的局数。"""
+    """--arena：激奏舞台打 -d 的难度（#134）、不跳过、至少 1% GREAT、时机偏移至少 ±16ms；--arena-band、--arena-games 选乐队和每个乐队的局数。"""
     args = build_parser().parse_args(["run", "--arena", "--arena-band", "rotate", "--arena-games", "2"])
     assert (args.arena, args.arena_band, args.arena_games) == (True, "rotate", 2)
     with pytest.raises(SystemExit):
@@ -128,7 +128,7 @@ def test_run_arena_args(monkeypatch):
     fake_run(monkeypatch, launched=False, arena=True, arena_band="rotate", arena_games=2, difficulty="hard", use_skip=True)
     cfg = runner.Runner.args[0]
     assert cfg.loop.arena and (cfg.loop.arena_band, cfg.loop.arena_games_per_band) == ("rotate", 2)
-    assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip) == ("expert", "current", False)
+    assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip) == ("hard", "current", False)
     assert cfg.play.touch.great_ratio == 0.01 and cfg.play.touch.jitter_ms == 16.0
     with pytest.raises(commands.SetupError, match="不能同时打开"):
         fake_run(monkeypatch, launched=False, arena=True, challenge=True)

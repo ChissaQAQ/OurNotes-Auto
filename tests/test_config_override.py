@@ -169,7 +169,7 @@ def test_check_run_config_arena():
 
 
 def test_arena_defaults():
-    """激奏舞台只打 EXPERT、没有选曲和跳过；GREAT 至少 1%、时机偏移至少 ±16ms（#110），拟人化设得更多时按设置。
+    """激奏舞台打设定的难度（#134）、没有选曲和跳过；GREAT 至少 1%、时机偏移至少 ±16ms（#110），拟人化设得更多时按设置。
     别的任务不动。"""
     cfg = Config()
     cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip = "hard", "random", True
@@ -178,7 +178,7 @@ def test_arena_defaults():
     assert cfg.play.touch.jitter_ms == 0.0
     cfg.loop.arena = True
     arena_defaults(cfg)
-    assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip, cfg.play.touch.great_ratio) == ("expert", "current", False, 0.01)
+    assert (cfg.game.difficulty, cfg.loop.song_mode, cfg.loop.use_skip, cfg.play.touch.great_ratio) == ("hard", "current", False, 0.01)
     assert cfg.play.touch.jitter_ms == 16.0
     cfg.play.touch.great_ratio, cfg.play.touch.jitter_ms = 0.05, 20.0
     arena_defaults(cfg)

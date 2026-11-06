@@ -257,9 +257,14 @@ def _challenge_settings(attach: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _arena_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
-    """激奏舞台：LB 选项同重复刷歌（激奏舞台）/ 挂机（挂机（激奏舞台））。只打 EXPERT、不跳过、
-    GREAT 比例至少 1%、时机偏移至少 ±16ms 由 ``run`` 命令统一设（见 :func:`~ournotes_auto.commands.arena_defaults`）。"""
-    sets = {"loop.arena": "true", "loop.arena_band": (band := _choice(attach, "arena_band", ARENA_BAND_MODES))}
+    """激奏舞台：``arena_difficulty``（四个难度，#134；资源是旧版、没有这一项时打 EXPERT），LB 选项同重复刷歌
+    （激奏舞台）/ 挂机（挂机（激奏舞台））。不跳过、GREAT 比例至少 1%、时机偏移至少 ±16ms 由 ``run`` 命令统一设
+    （见 :func:`~ournotes_auto.commands.arena_defaults`）。"""
+    sets = {
+        "loop.arena": "true",
+        "loop.arena_band": (band := _choice(attach, "arena_band", ARENA_BAND_MODES)),
+        "game.difficulty": _choice(attach, "arena_difficulty", DIFFICULTIES) if "arena_difficulty" in attach else "expert",
+    }
     if band == "rotate":
         sets["loop.arena_games_per_band"] = str(_int(attach, "arena_games_per_band", 1))
     if task == "arena":
@@ -295,8 +300,8 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     ``daily_claim`` ``daily_claim_time``（每天定时领取日常），其他任务不领；还有 ``rerun_daily``（见 :func:`_rerun`）。
     挑战演出只有 ``challenge_song_mode``（current / rotate / ap_first）、``difficulty`` 和 ``challenge_cost``
     （``keep`` 或 200/400/800/1600），不用 LB 相关的选项。
-    激奏舞台 / 挂机（激奏舞台）没有选曲和难度，另有 ``arena_band``（current、各乐队或 rotate，rotate 时还有
-    ``arena_games_per_band``），LB 选项分别同重复刷歌 / 挂机，挂机（激奏舞台）同样定时领取。
+    激奏舞台 / 挂机（激奏舞台）没有选曲，另有 ``arena_difficulty``（四个难度）和 ``arena_band``（current、各乐队或
+    rotate，rotate 时还有 ``arena_games_per_band``），LB 选项分别同重复刷歌 / 挂机，挂机（激奏舞台）同样定时领取。
     """
     if task not in RUN_TASKS:
         raise ParamError(f"未知任务：{task}")

@@ -113,7 +113,7 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 
 チャレンジライブ（`--challenge`）は 1 回ごとに `game.challenge_cost`（`--challenge-cost`、200 / 400 / 800 / 1600、デフォルト 200。null ならゲーム内の設定を変更しない）のチャレンジpt を消費し、LB は消費せず、CP が 1 回分に足りなくなるまでプレイします。そのため `--until-lb-empty`、`--wait-lb`、`--lb-refill` とは併用できません。
 
-撃奏アリーナ（`--arena` / `loop.arena`）：ルーレットで曲が決まり、EXPERT だけをプレイし、スキップせず、`play.touch.great_ratio` は少なくとも 0.01 として扱います（マルチ対戦は AP の必要がないため）。`--lb-cost`、`--lb-auto`、`--lb-refill`、`--until-lb-empty`、`--wait-lb` の使い方はフリーライブと同じで、撃奏アリーナのトップの「LB消費」で設定します。`--arena-band`（`loop.arena_band`）でバンドを選びます：`current`（デフォルト）は変えません。`mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` は毎回の前にそのバンドに切り替えます。`rotate` はいまのバンドから始め、ゲーム内の順に各バンドで `--arena-games`（`loop.arena_games_per_band`、デフォルト 1）回プレイしたら次のバンドに替えます。`--challenge` とは併用できません。毎回のバンド、順位、ランクポイントの増減、増減後のランクポイント、消費した LB、判定数は `data/arena.jsonl` に記録します。
+撃奏アリーナ（`--arena` / `loop.arena`）：ルーレットで曲が決まり、`game.difficulty`（`-d`、デフォルトは EXPERT）をプレイし、スキップせず、`play.touch.great_ratio` は少なくとも 0.01 として扱います（マルチ対戦は AP の必要がないため）。`--lb-cost`、`--lb-auto`、`--lb-refill`、`--until-lb-empty`、`--wait-lb` の使い方はフリーライブと同じで、撃奏アリーナのトップの「LB消費」で設定します。`--arena-band`（`loop.arena_band`）でバンドを選びます：`current`（デフォルト）は変えません。`mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` は毎回の前にそのバンドに切り替えます。`rotate` はいまのバンドから始め、ゲーム内の順に各バンドで `--arena-games`（`loop.arena_games_per_band`、デフォルト 1）回プレイしたら次のバンドに替えます。`--challenge` とは併用できません。毎回のバンド、順位、ランクポイントの増減、増減後のランクポイント、消費した LB、判定数は `data/arena.jsonl` に記録します。
 
 1 曲だけを選択する（楽曲選択画面で止めておく）：`ournotes-auto select 碧天伴走 [--category 全部]`。
 

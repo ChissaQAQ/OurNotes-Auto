@@ -565,6 +565,23 @@ def test_live_options_cancel_in_arena_waits(monkeypatch, arena):
     assert waited > ARENA_OPTIONS_WAIT_S if arena else waited == 1
 
 
+@pytest.mark.parametrize("difficulty, button, level", [("expert", (1200, 545), 24), ("hard", (1068, 545), 19)])
+def test_arena_plays_set_difficulty(monkeypatch, difficulty, button, level):
+    """激奏舞台按设定的难度（#134）：难度选择页读这个难度的等级，准备完毕前点这个难度的按钮。"""
+    monkeypatch.setitem(TRANSITIONS, "arena_top", [((1140, 640), "arena_match_confirm")])
+    monkeypatch.setitem(TRANSITIONS, "arena_match_confirm", [((782, 660), "arena_difficulty")])
+    monkeypatch.setitem(TRANSITIONS, "arena_difficulty", [((1140, 640), "playing")])
+    game = FakeGame("arena_top")
+    nav = make_nav(game, game, game, arena=True)
+    nav.cfg.game.difficulty = difficulty
+    fake_clock(monkeypatch, nav)
+    song = nav.start_arena()
+    assert (song.title, song.difficulty, song.level) == ("端程山", difficulty, level)
+    game.taps.clear()
+    nav.arena_ready()
+    assert len(game.taps) == 2 and math.dist(game.taps[0][1], button) < 2 and math.dist(game.taps[1][1], (1140, 640)) < 2
+
+
 @pytest.mark.parametrize("lang", ["", "zh_hant_", "en_", "ja_", "ko_"])
 def test_arena_ready_live_options_start(monkeypatch, lang):
     """#111：点了准备完毕后弹出演出前选项设置（日服见到过），和自由演出一样点右边的「演出」（ライブ、LIVE……），

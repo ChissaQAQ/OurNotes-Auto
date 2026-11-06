@@ -224,12 +224,11 @@ def check_run_config(cfg: Config) -> None:
 
 
 def arena_defaults(cfg: Config) -> None:
-    """激奏舞台：转盘定歌、只打 EXPERT，没有选曲和跳过；多人对局不用 AP，至少故意打 ARENA_GREAT_RATIO 的 GREAT，
-    时机偏移至少 ARENA_JITTER_MS。"""
+    """激奏舞台：转盘定歌，打 ``game.difficulty``（默认 EXPERT，#134），没有选曲和跳过；多人对局不用 AP，
+    至少故意打 ARENA_GREAT_RATIO 的 GREAT，时机偏移至少 ARENA_JITTER_MS。"""
     if not cfg.loop.arena:
         return
     cfg.loop.song_mode = "current"
-    cfg.game.difficulty = "expert"
     cfg.loop.use_skip = False
     cfg.play.touch.great_ratio = max(cfg.play.touch.great_ratio, ARENA_GREAT_RATIO)
     cfg.play.touch.jitter_ms = max(cfg.play.touch.jitter_ms, ARENA_JITTER_MS)
