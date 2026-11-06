@@ -113,7 +113,7 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 
 挑戰演出（`--challenge`）每局消耗 `game.challenge_cost`（`--challenge-cost`，200 / 400 / 800 / 1600，預設 200；null 為不改遊戲裡的設定）挑戰pt，不消耗 LB，打到 CP 不夠一局為止，所以不能和 `--until-lb-empty`、`--wait-lb`、`--lb-refill` 一起用。
 
-激奏舞台（`--arena` / `loop.arena`）：轉盤決定歌曲，只打 EXPERT，不跳過，`play.touch.great_ratio` 至少按 0.01 算（多人對局不用 AP）；`--lb-cost`、`--lb-auto`、`--lb-refill`、`--until-lb-empty`、`--wait-lb` 的用法同自由演出，在激奏舞台首頁的「消耗LB」裡設定。`--arena-band`（`loop.arena_band`）選樂團：`current`（預設）不換；`mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` 每局前換到這個樂團；`rotate` 從目前的樂團開始依遊戲裡的順序每個樂團打 `--arena-games`（`loop.arena_games_per_band`，預設 1）局再換下一個。不能和 `--challenge` 一起用。每局的樂團、名次、段位分增減、加減後的段位分、消耗的 LB 和判定數記在 `data/arena.jsonl`。
+激奏舞台（`--arena` / `loop.arena`）：轉盤決定歌曲，打 `game.difficulty`（`-d`，預設 EXPERT），不跳過，`play.touch.great_ratio` 至少按 0.01 算（多人對局不用 AP）；`--lb-cost`、`--lb-auto`、`--lb-refill`、`--until-lb-empty`、`--wait-lb` 的用法同自由演出，在激奏舞台首頁的「消耗LB」裡設定。`--arena-band`（`loop.arena_band`）選樂團：`current`（預設）不換；`mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` 每局前換到這個樂團；`rotate` 從目前的樂團開始依遊戲裡的順序每個樂團打 `--arena-games`（`loop.arena_games_per_band`，預設 1）局再換下一個。不能和 `--challenge` 一起用。每局的樂團、名次、段位分增減、加減後的段位分、消耗的 LB 和判定數記在 `data/arena.jsonl`。
 
 單獨選中一首歌（停在「選擇樂曲」頁）：`ournotes-auto select 碧天伴走 [--category 全部]`。
 

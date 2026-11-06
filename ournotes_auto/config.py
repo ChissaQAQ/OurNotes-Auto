@@ -223,7 +223,7 @@ class LoopConfig:
     max_plays: int = 0  # 0 表示不限次数
     # 打挑战演出（部分活动期间开放，消耗挑战pt，见 game.challenge_cost）而不是自由演出，打到 CP 不够一局为止
     challenge: bool = False
-    # 打激奏舞台（多人对局，转盘定歌，只打 EXPERT）而不是自由演出；LB 消耗同自由演出（game.lb_cost / lb_auto），不能用跳过
+    # 打激奏舞台（多人对局，转盘定歌，打 game.difficulty）而不是自由演出；LB 消耗同自由演出（game.lb_cost / lb_auto），不能用跳过
     arena: bool = False
     # 激奏舞台选哪个乐队：current 不换；mygo / avemujica / mewtype / millsage / dumbrock 指定一个；
     # rotate 从当前乐队开始按游戏里的顺序每队打 arena_games_per_band 局再换下一队

@@ -255,7 +255,13 @@ ARENA_PLACE_ROI: Rect = (20, 330, 200, 150)  # 排名页左边自己的名次（
 ARENA_SONG_ROI: Rect = (780, 385, 490, 50)  # 难度选择页右边封面下的曲名
 # 难度选择页右边转盘定下的那首歌的大封面（#107，要贴边：裁小到 280 就认不出了）。匹配确认页上的封面是自己带的歌，不是这首
 ARENA_JACKET_ROI: Rect = (855, 81, 300, 300)
-ARENA_LEVEL_ROI: Rect = (1140, 510, 130, 45)  # 难度选择页 EXPERT 上面的等级数字
+# 难度选择页各难度按钮上面的等级数字（按钮从左到右 EASY / NORMAL / HARD / EXPERT，相隔约 130）
+ARENA_LEVEL_ROIS: dict[str, Rect] = {
+    "easy": (748, 510, 125, 45),
+    "normal": (877, 510, 125, 45),
+    "hard": (1008, 510, 125, 45),
+    "expert": (1140, 510, 130, 45),
+}
 MATCH_OK_ROI: Rect = (640, 630, 300, 60)  # 匹配确认：左取消右 OK
 # 激奏舞台的页面认不出时（还没适配的语言，#105）按不分语言的特征猜（见 arena_guess）：首页、匹配确认、难度选择、
 # 排名页上各有一排撃奏（别的页面都没有），各页这一排的高度不同
@@ -634,11 +640,11 @@ def band_confirm_song(items: list[OcrItem]) -> tuple[str, str | None]:
     return title, diff
 
 
-def arena_song(items: list[OcrItem]) -> tuple[str, int | None]:
-    """激奏舞台难度选择页上转盘定下的 (曲名, EXPERT 等级)。"""
+def arena_song(items: list[OcrItem], difficulty: str = "expert") -> tuple[str, int | None]:
+    """激奏舞台难度选择页上转盘定下的 (曲名, ``difficulty`` 的等级)。"""
     parts = sorted((it for it in items if in_roi(it, ARENA_SONG_ROI)), key=lambda it: it.x)
     title = " ".join(it.text.strip() for it in parts)
-    levels = [parse_level(it.text) for it in items if in_roi(it, ARENA_LEVEL_ROI)]
+    levels = [parse_level(it.text) for it in items if in_roi(it, ARENA_LEVEL_ROIS[difficulty])]
     return title, next((lv for lv in levels if lv is not None), None)
 
 

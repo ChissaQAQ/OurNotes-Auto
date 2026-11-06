@@ -1,3 +1,10 @@
+# What's New in v0.2.5
+
+- **⚠️ Ban risk**: On Nov 6 the international server's official team published an anti-cheat announcement that lists "using automation scripts in place of normal play" as a violation, and this tool is an automation script. Using it puts your account at risk of being banned, with no guarantee that it won't be. You bear the consequences, so please weigh the risk yourself
+- New "Difficulty" option for Arena and AFK Farming (Arena) (#134): EXPERT (default), HARD, NORMAL or EASY. That difficulty is picked on the difficulty selection screen, and the song and chart are looked up for it. Pick HARD if you want to save your first EXPERT FC for yourself. Lower difficulties score lower, so placements and rank points may drop
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.5
+
 # What's New in v0.2.4.3
 
 - When the game shows the previous event's exchange reminder after launch ("the reward claim period ends on …"), it now taps Close (never "Go to Exchange") instead of getting stuck (#131)

@@ -964,6 +964,20 @@ def test_arena_plays_and_records(tmp_path):
     assert (a[0].title, a[0].music_id, a[0].played, a[0].score, a[0].perfect, a[0].great, a[0].miss) == ("诗超绊", 100008, True, 123, 1000, 27, 0)
 
 
+def test_arena_plays_set_difficulty(tmp_path):
+    """激奏舞台打设定的难度（#134）：认歌、取谱面、记录都按这个难度。"""
+    runner, nav, store = make_arena(tmp_path, max_plays=1)
+    runner.cfg.game.difficulty = "hard"
+    runner.source = make_source(runner.cfg)
+    charts = []
+    chart = runner.client.chart
+    runner.client.chart = lambda mid, diff, title="": charts.append(diff) or chart(mid, diff, title)
+    assert runner.run().plays == 1
+    assert charts == ["hard"]
+    (r,) = store.history()
+    assert r.difficulty == "hard"
+
+
 def test_arena_record_time(tmp_path):
     """激奏舞台的一局记的是它的演奏记录的时间（中间隔了一会儿也一样）：统计页按这个把激奏舞台打的局从普通演奏里分出来。"""
     runner, nav, store = make_arena(tmp_path, max_plays=1)

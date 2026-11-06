@@ -98,6 +98,7 @@
             ],
             "description": "$task.Arena.desc",
             "option": [
+                "ArenaDifficulty",
                 "ArenaBand",
                 "MaxPlays",
                 "LbCost",
@@ -113,6 +114,7 @@
             ],
             "description": "$task.ArenaIdle.desc",
             "option": [
+                "ArenaDifficulty",
                 "ArenaBand",
                 "IdleLbCost",
                 "LbRefill",
@@ -637,6 +639,34 @@
                     }
                 }
             }
+        },
+        "ArenaDifficulty": {
+            "type": "select",
+            "label": "$opt.ArenaDifficulty",
+            "description": "$opt.ArenaDifficulty.desc",
+            "cases": [
+                {
+                    "name": "expert",
+                    "label": "EXPERT",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_difficulty": "expert" } } }
+                },
+                {
+                    "name": "hard",
+                    "label": "HARD",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_difficulty": "hard" } } }
+                },
+                {
+                    "name": "normal",
+                    "label": "NORMAL",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_difficulty": "normal" } } }
+                },
+                {
+                    "name": "easy",
+                    "label": "EASY",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "arena_difficulty": "easy" } } }
+                }
+            ],
+            "default_case": "expert"
         },
         "ArenaBand": {
             "type": "select",

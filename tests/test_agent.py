@@ -299,6 +299,7 @@ def test_run_settings_arena():
         "loop.challenge": "false",
         "loop.arena": "true",
         "loop.arena_band": "current",
+        "game.difficulty": "expert",  # 资源是旧版、没有选项「难度」时（#134）
         "game.lb_cost": "null",
         "game.lb_auto": "false",
         "game.lb_refill": "false",
@@ -313,6 +314,9 @@ def test_run_settings_arena():
     assert "loop.arena_games_per_band" not in sets
     sets = run_settings("arena", {**ATTACH, "arena_band": "rotate", "arena_games_per_band": "3"})
     assert sets["loop.arena_band"] == "rotate" and sets["loop.arena_games_per_band"] == "3"
+    assert run_settings("arena", {**ATTACH, "arena_difficulty": " HARD "})["game.difficulty"] == "hard"
+    with pytest.raises(ParamError, match="arena_difficulty"):
+        run_settings("arena", {**ATTACH, "arena_difficulty": "high_first"})
     # 挂机（激奏舞台）：打到 LB 用完再等它恢复，消耗 0 时不等；定时收获、领日常同挂机
     sets = run_settings("arena_idle", {**ATTACH, "clear_lb_cost": 2})
     assert sets["loop.arena"] == "true" and sets["game.lb_cost"] == "2"
@@ -322,10 +326,11 @@ def test_run_settings_arena():
     assert sets["game.lb_cost"] == "0" and sets["loop.until_lb_empty"] == "false" and sets["loop.wait_lb"] == "true"
     sets = run_settings("arena_idle", {**ATTACH, "clear_lb_cost": "auto"})
     assert sets["game.lb_auto"] == "true" and sets["loop.until_lb_empty"] == "true"
-    # 没有选曲、难度：这些选项不传（只打 EXPERT、不跳过由 run 命令统一设）
+    # 没有选曲：选曲、跳过不传（不跳过由 run 命令统一设）；难度只看激奏舞台自己的选项（#134），不看自由演出的
     for task in ("arena", "arena_idle"):
         sets = run_settings(task, {**ATTACH, "song_mode": "random", "difficulty": "hard", "use_skip": True})
-        assert not {"loop.song_mode", "game.difficulty", "loop.use_skip"} & set(sets), task
+        assert not {"loop.song_mode", "loop.use_skip"} & set(sets), task
+        assert sets["game.difficulty"] == "expert", task
     for task in ("repeat", "clear_lb", "idle", "ap", "challenge"):
         assert run_settings(task, {**ATTACH, "arena_band": "mygo"})["loop.arena"] == "false", task
 
@@ -719,6 +724,15 @@ def test_worker_args_parse_back():
     assert cfg.loop.until_lb_empty and cfg.loop.wait_lb and cfg.game.lb_cost == 1
     assert cfg.game.difficulty == "expert" and cfg.loop.song_mode == "current" and not cfg.loop.use_skip
     assert cfg.play.touch.great_ratio == 0.01 and cfg.play.touch.jitter_ms == 16.0
+    # 选项「难度」（#134）：打选的难度；资源是旧版、没有这一项时打 EXPERT（上面）
+    for task in ("arena", "arena_idle"):
+        args = build_parser().parse_args(worker_args(task, {**attach, "arena_difficulty": "hard"}, device))
+        cfg = Config()
+        for item in args.set:
+            key, _, value = item.partition("=")
+            apply_override(cfg, key, value)
+        arena_defaults(cfg)
+        assert cfg.game.difficulty == "hard", task
 
 
 def _load(rel):

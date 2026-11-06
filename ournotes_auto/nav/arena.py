@@ -1,10 +1,10 @@
-"""激奏舞台（多人对局）：转盘定歌、只打 EXPERT，按名次加减段位分（AP）。
+"""激奏舞台（多人对局）：转盘定歌、打设定的难度（默认 EXPERT，#134），按名次加减段位分（AP）。
 
 画面顺序（坐标均为 1280x720 设计尺寸）::
 
     演出首页 -[激奏舞台]-> 激奏舞台首页（右上角 LB，乐队标志右边 ▶▶ 换乐队，下面「消耗LB」「LIVE START」）
     -[LIVE START]-> 匹配确认 -[OK]-> 正在匹配（可取消）→ 匹配房间（等成员到齐，不能取消）→ 成员已确定 → 转盘
-    → 难度选择（约 28 秒倒计时，右边封面下是曲名）-[EXPERT → 准备完毕]-> 等其他人准备好 → 演奏（没有暂停按钮）
+    → 难度选择（约 28 秒倒计时，右边封面下是曲名）-[难度 → 准备完毕]-> 等其他人准备好 → 演奏（没有暂停按钮）
     → LIVE CLEAR → 排名 -[下一步]->（每日奖励、段位提升、首次段位达成奖励）→ 结果「结果 3rd AP+15」-[下一步]->
     → 排名（判定数）-[下一步]-> 结算 → 和自由演出一样 -[再次演出]-> 激奏舞台首页
 
@@ -65,7 +65,8 @@ ARENA_FAILED_GUESS_S = 3.0
 # 匹配房间（成员到齐、不能取消）里到了 timeout_s 也再等这么久：等对局开始或匹配失败（约 80 秒），
 # 不然这局开始后没人操作，白白消耗 LB
 ARENA_ROOM_S = 90.0
-BTN_ARENA_EXPERT = (1200, 545)  # 难度选择
+# 难度选择页的四个难度按钮（选曲页的在 y=555，这里靠上一点）
+BTN_ARENA_DIFFICULTY = {"easy": (808, 545), "normal": (937, 545), "hard": (1068, 545), "expert": (1200, 545)}
 BTN_ARENA_READY = (1140, 640)  # 难度选择：准备完毕
 ARENA_READY_ROI: Rect = (1000, 610, 280, 60)
 # 点了准备完毕后这么久内弹出的演出前选项设置（#111）是这次准备弹的：和自由演出一样点「演出」（取消会撤回准备）。
@@ -248,7 +249,7 @@ class ArenaMixin:
 
     def start_arena(self, lb_short: str = "zero", timeout_s: float = 300.0) -> SongLabel:
         """激奏舞台首页：（按配置设好 LB 消耗后）LIVE START → 匹配确认 OK → 等匹配、转盘定歌，
-        在难度选择页认出封面、读出曲名和 EXPERT 等级后返回（倒计时约 28 秒，要赶紧认歌、准备）。
+        在难度选择页认出封面、读出曲名和设定难度（``game.difficulty``）的等级后返回（倒计时约 28 秒，要赶紧认歌、准备）。
 
         LB 的处理同 :meth:`start_live`（``lb_short`` 也一样）。匹配失败（没找到对手、匹配出错）时关掉弹窗重新匹配。
         ``timeout_s`` 内没匹配到：还在「正在匹配」就取消，抛 :class:`ArenaNoMatch`（在匹配房间里就多等一会儿，
@@ -350,13 +351,14 @@ class ArenaMixin:
         )
 
     def _arena_song(self, items: list[OcrItem]) -> SongLabel:
-        """难度选择页右边的封面、封面下的曲名和 EXPERT 等级：转盘刚停时可能还在动画中，连续两次认出同一首封面
+        """难度选择页右边的封面、封面下的曲名和设定难度的等级：转盘刚停时可能还在动画中，连续两次认出同一首封面
         （等级也一样）、或者连续两次曲名和等级一致才采用。封面优先（#107：长曲名在框里滚动，每次读到的都不一样；
         带符号的曲名也读不准），认不出封面时由曲名兜底（见 :func:`~ournotes_auto.runner.identify_song`）。"""
         jackets = self._jackets_or_none()
+        diff = self.cfg.game.difficulty
         prev = None
         for _ in range(8):
-            title, level = arena_song(items)
+            title, level = arena_song(items, diff)
             frame = self._frame
             jacket = None
             if jackets is not None and isinstance(frame, np.ndarray):
@@ -374,18 +376,19 @@ class ArenaMixin:
         else:
             logger.debug("难度选择页读数不稳定，采用最后一次")
         title, level, jacket = cur
-        logger.debug("激奏舞台：曲名 %r，EXPERT 等级 %s，封面 %s", title, level, jacket)
+        logger.debug("激奏舞台：曲名 %r，%s 等级 %s，封面 %s", title, diff.upper(), level, jacket)
         if jackets is not None and jackets.ids and jacket is None:  # 一张封面都没有（曲名表下载失败等）时截图没用
             logger.info("激奏舞台难度选择页的封面认不出，只按曲名认歌（截图 %s）", self.save_debug("arena_song", frame))
-        return SongLabel(title, "expert", level, jacket)
+        return SongLabel(title, diff, level, jacket)
 
     def arena_ready(self, timeout_s: float = 150.0) -> None:
-        """难度选择页：EXPERT → 准备完毕，等其他人都准备好、演奏画面出现（左上角 SCORE）后立即返回。
+        """难度选择页：点设定的难度 → 准备完毕，等其他人都准备好、演奏画面出现（左上角 SCORE）后立即返回。
 
         为了尽快看到演奏画面，这里主要识别左上角一小块；只在点了准备完毕后 ARENA_OPTIONS_TAP_S 内再看整个画面，
         弹出演出前选项设置（#111）时点「演出」。``timeout_s`` 内没出现演奏画面时报错。
         """
-        self.tap(BTN_ARENA_EXPERT, "EXPERT")
+        diff = self.cfg.game.difficulty
+        self.tap(BTN_ARENA_DIFFICULTY[diff], diff.upper())
         self._sleep(0.6)
         self.tap(BTN_ARENA_READY, "准备完毕")
         ready_at = self._ready_at = time.monotonic()

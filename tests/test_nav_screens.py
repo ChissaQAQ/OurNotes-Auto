@@ -257,6 +257,9 @@ def test_band_confirm_song():
 
 def test_arena_song():
     assert arena_song(load("arena_difficulty")) == ("端程山", 24)
+    # 设了别的难度（#134）时读那个难度按钮上面的等级
+    levels = {d: arena_song(load("arena_difficulty"), d)[1] for d in ("easy", "normal", "hard", "expert")}
+    assert levels == {"easy": 10, "normal": 13, "hard": 19, "expert": 24}
     assert arena_song(load("arena_matching")) == ("", None)
 
 

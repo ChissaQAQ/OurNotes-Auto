@@ -113,7 +113,7 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 
 챌린지 라이브(`--challenge`)는 판마다 `game.challenge_cost`(`--challenge-cost`, 200 / 400 / 800 / 1600, 기본 200, null은 게임 설정을 바꾸지 않음)만큼 챌린지 pt를 소모하고 LB는 소모하지 않으며, CP가 한 판에 모자랄 때까지 플레이합니다. 그래서 `--until-lb-empty`, `--wait-lb`, `--lb-refill`과 함께 쓸 수 없습니다.
 
-격주 스테이지(`--arena` / `loop.arena`): 룰렛으로 곡이 정해지며 EXPERT만 치고 스킵하지 않고, `play.touch.great_ratio`는 최소 0.01로 칩니다(멀티 대전은 AP가 필요 없으므로). `--lb-cost`, `--lb-auto`, `--lb-refill`, `--until-lb-empty`, `--wait-lb`는 프리 라이브와 같으며, 격주 스테이지 첫 화면의 「LB 소모」에서 설정합니다. `--arena-band`(`loop.arena_band`)로 밴드를 고릅니다: `current`(기본)는 바꾸지 않고, `mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock`는 매 판 전에 그 밴드로 바꾸며, `rotate`는 지금 밴드부터 시작해 게임 안의 순서대로 밴드마다 `--arena-games`(`loop.arena_games_per_band`, 기본 1)판을 치면 다음 밴드로 바꿉니다. `--challenge`와 함께 쓸 수 없습니다. 판마다 밴드, 순위, 랭크 포인트 증감, 증감 후 랭크 포인트, 소모한 LB, 판정 수를 `data/arena.jsonl`에 기록합니다.
+격주 스테이지(`--arena` / `loop.arena`): 룰렛으로 곡이 정해지며 `game.difficulty`(`-d`, 기본 EXPERT)를 치고 스킵하지 않고, `play.touch.great_ratio`는 최소 0.01로 칩니다(멀티 대전은 AP가 필요 없으므로). `--lb-cost`, `--lb-auto`, `--lb-refill`, `--until-lb-empty`, `--wait-lb`는 프리 라이브와 같으며, 격주 스테이지 첫 화면의 「LB 소모」에서 설정합니다. `--arena-band`(`loop.arena_band`)로 밴드를 고릅니다: `current`(기본)는 바꾸지 않고, `mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock`는 매 판 전에 그 밴드로 바꾸며, `rotate`는 지금 밴드부터 시작해 게임 안의 순서대로 밴드마다 `--arena-games`(`loop.arena_games_per_band`, 기본 1)판을 치면 다음 밴드로 바꿉니다. `--challenge`와 함께 쓸 수 없습니다. 판마다 밴드, 순위, 랭크 포인트 증감, 증감 후 랭크 포인트, 소모한 LB, 판정 수를 `data/arena.jsonl`에 기록합니다.
 
 곡 하나만 선택(곡 선택 화면에 멈춤): `ournotes-auto select 碧天伴走 [--category 全部]`.
 

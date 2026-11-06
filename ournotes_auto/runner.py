@@ -436,18 +436,20 @@ class Runner:
                 self._no_match_since = started
             raise
         self._no_match_since = None
+        diff = self.source.difficulty  # 设定的难度（默认 EXPERT，#134）
         with self._song():  # 匹配到对局后退不出去：开着「停止时打完当前这首」时打完这局再停
             song = chart = None
             try:
-                song, basis = identify_song(self.catalog, label, "expert")
-                logger.info("曲目：%s（%d，expert，%s）", song.display_title(), song.music_id, basis)
-                chart = self.client.chart(song.music_id, "expert", song.display_title())
+                song, basis = identify_song(self.catalog, label, diff)
+                logger.info("曲目：%s（%d，%s，%s）", song.display_title(), song.music_id, diff, basis)
+                chart = self.client.chart(song.music_id, diff, song.display_title())
             except ChartNotFound:
-                logger.error("谱面站没有 %d_expert，本局不演奏", song.music_id)
+                logger.error("谱面站没有 %d_%s，本局不演奏", song.music_id, diff)
             except (NavigationError, ConnectionError) as e:
                 logger.error("%s，本局不演奏", e)
-            level = song.level("expert") if song else label.level
-            self._status("play", f"{song.display_title() if song else label.title} · EXPERT{f' {level}' if level else ''}")
+            level = song.level(diff) if song else label.level
+            title = song.display_title() if song else label.title
+            self._status("play", f"{title} · {diff.upper()}{f' {level}' if level else ''}")
             if chart is not None:
                 self.session.learned_offset_ms = self.store.learned_offset_ms + self._chart_offset(chart)
             self.nav.arena_ready()
@@ -470,7 +472,7 @@ class Runner:
                     **({} if result is None else {"timestamp": result.timestamp}),  # 统计按时间认出这局的演奏记录
                 )
             )
-            self.source.done(song, "expert", result)
+            self.source.done(song, diff, result)
             self._finish(result)
         return result
 

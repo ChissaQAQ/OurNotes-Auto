@@ -477,6 +477,10 @@ def test_arena_bands_rotate():
     nav = BandNav(None)  # 认不出现在的乐队：从第一个开始
     src = ArenaBands("rotate", games=0)
     assert src.advance(nav, True) and nav.current == "mygo" and src.games == 1
+    assert ArenaBands("current").difficulty == "expert"
+    cfg = Config()
+    cfg.loop.arena, cfg.game.difficulty = True, "hard"
+    assert make_source(cfg).difficulty == "hard"  # 激奏舞台打设定的难度（#134）
 
 
 class ApNav:
