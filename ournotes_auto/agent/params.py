@@ -279,18 +279,28 @@ def _arena_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _humanize(attach: Mapping[str, Any]) -> dict[str, str]:
-    """拟人化：``human_great``（GREAT 比例，百分数）、``human_timing``（时机偏移幅度 ms）、``human_position``（开关）。"""
+    """拟人化：GREAT 比例（``human_great``，有 ``human_great_max`` 时每局在两者之间随机）、时机偏移、位置随机
+    及可选的 ``human_behavior``（自然操作）。资源是旧版、没有后两项时不随机、不开。"""
+    great_max = _int(attach, "human_great_max", 0, 20) if "human_great_max" in attach else 0
     return {
         "play.touch.great_ratio": str(_int(attach, "human_great", 0, 20) / 100),
+        "play.touch.great_ratio_max": str(great_max / 100),
         "play.touch.jitter_ms": str(_int(attach, "human_timing", 0, 20)),
         "play.touch.position_jitter": "1" if _bool(attach, "human_position") else "0",
+        "play.humanize.enabled": "true" if flag(attach, "human_behavior") else "false",
     }
+
+
+def _daily_hours(attach: Mapping[str, Any]) -> str:
+    """``daily_hours``：每个游戏日最多演奏几小时，0 为不限；资源是旧版、没有这一项时不限。"""
+    return str(_int(attach, "daily_hours", 0, 24)) if "daily_hours" in attach else "0"
 
 
 def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     """任务名 + 界面选项 → ``--set`` 配置项。
 
-    共用 attach 键：``max_plays`` ``touch`` ``restart_low_fps``（关掉时不因游戏变卡重启，旧资源没有这项时开）和拟人化的 ``human_great`` ``human_timing`` ``human_position``。
+    共用 attach 键：``max_plays`` ``touch`` ``restart_low_fps``（关掉时不因游戏变卡重启，旧资源没有这项时开）、
+    ``daily_hours``（每日演奏上限）和拟人化的 ``human_great`` ``human_great_max`` ``human_timing`` ``human_position`` ``human_behavior``。
     重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
     ``song_list``）；重复刷歌另有 ``lb_cost``（``keep``、``auto`` 或 0~5），
     清体力 / 挂机另有 ``clear_lb_cost``（``auto`` 或清体力 1~5、挂机 0~5：0 时不等 LB，有就消耗、用完消耗 0 一直打）
@@ -313,6 +323,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.arena": "false",
         "loop.studio_claim_hours": _studio_claim(attach) if idle else "0",
         "loop.daily_claim_time": _daily_claim(attach) if idle else "",
+        "loop.daily_hours": _daily_hours(attach),
         **_humanize(attach),
     }
     if not flag(attach, "restart_low_fps", True):

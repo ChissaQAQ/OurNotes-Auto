@@ -510,6 +510,22 @@ def test_great_ratio_counts_judged_notes():
         assert 60 <= count <= 140  # 约 10%（二项分布，标准差约 9.5）
 
 
+def test_great_ratio_range_varies_per_play():
+    """great_ratio_max 比 great_ratio 大时每局在两者之间随机取比例。"""
+    notes = [PointNote(i, 1000 + i * 300.0, NoteKind.TAP, Span(0, 4) if i % 2 else Span(12, 16)) for i in range(1000)]
+    chart = Chart(1, "expert", notes=notes)
+    times = {n.id: n.time_ms for n in notes}
+    planner = _seeded(1, great_ratio=0.01, great_ratio_max=0.1)
+    counts = []
+    for _ in range(30):
+        by_id = _by_id(planner.plan(chart))
+        counts.append(sum(abs(g.start - times[i]) >= 60 for i, g in by_id.items()))
+    assert min(counts) >= 1 and max(counts) <= 130  # 1%~10%（加上二项分布的波动）
+    assert max(counts) - min(counts) > 40  # 每局的比例不一样
+    fixed = _seeded(1, great_ratio=0.05, great_ratio_max=0.01)  # 上限不比下限大：固定比例
+    assert all(25 <= sum(abs(g.start - times[i]) >= 60 for i, g in _by_id(fixed.plan(chart)).items()) <= 75 for _ in range(5))
+
+
 def test_timing_drift_bounded_and_smooth():
     notes = [PointNote(i, 1000 + i * 100.0, NoteKind.TAP, Span(0, 4) if i % 2 else Span(12, 16)) for i in range(600)]
     by_id = _by_id(_seeded(5, jitter_ms=16).plan(Chart(1, "expert", notes=notes)))
@@ -531,3 +547,72 @@ def test_handover_gap_survives_jitter():
         slide = next(g for g in gs if g.source.startswith("slide"))
         press = next(g for g in gs if g.source.startswith("tap"))
         assert press.start - slide.end >= 19
+
+
+def _natural(seed=1, **kw):
+    from ournotes_auto.config import HumanizeConfig
+    from ournotes_auto.humanize import Humanizer
+
+    return Planner(Geometry(1280, 720), TouchParams(**kw), seed=seed, humanizer=Humanizer(HumanizeConfig(enabled=True), seed=seed))
+
+
+def test_natural_chords_can_differ_but_overlapping_heads_stay_together():
+    taps = [PointNote(1, 1000, NoteKind.TAP, Span(0, 4)), PointNote(2, 1000, NoteKind.TAP, Span(20, 24))]
+    plan = _natural(jitter_ms=16).plan(Chart(1, "expert", notes=taps))
+    assert 0.01 < abs(plan.gestures[0].start - plan.gestures[1].start) <= 3
+    for seed in range(20):
+        plan = _natural(seed, jitter_ms=20, position_jitter=1).plan(_apart_chart())
+        assert plan.gestures[0].start == plan.gestures[1].start
+        assert len(plan.gestures) == 2 and not plan.dropped
+
+
+def test_natural_motion_stays_bounded_and_does_not_extend_flicks():
+    taps = [PointNote(i, 1000 + i * 250, NoteKind.TAP, Span(0, 4)) for i in range(20)]
+    flicks = [PointNote(100 + i, 7000 + i * 250, NoteKind.FLICK, Span(16, 24), FlickDirection.RIGHT) for i in range(20)]
+    for seed in range(10):
+        plan = _natural(seed).plan(Chart(1, "expert", notes=taps + flicks))
+        assert not plan.dropped
+        tap_g = [g for g in plan.gestures if g.source.startswith("tap")]
+        flick_g = [g for g in plan.gestures if g.source.startswith("flick")]
+        assert all(35 - 1e-6 <= g.end - g.start <= 50.000001 for g in tap_g)  # 点击只加不减
+        assert len({round(g.end - g.start, 2) for g in tap_g}) > 5
+        assert all(26.4 - 1e-6 <= g.end - g.start <= 30.000001 for g in flick_g)
+        assert all(69.12 - 1e-6 <= g.points[-1][1] - g.points[0][1] <= 72.000001 for g in flick_g)
+        assert all(all(a[0] < b[0] for a, b in zip(g.points, g.points[1:])) for g in flick_g)
+
+
+def test_natural_handover_and_held_position_guards():
+    s = Slide(1, [PathNode(0, Span(18, 24)), PathNode(3000, Span(12, 18))], head=SlideHead.TAP, tail=SlideTail.RELEASE)
+    tap = PointNote(2, 3000, NoteKind.TAP, Span(0, 4))
+    for seed in range(30):
+        plan = _natural(seed, jitter_ms=20, position_jitter=1).plan(Chart(1, "expert", notes=[tap], slides=[s]))
+        slide, press = sorted(plan.gestures, key=lambda g: g.start)
+        assert press.start - slide.end >= 19
+        assert max(y for _, _, y in slide.points) - min(y for _, _, y in slide.points) > 0
+        assert all(abs(y - Geometry(1280, 720).touch_y) <= 14.4 + 1e-6 for _, _, y in slide.points)
+
+
+def test_natural_greats_weight_structure_within_safe_candidates():
+    easy = [PointNote(i, 1000 + i * 1000, NoteKind.TAP, Span(0, 2)) for i in range(50)]
+    hard = [PointNote(100 + i, 60000 + i * 100, NoteKind.TAP, Span((0, 8, 14, 22)[i % 4], (2, 10, 16, 24)[i % 4])) for i in range(50)]
+    chart = Chart(1, "expert", notes=easy + hard)
+    totals = [0, 0]
+    times = {n.id: n.time_ms for n in chart.notes}
+    for seed in range(80):
+        plan = _natural(seed, great_ratio=0.1, jitter_ms=16).plan(chart)
+        for i, g in _by_id(plan).items():
+            if abs(g.start - times[i]) >= 60:
+                totals[int(i >= 100)] += 1
+                assert 64 <= abs(g.start - times[i]) <= 69
+    assert totals[1] > totals[0] * 1.5
+
+
+def test_natural_held_slides_preserve_neighbor_judgment_areas():
+    a = Slide(1, [PathNode(0, Span(16, 24)), PathNode(230, Span(8, 16)), PathNode(1000, Span(8, 16))])
+    b = Slide(2, [PathNode(0, Span(6, 14)), PathNode(230, Span(0, 8)), PathNode(460, Span(0, 8)), PathNode(461, Span(0, 11))])
+    for seed in range(30):
+        planner = _natural(seed, position_jitter=1, slide_sample_ms=10)
+        gs = _by_id(planner.plan(Chart(1, "expert", slides=[a, b])))
+        unit = lambda x: (x - planner.geo.x_at(0)) / planner.geo.unit_px
+        assert all(unit(x) <= 5.5 + 1e-6 for t, x, _ in gs[2].points if 230 <= t <= 461)
+        assert all(10.5 - 1e-6 <= unit(x) <= 12.5 + 1e-6 for t, x, _ in gs[1].points if 230 <= t <= 461)

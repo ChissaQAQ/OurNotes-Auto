@@ -52,8 +52,13 @@ def test_render_interface():
     data = json.loads((ROOT / "interface.json").read_text(encoding="utf-8"))
     mxu = release.render_interface(data, "mxu", "v9.9.9")
     mfaa = release.render_interface(data, "mfaa", "v9.9.9")
-    assert [s["name"] for s in mxu["setting"]] == ["stats", "global"]
-    assert mxu["setting"][1]["option"] == mxu["global_option"]
+    assert [s["name"] for s in mxu["setting"]] == ["stats", "global", "humanize"]
+    # 全局选项分成「所有任务共用」和「拟人化」两组，各自保持 global_option 里的顺序，合起来一个不少
+    shared, humanize = mxu["setting"][1]["option"], mxu["setting"][2]["option"]
+    assert humanize == list(release.HUMANIZE_OPTIONS) and not set(shared) & set(humanize)
+    assert sorted(shared + humanize, key=mxu["global_option"].index) == mxu["global_option"]
+    assert shared == [o for o in mxu["global_option"] if o not in release.HUMANIZE_OPTIONS]
+    assert [s["name"] for s in release.render_interface({**data, "global_option": ["Touch"]}, "mxu")["setting"]] == ["stats", "global"]
     # 设置页的「统计与成就」卡片：没有可选项的多选框，界面只显示它的说明（data/stats_mxu.md）
     assert mxu["setting"][0]["option"] == [release.STATS_OPTION] and mxu["option"][release.STATS_OPTION]["cases"] == []
     assert release.STATS_OPTION not in mfaa.get("option", {}) and release.STATS_OPTION not in data.get("option", {})

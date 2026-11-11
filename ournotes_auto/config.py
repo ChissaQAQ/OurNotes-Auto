@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import math
 import re
 import typing
 from dataclasses import dataclass, field
@@ -69,6 +70,8 @@ class TouchParams:
     # 单局同步误差偏大时其中一部分会变成 PERFECT 或 GOOD（GOOD 不断连击）。
     # 选曲方式为 AP 补完 / 优先没 AP 的歌时不生效。0 为关闭
     great_ratio: float = 0.0
+    # 故意打 GREAT 的比例上限：大于 great_ratio 时每局在两者之间随机取一个比例；0 为固定 great_ratio
+    great_ratio_max: float = 0.0
     # 触控点在音符区间内随机横移（两侧各留 1 个单位，不挪进附近点击类音符、同时按住的长条的判定区）并上下挪动，
     # 取值为可移动范围的比例（0~1），0 为关闭
     position_jitter: float = 0.0
@@ -134,6 +137,42 @@ class SyncParams:
 
 
 @dataclass
+class HumanizeConfig:
+    """自然操作：会话习惯、动作变化和休息；模型参数是工程假设，尚未用真人样本校准。"""
+
+    enabled: bool = False
+    # 平均完成这么多局后短休息一次（每轮的局数在它的 60%~140% 间随机）；0 为不短休息
+    rest_every_plays: int = 8
+    rest_min_s: float = 30.0
+    rest_max_s: float = 90.0
+    rare_rest_chance: float = 0.12  # 短休息有这么大的概率特别久：rest_max_s 的 2~6 倍（最多 1 小时）
+    # 累计演奏约这么多分钟（谱面时长，每轮在 80%~120% 间随机）后长休息；0 为不长休息
+    long_rest_minutes: float = 75.0
+    long_rest_min_s: float = 600.0
+    long_rest_max_s: float = 1800.0
+
+    def validate(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("自然操作开关应为 true 或 false")
+        if type(self.rest_every_plays) is not int or not 0 <= self.rest_every_plays <= 1000:
+            raise ValueError("自然操作休息间隔应为 0~1000 局的整数")
+        values = (
+            self.rest_min_s, self.rest_max_s, self.rare_rest_chance,
+            self.long_rest_minutes, self.long_rest_min_s, self.long_rest_max_s,
+        )
+        if any(type(v) not in (int, float) or not math.isfinite(v) for v in values):
+            raise ValueError("自然操作休息与连续演奏时长应为有限数值")
+        if not 0 <= self.rest_min_s <= self.rest_max_s <= 3600:
+            raise ValueError("自然操作休息范围应满足 0 ≤ 最短 ≤ 最长 ≤ 3600 秒")
+        if not 0 <= self.rare_rest_chance <= 1:
+            raise ValueError("自然操作偶尔久休息的概率应在 0~1")
+        if not 0 <= self.long_rest_minutes <= 1440:
+            raise ValueError("自然操作长休息前的连续演奏时长应为 0~1440 分钟")
+        if not 0 <= self.long_rest_min_s <= self.long_rest_max_s <= 14400:
+            raise ValueError("自然操作长休息范围应满足 0 ≤ 最短 ≤ 最长 ≤ 14400 秒")
+
+
+@dataclass
 class PlayConfig:
     # 全局时间偏移：正值表示整体更晚按下。用于补偿截图/输入/渲染延迟
     offset_ms: float = 0.0
@@ -146,6 +185,7 @@ class PlayConfig:
     guard_life_zero_s: float = 1.0
     touch: TouchParams = field(default_factory=TouchParams)
     sync: SyncParams = field(default_factory=SyncParams)
+    humanize: HumanizeConfig = field(default_factory=HumanizeConfig)
 
 
 @dataclass
@@ -255,6 +295,9 @@ class LoopConfig:
     # 最近几局同步时测到的游戏出帧率（中位数）低于这个值就重启游戏：游戏连续运行十几个小时后会越来越卡
     # （正常 60fps），容易同步失败、整首对不上，重启就恢复了。0 为不检查
     min_fps: float = 50.0
+    # 每个游戏日（北京时间 3:00 换日）最多演奏这么多小时，按每局从选歌到离开结算页的时长累计（休息、等 LB、等开服不算），
+    # 同一个服的同一个账号共用；到了就结束，挂机等到下一个游戏日接着打。开了自然操作时每天的上限再随机打 85%~100% 的折扣。0 为不限
+    daily_hours: float = 0.0
     ap_difficulties: str = "expert,hard,normal,easy"  # AP 补完依次处理的难度（逗号分隔）
     # ap_first 依次补的难度（逗号分隔，如 "expert,hard,normal,easy"），都补完了按 game.difficulty 随机；
     # 留空只补 game.difficulty

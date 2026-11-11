@@ -85,11 +85,13 @@ def is_newer(latest: str | None, current: str | None) -> bool:
 
 
 STATS_OPTION = "StatsView"  # MXU 设置页「统计与成就」卡片：没有可选项的多选框，只为显示说明（data/stats_mxu.md）
+# MXU 设置页单独一组「拟人化」的全局选项（其余全局选项在「所有任务共用」）
+HUMANIZE_OPTIONS = ("HumanBehavior", "HumanGreat", "HumanTiming", "HumanPosition", "DailyHours")
 
 
 def render_interface(data: Mapping[str, Any], kind: str, version: str | None = None, agent_exec: str = AGENT_EXEC, agent_args: Iterable[str] = AGENT_ARGS) -> dict:
     """项目的 interface.json → 界面 ``kind``（mfaa / mxu）用的：写版本号和 Agent 启动命令，MXU 另加设置页的
-    「统计与成就」卡片和全局选项分组。"""
+    「统计与成就」卡片和全局选项分组（所有任务共用、拟人化）。"""
     data = dict(data)
     if version:
         data["version"] = version
@@ -101,6 +103,8 @@ def render_interface(data: Mapping[str, Any], kind: str, version: str | None = N
             **data.get("option", {}),
             STATS_OPTION: {"type": "checkbox", "label": f"$opt.{STATS_OPTION}", "description": f"$opt.{STATS_OPTION}.desc", "cases": []},
         }
+        shared = [o for o in data["global_option"] if o not in HUMANIZE_OPTIONS]
+        humanize = [o for o in data["global_option"] if o in HUMANIZE_OPTIONS]
         data["setting"] = [
             {
                 "name": "stats",
@@ -113,9 +117,18 @@ def render_interface(data: Mapping[str, Any], kind: str, version: str | None = N
                 "name": "global",
                 "label": "$setting.global",
                 "description": "$setting.global.desc",
-                "option": data["global_option"],
+                "option": shared,
             },
         ]
+        if humanize:
+            data["setting"].append(
+                {
+                    "name": "humanize",
+                    "label": "$setting.humanize",
+                    "description": "$setting.humanize.desc",
+                    "option": humanize,
+                }
+            )
     return data
 
 

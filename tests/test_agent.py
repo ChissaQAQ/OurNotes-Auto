@@ -46,10 +46,13 @@ ATTACH = {
     "human_timing": 0,
     "human_position": False,
 }
-HUMAN_OFF = {
+HUMAN_OFF = {  # 拟人化都关、每日演奏上限不限（ATTACH 是旧资源，没有 human_great_max、daily_hours）
+    "play.humanize.enabled": "false",
     "play.touch.great_ratio": "0.0",
+    "play.touch.great_ratio_max": "0.0",
     "play.touch.jitter_ms": "0",
     "play.touch.position_jitter": "0",
+    "loop.daily_hours": "0",
 }
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -357,10 +360,24 @@ def test_run_settings_lb_refill():
 
 
 def test_run_settings_humanize():
-    sets = run_settings("clear_lb", {**ATTACH, "human_great": "3", "human_timing": 16, "human_position": "Yes"})
+    sets = run_settings("clear_lb", {**ATTACH, "human_great": "3", "human_timing": 16, "human_position": "Yes", "human_behavior": True})
     assert sets["play.touch.great_ratio"] == "0.03"
     assert sets["play.touch.jitter_ms"] == "16"
     assert sets["play.touch.position_jitter"] == "1"
+    assert sets["play.humanize.enabled"] == "true"
+    assert run_settings("clear_lb", ATTACH)["play.humanize.enabled"] == "false"  # 兼容旧界面资源
+
+
+def test_run_settings_great_range_and_daily_hours():
+    sets = run_settings("repeat", {**ATTACH, "human_great": 1, "human_great_max": 10, "daily_hours": 4})
+    assert (sets["play.touch.great_ratio"], sets["play.touch.great_ratio_max"]) == ("0.01", "0.1")
+    assert sets["loop.daily_hours"] == "4"
+    for task in ("idle", "arena", "challenge", "ap"):
+        assert run_settings(task, {**ATTACH, "daily_hours": 2})["loop.daily_hours"] == "2"
+    with pytest.raises(ParamError, match="daily_hours"):
+        run_settings("repeat", {**ATTACH, "daily_hours": 25})
+    with pytest.raises(ParamError, match="human_great_max"):
+        run_settings("repeat", {**ATTACH, "human_great_max": 21})
 
 
 @pytest.mark.parametrize(
@@ -685,7 +702,7 @@ def test_worker_args_parse_back():
     assert cfg.game.difficulty == "expert" and cfg.loop.ap_first_difficulties == "expert,hard,normal,easy"
 
     # 拟人化选项开到最大也能通过校验
-    human = {"human_great": 20, "human_timing": 20, "human_position": True}
+    human = {"human_great": 20, "human_great_max": 20, "human_timing": 20, "human_position": True, "daily_hours": 24}
     args = build_parser().parse_args(worker_args("repeat", {**ATTACH, **human}, device))
     cfg = Config()
     for item in args.set:
@@ -693,7 +710,8 @@ def test_worker_args_parse_back():
         apply_override(cfg, key, value)
     check_run_config(cfg)
     touch = cfg.play.touch
-    assert (touch.great_ratio, touch.jitter_ms, touch.position_jitter) == (0.2, 20.0, 1.0)
+    assert (touch.great_ratio, touch.great_ratio_max, touch.jitter_ms, touch.position_jitter) == (0.2, 0.2, 20.0, 1.0)
+    assert cfg.loop.daily_hours == 24
 
     args = build_parser().parse_args(worker_args("idle", {**ATTACH, "lb_refill": True, "lb_refill_count": 7}, device))
     cfg = Config()

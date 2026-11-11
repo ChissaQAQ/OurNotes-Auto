@@ -211,7 +211,7 @@ def open_context(
         )
         # 演奏界面连击数小图 → 数字（结束后在日志里列出断连处附近的音符，调试漏判用）
         reader = combo_reader(ocr.read_text) if watch_combo else None
-        session = PlaySession(cfg, source, touch, combo_reader=reader)
+        session = PlaySession(cfg, source, touch, combo_reader=reader, humanizer=nav.humanizer)
         if record:
             cfg.play.sync.record_frames = max(cfg.play.sync.record_frames, 600)
             session.dump_success = False

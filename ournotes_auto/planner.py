@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import bisect
 import logging
+import math
 import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ from enum import IntEnum
 from .charts.model import Chart, FlickDirection, NoteKind, PointNote, Slide, SlideHead, SlideTail, Span
 from .config import TouchParams
 from .geometry import Geometry
+from .humanize import Humanizer
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +102,15 @@ class Plan:
 
 
 class Planner:
-    def __init__(self, geometry: Geometry, params: TouchParams, seed: int | None = None):
+    def __init__(self, geometry: Geometry, params: TouchParams, seed: int | None = None, humanizer: Humanizer | None = None):
         self.geo = geometry
         self.p = params
         self._rng = random.Random(seed)
+        self.humanizer = humanizer
+
+    @property
+    def natural(self) -> bool:
+        return self.humanizer is not None and self.humanizer.enabled
 
     # —— 手势生成 ——
 
@@ -121,7 +128,15 @@ class Planner:
         dx, dy = self._flick_vector(direction)
         steps = max(1, self.p.flick_steps)
         dur = self.p.flick_duration_ms
-        return [(t + dur * k / steps, x + dx * k / steps, y + dy * k / steps) for k in range(1, steps + 1)]
+        if not self.natural:
+            return [(t + dur * k / steps, x + dx * k / steps, y + dy * k / steps) for k in range(1, steps + 1)]
+        duration, distance, power = self.humanizer.flick_shape()
+        dur *= duration
+        dx, dy = dx * distance, dy * distance
+        return [
+            (t + dur * k / steps, x + dx * (k / steps) ** power, y + dy * (k / steps) ** power)
+            for k in range(1, steps + 1)
+        ]
 
     def _flick_shifts(self, chart: Chart) -> dict[int, float]:
         """横滑音符起点的横向偏移（像素，带符号），按音符 id。
@@ -213,7 +228,7 @@ class Planner:
             return lo, hi
 
         def rand(bounds: tuple[float, float]) -> tuple[float, float]:
-            u, v = self._rng.uniform(-k, k), self._rng.uniform(-k, k)
+            u, v = self.humanizer.position(k) if self.natural else (self._rng.uniform(-k, k), self._rng.uniform(-k, k))
             lo, hi = bounds
             return u * (hi if u > 0 else -lo), v * dy
 
@@ -376,6 +391,8 @@ class Planner:
         ratio = self.p.great_ratio
         if ratio <= 0 or not chart.notes:
             return {}
+        if self.p.great_ratio_max > ratio:  # 每局在区间里随机取一个比例
+            ratio = self._rng.uniform(ratio, self.p.great_ratio_max)
         total = chart.judged_count or len(chart.notes) + len(chart.slides)
         want = sum(self._rng.random() < ratio for _ in range(total))
         if not want:
@@ -406,6 +423,9 @@ class Planner:
             if n.kind is NoteKind.TAP and not n.critical and n.time_ms >= first_ms + GREAT_SKIP_HEAD_MS
         ]
         self._rng.shuffle(pool)
+        if self.natural:
+            # 只在原有安全候选中加权，密度、跳跃和手势交接越多，越容易被挑中。
+            pool.sort(key=lambda n: -math.log(max(self._rng.random(), 1e-12)) / (0.5 + 2 * self.humanizer.load(n)))
         out: dict[int, float] = {}
         for n in pool:
             if len(out) >= want:
@@ -423,7 +443,8 @@ class Planner:
         之间线性过渡。相距 200ms 的两个时刻最多差 0.27 倍幅度，手势之间的先后安排基本不受影响。"""
         j = self.p.jitter_ms
         n = int((end - start) // DRIFT_KNOT_MS) + 2
-        knots = [min(max(self._rng.gauss(0.0, j / 2), -j), j) for _ in range(n)]
+        bias, spread = (self.humanizer.timing_bias * j, self.humanizer.spread) if self.natural else (0.0, 1.0)
+        knots = [min(max(self._rng.gauss(bias, j / 2 * spread), -j), j) for _ in range(n)]
 
         def at(t: float) -> float:
             u = min(max((t - start) / DRIFT_KNOT_MS, 0.0), n - 1.0)
@@ -452,7 +473,8 @@ class Planner:
         elif note.kind is NoteKind.TRACE:
             pts = [(t - p.trace_lead_ms - lead, x, y), (t + p.trace_hold_ms, x, y)]
         else:
-            pts = [(t, x, y), (t + p.tap_hold_ms, x, y)]
+            hold = self.humanizer.tap_hold(p.tap_hold_ms, note) if self.natural else p.tap_hold_ms
+            pts = [(t, x, y), (t + hold, x, y)]
         return Gesture(pts, source=f"{note.kind.value}#{note.id}@{note.time_ms:.0f}", order=note.order)
 
     def _slide_gesture(
@@ -469,10 +491,14 @@ class Planner:
         start, end = slide.start_ms, slide.end_ms
         # 按下点另有位置（见 _press_apart）：到下一个判定（中继或终点）前逐渐回到 u
         back = min([c for c in slide.checkpoints if c > start] + [end])
+        wave = self._rng.uniform(-0.003, 0.003) * self.geo.height * p.position_jitter if self.natural else 0.0
 
         def at(t: float) -> tuple[float, float, float]:
             v = u if press_u is None or t >= back else press_u + (u - press_u) * (t - start) / (back - start)
-            return t, self.geo.x_at(_unit_x(slide.span_at(t), v)), y
+            # 只在纵向加入连续修正；横向仍沿已通过相邻长条判定区检查的路径。
+            correction = wave * math.sin((t - start) / 400) if wave else 0.0
+            yy = self.geo.touch_y + min(POSITION_Y * self.geo.height, max(-POSITION_Y * self.geo.height, dy + correction))
+            return t, self.geo.x_at(_unit_x(slide.span_at(t), v)), yy
 
         times = {start, end}
         times.update(n.time_ms for n in slide.nodes)
@@ -540,6 +566,8 @@ class Planner:
 
     def gestures(self, chart: Chart) -> list[Gesture]:
         p = self.p
+        if self.natural:
+            self.humanizer.begin_chart(chart)
         note_off, slide_off = self._touch_offsets(chart)
         note_apart, slide_apart = self._press_apart(chart)
         for i, u in note_apart.items():
@@ -584,15 +612,38 @@ class Planner:
             # 按下时刻相差不到两倍抖动幅度的手势用同一个独立抖动，不打乱同时按下的先后
             # （判定区挨着的音符同时按下时，先到的触点可能被别的音符认领）
             last, j = float("-inf"), 0.0
+            owners = {f"{n.kind.value}#{n.id}": n for n in chart.notes}
+            owners.update({f"slide#{s.id}": s for s in chart.slides})
+            independent = self._independent_taps(chart) if self.natural else set()
             for g in sorted((g for g in out if id(g) not in fixed), key=lambda g: g.start):
+                owner = owners[g.source.split("@")[0]]
                 if g.start - last > 2 * noise:
-                    j = self._rng.uniform(-noise, noise)
+                    j = self.humanizer.noise(owner, noise) if self.natural else self._rng.uniform(-noise, noise)
                 last = g.start
-                g.points = [(t + drift(t) + j, x, y) for t, x, y in g.points]
+                individual = (j + self.humanizer.noise(owner, noise)) / 2 if id(owner) in independent else j
+                g.points = [(t + drift(t) + individual, x, y) for t, x, y in g.points]
         # 同时按下的按游戏更新音符的先后发送。发送先后其实不影响判定（#90 的对照实验，见 _press_apart），
         # 但改回去会让很多谱面分到的手指又变一次
         out.sort(key=lambda g: (g.start, g.order, g.end))
         return out
+
+    def _independent_taps(self, chart: Chart) -> set[int]:
+        """允许左右手微小时差的普通点击。相邻认领区、长条交接仍共用抖动。"""
+        claims = self._claims(chart)
+        times = [c[0] for c in claims]
+        reach = CLAIM_MS + self.p.claim_guard_ms + self.p.jitter_ms + MAX_PRESS_LEAD_MS
+        return {
+            id(n)
+            for n in chart.notes
+            if n.kind is NoteKind.TAP
+            and all(
+                o is n or right < n.span.left or left > n.span.right
+                for _, left, right, _, o in claims[
+                    bisect.bisect_left(times, n.time_ms - reach) : bisect.bisect_right(times, n.time_ms + reach)
+                ]
+            )
+            and not any(s.start_ms - reach <= n.time_ms <= s.end_ms + reach for s in chart.slides)
+        }
 
     # —— 触点分配 ——
 

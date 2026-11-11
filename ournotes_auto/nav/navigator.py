@@ -54,6 +54,7 @@ import numpy as np
 
 from ..config import Config
 from ..device.base import FrameSource
+from ..humanize import Humanizer
 from ..player.guard import load_template, pause_visible
 from ..records import RecordStore, game_day
 from ..result_reader import OcrItem, ResultCounts, merge, parse_int, parse_totals
@@ -311,6 +312,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         app_in_front: Callable[[], bool] | None = None,
     ):
         self.cfg = config
+        # 开了自然操作才生成、记下操作习惯的种子（同一游戏日同一套）
+        habit = store.habit_key(config.device.package) if store is not None and config.play.humanize.enabled else None
+        self.humanizer = Humanizer(config.play.humanize, habit_key=habit)
         self.source = source
         self.touch = touch
         self.ocr = ocr
@@ -565,6 +569,18 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         self.restart_app()
 
     def tap(self, point: tuple[int, int], what: str = "") -> None:
+        if self.humanizer.enabled:
+            # 只对已识别按钮的中心做小幅偏移；固定坐标、单选框和未知画面不猜可点击范围。
+            for it in self._items:
+                if math.dist(center(it), point) <= 1 and it.w >= 12 and it.h >= 12:
+                    point = (
+                        point[0] + self.humanizer.rng.uniform(-min(3, it.w / 6), min(3, it.w / 6)),
+                        point[1] + self.humanizer.rng.uniform(-min(2, it.h / 6), min(2, it.h / 6)),
+                    )
+                    break
+            # 演出选项、重试、多人准备等有同步时限的步骤不增加等待。
+            if self.last_screen in (Screen.HOME, Screen.LIVE_TOP, Screen.SONG_SELECT, Screen.CHALLENGE_SONG_SELECT, Screen.BAND_CONFIRM):
+                self._sleep(self.humanizer.menu_delay())
         w, h = self.source.size
         x, y = round(point[0] * w / DESIGN_W), round(point[1] * h / DESIGN_H)
         logger.debug("点击 %s (%d,%d)", what, x, y)
@@ -1745,6 +1761,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
 
     def leave_result(self, timeout_s: float = 60.0) -> None:
         """结算页 → 下一步 ×2（活动期间更多）→ 再次演出，停在乐曲选择页（同一首歌；激奏舞台回到激奏舞台首页）。"""
+        if self.humanizer.enabled:
+            self._sleep(self.humanizer.menu_delay(result=True))
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             screen, items = self.look()

@@ -20,10 +20,11 @@ from .charts.bdon import BdonClient, ChartNotFound
 from .charts.catalog import Catalog, Song
 from .charts.model import Chart
 from .config import Config, parse_daily_time
+from .humanize import Humanizer
 from .player.guard import LifeDepleted, PlayInterrupted
 from .player.session import PlayOutcome, PlaySession, SyncFailed
 from .player.sync import SyncTimeout
-from .records import ArenaResult, PlayResult, RecordStore, next_game_day
+from .records import ArenaResult, PlayResult, RecordStore, game_day, next_game_day
 from .result_reader import JUDGEMENTS, ResultCounts, timing_counts
 
 if TYPE_CHECKING:
@@ -51,6 +52,15 @@ RERUN_DELAY_S = 300.0
 FPS_WINDOW = 5
 # 激奏舞台从第一次没匹配到对局算起，这么久都没匹配到（这个时段没人）就结束，接着跑后面的任务
 ARENA_NO_MATCH_S = 3600.0
+
+
+def _hours_text(seconds: float) -> str:
+    """休息、演奏时长的说法：45 秒、20 分钟、3.4 小时。"""
+    if seconds < 60:
+        return f"{seconds:.0f} 秒"
+    if seconds < 3600:
+        return f"{seconds / 60:.0f} 分钟"
+    return f"{seconds / 3600:.1f} 小时"
 
 
 def next_daily_time(now: float, at: tuple[int, int]) -> float:
@@ -271,11 +281,13 @@ class RunStats:
     rerun: bool = False  # 游戏日期变更后退出（挂机），Agent 重跑完前面的任务后用同样的参数重新启动
     no_match: int = 0  # 激奏舞台到了时限还没匹配到对局的次数（不算在 failures 里）
     unmatched: bool = False  # 激奏舞台 ARENA_NO_MATCH_S 都没匹配到对局，提前结束（不算失败）
+    capped: bool = False  # 到了每日演奏上限（loop.daily_hours），提前结束（不算失败）
 
     def summary(self) -> str:
         skips = f"；跳过 {self.skips} 次" if self.skips else ""
         no_match = f"；没匹配到对局 {self.no_match} 次{'，提前结束' if self.unmatched else ''}" if self.no_match else ""
-        return f"共演奏 {self.plays} 局：FC {self.full_combo}，AP {self.all_perfect}，失败 {self.failures}{skips}{no_match}"
+        capped = "；到了每日演奏上限，提前结束" if self.capped else ""
+        return f"共演奏 {self.plays} 局：FC {self.full_combo}，AP {self.all_perfect}，失败 {self.failures}{skips}{no_match}{capped}"
 
 
 class FrameRateWatch:
@@ -332,6 +344,7 @@ class Runner:
         self.cfg = config
         self.nav = nav
         self.session = session
+        self.humanizer = getattr(session, "humanizer", None) or Humanizer(config.play.humanize)
         self.client = client
         self.catalog = catalog
         self.store = store
@@ -367,6 +380,9 @@ class Runner:
         self.frame_rate = FrameRateWatch(lc.min_fps)
         self._warned_memory = False  # 这次运行提醒过电脑内存快用完了
         self._no_match_since: float | None = None  # 激奏舞台从这时开始的匹配起一直没匹配到对局
+        if lc.daily_hours > 0:
+            used = self.store.play_seconds(config.device.package, game_day(self.wall_clock()))
+            logger.info("每个游戏日最多演奏 %g 小时，今天已演奏 %s", lc.daily_hours, _hours_text(used))
 
     def _identify(self):
         label = self.nav.selected_song()
@@ -559,6 +575,8 @@ class Runner:
                 return None
 
     def _record(self, outcome: PlayOutcome, rc: ResultCounts) -> PlayResult:
+        if not outcome.stats.aborted:
+            self.humanizer.completed(outcome.chart)
         judgements = ("perfect", "great", "good", "bad")
         if self.cfg.play.touch.great_ratio > 0:
             judgements = ("perfect", "good", "bad")  # 故意打的 GREAT 偏离 60ms 以上，不拿来修正 offset
@@ -885,6 +903,68 @@ class Runner:
         except (NavigationError, TimeoutError) as e:
             logger.warning("恢复选曲页的设置失败：%s", e)
 
+    def _human_rest(self) -> None:
+        seconds, what = self.humanizer.rest_seconds()
+        if seconds <= 0:
+            return
+        logger.info("自然操作：已连续完成 %d 局，%s %s", self.humanizer.since_rest, what, _hours_text(seconds))
+        self._status("rest", f"{what} {_hours_text(seconds)}")
+        started = self.clock()
+        while not self.stop.is_set():
+            remaining = seconds - (self.clock() - started)
+            if remaining <= 0 or self.stop.wait(min(remaining, 30.0)):
+                break
+            self._check_update()
+            self._check_rerun()
+            self._track()  # 长休息时统计页上的运行时长也跟着走
+        self.humanizer.recover(max(0.0, self.clock() - started))
+
+    def _daily_limit_s(self) -> float:
+        """今天最多演奏多少秒（``loop.daily_hours``，开了自然操作时每天打个折扣）；不限时为无穷大。"""
+        hours = self.cfg.loop.daily_hours
+        return hours * 3600 * self.humanizer.daily_scale() if hours > 0 else float("inf")
+
+    def _count_play(self, seconds: float) -> None:
+        """记下这一局（含选歌、匹配、结算）花的时间，算每日演奏上限用。"""
+        if seconds > 0:
+            try:
+                self.store.add_play_seconds(self.cfg.device.package, game_day(self.wall_clock()), seconds)
+            except OSError as e:
+                logger.warning("记不下演奏时长（每日演奏上限用）：%s", e)
+
+    def _daily_capped(self) -> bool:
+        """到了每日演奏上限：挂机等到下一个游戏日接着打（返回 False），其他任务结束（返回 True）。"""
+        limit = self._daily_limit_s()
+        if limit == float("inf"):
+            return False
+        used = self.store.play_seconds(self.cfg.device.package, game_day(self.wall_clock()))
+        if used < limit:
+            return False
+        logger.info("今天已演奏 %s，到了每日演奏上限（%s）", _hours_text(used), _hours_text(limit))
+        if not self.cfg.loop.wait_lb:
+            self.stats.capped = True
+            return True
+        self._wait_next_day()
+        return False
+
+    def _wait_next_day(self) -> None:
+        """挂机到了每日演奏上限：等到下一个游戏日（换日后再过 RERUN_DELAY_S）接着打；
+        期间照常定时领取、到了重跑前面任务的时间退出、收到更新请求退出。"""
+        until = next_game_day(self.wall_clock()) + RERUN_DELAY_S
+        when = time.strftime("%m-%d %H:%M", time.localtime(until))
+        logger.info("挂机等到 %s（下一个游戏日）接着打", when)
+        while True:
+            self._check_update()
+            self._check_rerun()
+            self._claim_timed()
+            left = until - self.wall_clock()
+            if left <= 0:
+                return
+            self._status("cap", f"{when} 接着打")
+            if self.stop.wait(min(left, LB_POLL_S, self._claim_wait())):
+                raise NavigationError("已停止")
+            self._track()
+
     def _loop(self) -> None:
         lc = self.cfg.loop
         consecutive = 0
@@ -897,15 +977,24 @@ class Runner:
                 self._check_rerun()
             try:
                 if not wait_lb:
+                    if self._daily_capped():
+                        break
                     self._restart_if_slow()
                     self._claim_timed()  # 在换歌之前领：领完从主界面回来再选歌
                     if self.stop.is_set() or not self._advance(first) or self.stop.is_set():
+                        break
+                    self._human_rest()  # 已确认还有下一首；歌单 / AP 补完结束时不空等
+                    if self.stop.is_set():
                         break
                 first = False
                 if wait_lb:
                     self._wait_lb()
                     wait_lb = False
-                result = self.play_once()
+                started = self.clock()
+                try:
+                    result = self.play_once()
+                finally:
+                    self._count_play(self.clock() - started)
             except ServerMaintenance as e:
                 # 挂机等到开服接着挂（这局没开始或中途被打断，不算失败；之后照常换歌）；其他任务直接失败
                 if not lc.wait_lb:

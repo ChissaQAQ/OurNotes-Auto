@@ -16,6 +16,7 @@ from ..charts.model import Chart
 from ..config import Config
 from ..device.base import FrameSource, TouchBackend
 from ..geometry import Geometry
+from ..humanize import Humanizer
 from ..planner import Plan, Planner
 from .clock import now, raised_thread_priority
 from .executor import ExecStats, Executor
@@ -88,6 +89,7 @@ class PlaySession:
         touch: TouchBackend,
         learned_offset_ms: float = 0.0,
         combo_reader: Callable[[np.ndarray], int | None] | None = None,
+        humanizer: Humanizer | None = None,
     ):
         """``combo_reader``：把连击数小图读成数字；给出时演奏期间监视连击数，结束后报告断连的音符。"""
         self.cfg = config
@@ -99,7 +101,8 @@ class PlaySession:
         self.dump_success = True
         w, h = source.size
         self.geometry = Geometry(w, h, config.geometry)
-        self.planner = Planner(self.geometry, config.play.touch)
+        self.humanizer = humanizer if humanizer is not None else Humanizer(config.play.humanize)
+        self.planner = Planner(self.geometry, config.play.touch, humanizer=self.humanizer)
         self.executor = Executor(touch)
         guard = config.play.guard_lost_s > 0 and not config.loop.arena  # 激奏舞台的演奏画面没有暂停按钮
         # 暂停按钮：演奏中确认还在演奏画面（PlayGuard），同步首音符时分辨开场演出（见 player/sync.py）

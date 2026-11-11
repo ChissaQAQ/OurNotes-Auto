@@ -162,6 +162,45 @@ def test_band_confirm_and_start_live():
     assert game.state == "loading"
 
 
+def test_natural_menu_offsets_stay_inside_recognized_target():
+    from ournotes_auto.nav.screens import Screen, center
+
+    game = FakeGame("song_select")
+    nav = make_nav(game, game, game)
+    nav.cfg.play.humanize.enabled = True
+    nav.look()
+    target = nav._items[0]
+    point = center(target)
+    waits = []
+    nav._sleep = waits.append
+    for _ in range(20):
+        nav.tap(point)
+    points = [p for _, p in game.taps]
+    assert len(set(points)) > 5
+    assert all(target.x <= x <= target.x + target.w and target.y <= y <= target.y + target.h for x, y in points)
+    assert all(0.12 <= s <= 0.4 for s in waits)
+    assert len(waits) == 20
+    nav.last_screen = Screen.LIVE_OPTIONS
+    waits.clear()
+    nav.tap((0, 0))
+    assert not waits and game.taps[-1][1] == (0, 0)
+
+
+def test_natural_result_dwell_and_stopping():
+    game = FakeGame("result_timing")
+    nav = make_nav(game, game, game)
+    nav.cfg.play.humanize.enabled = True
+    waits = []
+    nav._sleep = waits.append
+    nav.leave_result()
+    assert 1 <= waits[0] <= 2.5
+    assert game.state == "song_select"
+    nav.stop.set()
+    nav._sleep = GameNavigator._sleep.__get__(nav)
+    with pytest.raises(NavigationError, match="已停止"):
+        nav.leave_result()
+
+
 def test_read_result_and_leave():
     game = FakeGame("live_clear")
     nav = make_nav(game, game, game)

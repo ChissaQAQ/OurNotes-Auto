@@ -107,7 +107,7 @@ with tempfile.TemporaryDirectory() as d:
         release.write_json(iface, old)
         server._ensure_stats_card(root)
     new = json.loads(iface.read_text(encoding="utf-8"))
-    assert [s["name"] for s in new["setting"]] == ["stats", "global"] and release.STATS_OPTION in new["option"]
+    assert [s["name"] for s in new["setting"]] == ["stats", "global", "humanize"] and release.STATS_OPTION in new["option"]
     assert (new["version"], new["github"], new["agent"]["child_exec"]) == ("v0.1.6.6", "https://example.com", "python/python.exe")
     assert release.interface_digest(new) == release.interface_digest(old)  # 不算改了文件
     text = iface.read_text(encoding="utf-8")
@@ -121,6 +121,12 @@ with tempfile.TemporaryDirectory() as d:
     iface.write_text("{", encoding="utf-8")
     server._ensure_stats_card(root)  # 读不了：不动、不报错
     assert iface.read_text(encoding="utf-8") == "{"
+    # 有卡片、但设置页还是一组全局选项（没有「拟人化」分组）的版本：也重新分组
+    one = release.render_interface(src, "mxu", "v0.2.5")
+    one["setting"] = one["setting"][:1] + [{**one["setting"][1], "option": one["global_option"]}]
+    release.write_json(iface, one)
+    server._ensure_stats_card(root)
+    assert [s["name"] for s in json.loads(iface.read_text(encoding="utf-8"))["setting"]] == ["stats", "global", "humanize"]
 ''')
 
 

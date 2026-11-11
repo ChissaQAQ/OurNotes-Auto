@@ -136,6 +136,8 @@ LIVE_KINDS = {
     "select": ("换歌", "u-search"),
     "match": ("匹配中", "u-search"),  # 激奏舞台
     "play": ("演奏中", "u-music"),
+    "rest": ("休息", "u-clock"),  # 自然操作的局间休息、长休息
+    "cap": ("今日演奏已达上限", "u-clock"),  # 挂机到了每日演奏上限，等下一个游戏日
     "lb": ("等 LB 恢复", "u-clock"),
     "maintenance": ("等开服", "u-lock"),
     "daily": ("领取日常", "u-spark"),

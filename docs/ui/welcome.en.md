@@ -1,3 +1,13 @@
+# What's New in v0.2.6
+
+- New global option "Humanize: Natural Actions" (off by default): keeps the same habits for the whole game day, varies tap holds, flicks and menu dwell, and takes breaks — 30–90 seconds about every 8 plays, occasionally longer, plus a 10–30 minute break after about 75 minutes of playing. When song selection isn't aiming for AP, it also plays a random 1%–5% of GREATs per round and at least ±8ms timing variation even if Random GREAT is off
+- "Humanize: Random GREAT" adds "Random 1%–5% per round" and "Random 1%–10% per round"
+- New global option "Daily Play Limit" (unlimited by default): maximum hours of play per game day (the date changes at 3:00); tasks end when it's reached, and AFK Farming waits for the next game day
+- In MXU Settings, the humanize options now have their own "Humanize" group
+- None of these options guarantee your account won't be banned; see the ban risk notice in v0.2.5
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.6
+
 # What's New in v0.2.5
 
 - **⚠️ Ban risk**: On Nov 6 the international server's official team published an anti-cheat announcement that lists "using automation scripts in place of normal play" as a violation, and this tool is an automation script. Using it puts your account at risk of being banned, with no guarantee that it won't be. You bear the consequences, so please weigh the risk yourself

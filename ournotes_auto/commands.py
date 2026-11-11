@@ -19,6 +19,10 @@ MAX_GREAT_RATIO = 0.2
 MAX_JITTER_MS = 20.0
 ARENA_GREAT_RATIO = 0.01  # 激奏舞台是多人对局，不用打 AP：至少故意打这么多 GREAT
 ARENA_JITTER_MS = 16.0  # 激奏舞台至少这么大的时机偏移：瞄准 PERFECT 正中时 JUST 远多于真人（#110）
+# 开了自然操作、选曲不以 AP 为目标时：随机 GREAT 关着就每局随机打这个比例区间的 GREAT，时机偏移至少这么大
+NATURAL_GREAT_RATIO = (0.01, 0.05)
+NATURAL_JITTER_MS = 8.0
+MAX_DAILY_HOURS = 24.0
 
 
 def _parse_point(text: str) -> tuple[int, int]:
@@ -217,10 +221,52 @@ def check_run_config(cfg: Config) -> None:
     touch = cfg.play.touch
     if not 0 <= touch.great_ratio <= MAX_GREAT_RATIO:
         raise SetupError(f"故意打 GREAT 的比例应在 0~{MAX_GREAT_RATIO}：{touch.great_ratio}")
+    if not 0 <= touch.great_ratio_max <= MAX_GREAT_RATIO:
+        raise SetupError(f"故意打 GREAT 的比例上限应在 0~{MAX_GREAT_RATIO}：{touch.great_ratio_max}")
     if not 0 <= touch.jitter_ms <= MAX_JITTER_MS:
         raise SetupError(f"时机随机偏移应在 0~{MAX_JITTER_MS:g}ms（PERFECT 只有 ±50ms）：{touch.jitter_ms}")
     if not 0 <= touch.position_jitter <= 1:
         raise SetupError(f"触控位置随机应在 0~1：{touch.position_jitter}")
+    if not 0 <= cfg.loop.daily_hours <= MAX_DAILY_HOURS:
+        raise SetupError(f"每日演奏上限应为 0（不限）~{MAX_DAILY_HOURS:g} 小时：{cfg.loop.daily_hours:g}")
+    try:
+        cfg.play.humanize.validate()
+    except ValueError as e:
+        raise SetupError(str(e)) from None
+
+
+def ap_target(cfg: Config) -> bool:
+    """以 AP 为目标选曲：AP 补完 / 优先没 AP 的歌。"""
+    return cfg.loop.song_mode in ("ap", "ap_first")
+
+
+def natural_defaults(cfg: Config) -> None:
+    """开了自然操作、选曲不以 AP 为目标时：随机 GREAT 关着就每局随机打 NATURAL_GREAT_RATIO 区间的 GREAT，
+    时机偏移至少 NATURAL_JITTER_MS。自己选了 GREAT 比例的照用。在 :func:`arena_defaults` 之前调用。"""
+    touch = cfg.play.touch
+    if cfg.play.humanize.enabled is not True or ap_target(cfg):
+        return
+    if touch.great_ratio <= 0:
+        touch.great_ratio, touch.great_ratio_max = NATURAL_GREAT_RATIO
+    touch.jitter_ms = max(touch.jitter_ms, NATURAL_JITTER_MS)
+
+
+def great_text(lo: float, hi: float) -> str:
+    """GREAT 比例的说法：「3%」或「1%~5%」。"""
+    return f"{lo:.0%}~{hi:.0%}" if hi > lo else f"{lo:.0%}"
+
+
+def log_humanize(cfg: Config) -> None:
+    """日志里记一行这次实际用的拟人化设置（自动加上的也算），看反馈的日志时用。"""
+    touch = cfg.play.touch
+    parts = ["自然操作"] if cfg.play.humanize.enabled else []
+    if touch.great_ratio > 0:
+        parts.append(f"随机 GREAT {great_text(touch.great_ratio, touch.great_ratio_max)}")
+    if touch.jitter_ms > 0:
+        parts.append(f"时机偏移 ±{touch.jitter_ms:g}ms")
+    if touch.position_jitter > 0:
+        parts.append("触控位置随机")
+    logger.info("拟人化：%s", "、".join(parts) if parts else "都没开")
 
 
 def arena_defaults(cfg: Config) -> None:
@@ -236,9 +282,9 @@ def arena_defaults(cfg: Config) -> None:
 
 def drop_great_for_ap(cfg: Config) -> None:
     """以 AP 为目标选曲（AP 补完 / 优先没 AP 的歌）时不故意打 GREAT。"""
-    if cfg.play.touch.great_ratio > 0 and cfg.loop.song_mode in ("ap", "ap_first"):
+    if cfg.play.touch.great_ratio > 0 and ap_target(cfg):
         logger.info("选曲以 AP 为目标，本次不故意打 GREAT")
-        cfg.play.touch.great_ratio = 0.0
+        cfg.play.touch.great_ratio = cfg.play.touch.great_ratio_max = 0.0
 
 
 def drop_refill_without_cost(cfg: Config) -> None:
@@ -293,10 +339,12 @@ def cmd_run(cfg: Config, args) -> int:
         cfg.loop.arena_band = args.arena_band
     if args.arena_games is not None:
         cfg.loop.arena_games_per_band = args.arena_games
+    natural_defaults(cfg)
     arena_defaults(cfg)
     check_run_config(cfg)
     drop_great_for_ap(cfg)
     drop_refill_without_cost(cfg)
+    log_humanize(cfg)
     stop = args.stop
     launched = _launch_game(cfg)
     with open_context(cfg, stop, watch_combo=args.watch_combo, record=args.record) as ctx:
