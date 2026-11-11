@@ -192,6 +192,7 @@ def test_arena_defaults():
     [
         ("great_ratio", 0.5, "GREAT"),
         ("great_ratio", -0.01, "GREAT"),
+        ("great_ratio_max", 0.25, "GREAT 的比例上限"),
         ("jitter_ms", 25.0, "时机随机偏移"),
         ("position_jitter", 1.5, "触控位置"),
     ],
@@ -201,6 +202,87 @@ def test_check_run_config_humanize(key, value, msg):
     setattr(cfg.play.touch, key, value)
     with pytest.raises(SetupError, match=msg):
         check_run_config(cfg)
+
+
+@pytest.mark.parametrize("value", [-1, 24.5])
+def test_check_run_config_daily_hours(value):
+    cfg = Config()
+    cfg.loop.daily_hours = value
+    with pytest.raises(SetupError, match="每日演奏上限"):
+        check_run_config(cfg)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("enabled", "false"), ("rest_every_plays", -1), ("rest_every_plays", 1.5),
+    ("rest_min_s", -1), ("rest_max_s", 2), ("rest_max_s", float("inf")),
+    ("rare_rest_chance", -0.1), ("rare_rest_chance", 1.5),
+    ("long_rest_minutes", float("nan")), ("long_rest_minutes", -1), ("long_rest_minutes", 1441),
+    ("long_rest_min_s", -1), ("long_rest_max_s", 300), ("long_rest_max_s", 14401),
+])
+def test_invalid_natural_action_config(key, value):
+    cfg = Config()
+    setattr(cfg.play.humanize, key, value)
+    with pytest.raises(SetupError, match="自然操作"):
+        check_run_config(cfg)
+
+
+@pytest.mark.parametrize("mode, arena, great, jitter", [
+    ("random", False, (0.01, 0.05), 8.0),  # 随机 GREAT 关着：每局 1%~5%，时机偏移至少 ±8ms
+    ("current", True, (0.01, 0.05), 16.0),  # 激奏舞台的下限更大，区间保留
+    ("ap", False, (0.0, 0.0), 0.0),  # 以 AP 为目标时不动
+    ("ap_first", False, (0.0, 0.0), 0.0),
+])
+def test_natural_defaults(mode, arena, great, jitter):
+    from ournotes_auto.commands import natural_defaults
+
+    cfg = Config()
+    cfg.play.humanize.enabled = True
+    cfg.loop.song_mode, cfg.loop.arena = mode, arena
+    natural_defaults(cfg)
+    arena_defaults(cfg)
+    check_run_config(cfg)
+    drop_great_for_ap(cfg)
+    assert (cfg.play.touch.great_ratio, cfg.play.touch.great_ratio_max) == great
+    assert cfg.play.touch.jitter_ms == jitter
+
+
+def test_natural_defaults_keep_chosen_great_and_off_does_nothing():
+    from ournotes_auto.commands import natural_defaults
+
+    cfg = Config()
+    cfg.loop.song_mode = "random"
+    natural_defaults(cfg)  # 没开自然操作
+    assert (cfg.play.touch.great_ratio, cfg.play.touch.jitter_ms) == (0.0, 0.0)
+    cfg.play.humanize.enabled = True
+    cfg.play.touch.great_ratio, cfg.play.touch.jitter_ms = 0.03, 16.0
+    natural_defaults(cfg)
+    assert (cfg.play.touch.great_ratio, cfg.play.touch.great_ratio_max, cfg.play.touch.jitter_ms) == (0.03, 0.0, 16.0)
+
+
+def test_log_humanize(caplog):
+    from ournotes_auto.commands import log_humanize
+
+    cfg = Config()
+    with caplog.at_level("INFO", logger="ournotes_auto"):
+        log_humanize(cfg)
+        cfg.play.humanize.enabled = True
+        cfg.play.touch.great_ratio, cfg.play.touch.great_ratio_max, cfg.play.touch.jitter_ms = 0.01, 0.05, 8.0
+        log_humanize(cfg)
+    assert "拟人化：都没开" in caplog.text
+    assert "拟人化：自然操作、随机 GREAT 1%~5%、时机偏移 ±8ms" in caplog.text
+
+
+def test_natural_action_overrides_preserve_ap_policy():
+    cfg = Config()
+    apply_override(cfg, "play.humanize.enabled", "true")
+    apply_override(cfg, "play.humanize.rest_every_plays", "0")
+    apply_override(cfg, "play.humanize.rest_max_s", "60")
+    cfg.loop.song_mode = "ap"
+    cfg.play.touch.great_ratio, cfg.play.touch.great_ratio_max = 0.01, 0.05
+    drop_great_for_ap(cfg)
+    check_run_config(cfg)
+    assert cfg.play.humanize.enabled and cfg.play.humanize.rest_every_plays == 0
+    assert cfg.play.touch.great_ratio == cfg.play.touch.great_ratio_max == 0
 
 
 @pytest.mark.parametrize("mode, kept", [("current", True), ("random", True), ("list", True), ("ap", False), ("ap_first", False)])

@@ -831,7 +831,7 @@ def test_live_kinds():
     from ournotes_auto import runner, stats_page
 
     kinds = set(re.findall(r'self\._status\("(\w+)"', Path(runner.__file__).read_text(encoding="utf-8")))
-    assert len(kinds) == 8 and kinds <= set(stats_page.LIVE_KINDS)
+    assert len(kinds) == 10 and kinds <= set(stats_page.LIVE_KINDS)
     assert all(f'id="{icon}"' in stats_page.SPRITE for _, icon in stats_page.LIVE_KINDS.values())
 
 

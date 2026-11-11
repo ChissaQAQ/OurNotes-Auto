@@ -114,6 +114,22 @@
             ],
             "default_case": "minitouch"
         },
+        "HumanBehavior": {
+            "type": "switch",
+            "label": "$opt.HumanBehavior",
+            "description": "$opt.HumanBehavior.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_behavior": true } } }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_behavior": false } } }
+                }
+            ],
+            "default_case": "No"
+        },
         "HumanGreat": {
             "type": "select",
             "label": "$opt.HumanGreat",
@@ -122,22 +138,32 @@
                 {
                     "name": "off",
                     "label": "$opt.HumanGreat.off",
-                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 0 } } }
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 0, "human_great_max": 0 } } }
                 },
                 {
                     "name": "1",
                     "label": "$opt.HumanGreat.1",
-                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 1 } } }
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 1, "human_great_max": 0 } } }
                 },
                 {
                     "name": "3",
                     "label": "$opt.HumanGreat.3",
-                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 3 } } }
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 3, "human_great_max": 0 } } }
                 },
                 {
                     "name": "5",
                     "label": "$opt.HumanGreat.5",
-                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 5 } } }
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 5, "human_great_max": 0 } } }
+                },
+                {
+                    "name": "1_5",
+                    "label": "$opt.HumanGreat.1_5",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 1, "human_great_max": 5 } } }
+                },
+                {
+                    "name": "1_10",
+                    "label": "$opt.HumanGreat.1_10",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "human_great": 1, "human_great_max": 10 } } }
                 }
             ],
             "default_case": "off"
@@ -180,6 +206,44 @@
                 }
             ],
             "default_case": "No"
+        },
+        "DailyHours": {
+            "type": "select",
+            "label": "$opt.DailyHours",
+            "description": "$opt.DailyHours.desc",
+            "cases": [
+                {
+                    "name": "off",
+                    "label": "$opt.DailyHours.off",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "daily_hours": 0 } } }
+                },
+                {
+                    "name": "2",
+                    "label": "$opt.DailyHours.2",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "daily_hours": 2 } } }
+                },
+                {
+                    "name": "3",
+                    "label": "$opt.DailyHours.3",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "daily_hours": 3 } } }
+                },
+                {
+                    "name": "4",
+                    "label": "$opt.DailyHours.4",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "daily_hours": 4 } } }
+                },
+                {
+                    "name": "6",
+                    "label": "$opt.DailyHours.6",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "daily_hours": 6 } } }
+                },
+                {
+                    "name": "8",
+                    "label": "$opt.DailyHours.8",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "daily_hours": 8 } } }
+                }
+            ],
+            "default_case": "off"
         },
         "WatchCombo": {
             "type": "switch",

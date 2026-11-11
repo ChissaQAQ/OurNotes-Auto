@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import time
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field, fields
@@ -230,6 +231,41 @@ class RecordStore:
         if state.setdefault("account", {}).get(package) != account:
             state["account"][package] = account
             self._save_state(state)
+
+    def habit_key(self, package: str) -> str:
+        """自然操作的操作习惯种子（见 :class:`~ournotes_auto.humanize.Humanizer`）：这台电脑第一次用时随机生成后不变，
+        再按服和当前账号（:meth:`account`）区分。"""
+        state = self._load_state()
+        key = state.get("habit_key")
+        if not isinstance(key, str) or not key:
+            key = state["habit_key"] = secrets.token_hex(8)
+            self._save_state(state)
+        return f"{key}:{package}:{state.get('account', {}).get(package, '')}"
+
+    @staticmethod
+    def _player(state: dict, package: str) -> str:
+        return f"{package}:{state.get('account', {}).get(package, '')}"
+
+    def play_seconds(self, package: str, day: str) -> float:
+        """这个服的当前账号在游戏日 ``day``（:func:`game_day`）累计的演奏时长（秒，见 ``loop.daily_hours``）。"""
+        state = self._load_state()
+        entry = state.get("play_time", {}).get(self._player(state, package))
+        if not isinstance(entry, dict) or entry.get("day") != day:
+            return 0.0
+        return float(entry.get("seconds", 0.0))
+
+    def add_play_seconds(self, package: str, day: str, seconds: float) -> float:
+        """记下演奏时长，返回这一天累计的秒数。只留最近一个游戏日的。"""
+        state = self._load_state()
+        times = state.setdefault("play_time", {})
+        who = self._player(state, package)
+        entry = times.get(who)
+        if not isinstance(entry, dict) or entry.get("day") != day:
+            entry = {"day": day, "seconds": 0.0}
+        entry["seconds"] = round(float(entry.get("seconds", 0.0)) + seconds, 1)
+        times[who] = entry
+        self._save_state(state)
+        return entry["seconds"]
 
     def lb_all_used(self, package: str) -> str | None:
         """这个服的当前账号（:meth:`account`）上次用完「全部消耗」当天的次数是哪个游戏日（:func:`game_day`），

@@ -247,24 +247,25 @@ def _ensure_stats_page(data: Path = Path("data")) -> None:
 
 
 def _ensure_stats_card(root: Path = ROOT) -> None:
-    """MXU 发布包的 interface.json 里没有设置页的「统计与成就」卡片时补上（下次打开界面显示）。
+    """MXU 发布包的 interface.json 里设置页的分组（「统计与成就」卡片、所有任务共用、拟人化）和这个版本的不一样时
+    重新生成（下次打开界面显示）。
 
-    更新器用旧版本的 release.py 生成 interface.json，从没有这张卡片的版本更新过来时要在这里补。"""
+    更新器用旧版本的 release.py 生成 interface.json，从没有这张卡片、没有「拟人化」分组的版本更新过来时要在这里补。"""
     info = release.read_release(root)
     if not info or info.get("ui") != "mxu":
         return
     path = root / "interface.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        if release.STATS_OPTION in (data.get("option") or {}):
-            return
         agent = data.get("agent") or {}
         fixed = release.render_interface(data, "mxu", agent_exec=agent.get("child_exec", release.AGENT_EXEC), agent_args=agent.get("child_args", release.AGENT_ARGS))
+        if release.STATS_OPTION in (data.get("option") or {}) and data.get("setting") == fixed["setting"]:
+            return
         release.write_json(path, fixed)
     except (OSError, ValueError, TypeError, KeyError) as e:
-        logger.debug("补设置页的统计卡片失败：%s", e)
+        logger.debug("补设置页的分组失败：%s", e)
         return
-    logger.info("设置页加上了「统计与成就」卡片，下次打开界面时显示")
+    logger.info("更新了设置页的分组（统计与成就、所有任务共用、拟人化），下次打开界面时显示")
 
 
 def _started(pid: int) -> float | None:

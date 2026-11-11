@@ -29,6 +29,20 @@ play:
   # 学到的偏移另存于 data/state.json（在此基础上叠加）
   offset_ms: -16
   guard_life_zero_s: 1.0     # 演奏中生命值归零这么久（秒，整体对不上了）就暂停重试；0 为不检查
+  humanize:
+    enabled: false          # 自然操作：当天的操作习惯、动作时长、菜单停留、休息；不以 AP 为目标时 GREAT 关着也打 1%~5%、时机偏移至少 8ms
+    rest_every_plays: 8      # 平均完成这么多局后短休息（每轮在 60%~140% 间随机）；0 关闭
+    rest_min_s: 30
+    rest_max_s: 90           # 短休息范围（秒）；等 LB 等长时间空闲后不重复休息
+    rare_rest_chance: 0.12   # 短休息偶尔特别久（rest_max_s 的 2~6 倍）的概率
+    long_rest_minutes: 75    # 累计演奏约这么多分钟（每轮在 80%~120% 间随机）后长休息；0 关闭
+    long_rest_min_s: 600
+    long_rest_max_s: 1800    # 长休息范围（秒）
+  touch:
+    jitter_ms: 0            # 时机漂移幅度，0 关闭；可设 8 / 16，上限 20
+    position_jitter: 0      # 触点位置变化，0 关闭、1 最大
+    great_ratio: 0          # 故意打 GREAT 的比例，0 关闭；AP 补完 / 优先没 AP 时忽略
+    great_ratio_max: 0      # 比 great_ratio 大时每局在两者之间随机取比例（如 0.01 ~ 0.05）；0 为固定
   sync:
     tau_s: 0.835             # 流速 5.00 实测值；改了流速用 calibrate motion 重新测量
 
@@ -58,6 +72,7 @@ loop:
   max_failures: 5            # 连续失败这么多次后停止
   sync_retries: 2            # 首音符同步失败、演奏中生命值归零时暂停、点「重试」从头再来的次数（每局），用完了等歌曲放完；0 为不重试
   min_fps: 50                # 连续打歌时最近 5 次同步测到的游戏出帧率（中位数）低于它就重启游戏（连续运行十几个小时后会越来越卡）；0 为不检查
+  daily_hours: 0             # 每个游戏日（3:00 换日）最多演奏几小时（每局从选歌到结算累计，休息、等 LB 不算）；到了就结束，挂机等到下一个游戏日；0 为不限
   ap_difficulties: expert,hard,normal,easy  # AP 补完依次处理的难度
   ap_first_difficulties: ""  # ap_first 依次补的难度（如 expert,hard,normal,easy），都补完了按 game.difficulty 随机；留空只补 game.difficulty
   ap_max_attempts: 3         # AP 补完 / ap_first 时同一首歌最多打几次

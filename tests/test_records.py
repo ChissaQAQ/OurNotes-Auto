@@ -254,3 +254,32 @@ def test_state_saved_when_file_busy(tmp_path, monkeypatch):
     store.set_account("pkg", "a")
     assert RecordStore(tmp_path).account("pkg") == "a" and len(calls) == 3
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_play_seconds_per_game_day_and_account(tmp_path):
+    """每日演奏上限用的演奏时长：按服和当前账号分开，只算当天，换日后从 0 开始。"""
+    from ournotes_auto.records import RecordStore
+
+    store = RecordStore(tmp_path)
+    assert store.play_seconds("pkg", "2026-11-10") == 0
+    store.add_play_seconds("pkg", "2026-11-10", 100)
+    assert store.add_play_seconds("pkg", "2026-11-10", 50.04) == 150.0
+    assert store.play_seconds("pkg", "2026-11-10") == 150.0
+    assert store.play_seconds("pkg", "2026-11-11") == 0
+    assert store.play_seconds("other", "2026-11-10") == 0
+    store.set_account("pkg", "alt")  # 切换账号后另算
+    assert store.play_seconds("pkg", "2026-11-10") == 0
+    store.add_play_seconds("pkg", "2026-11-11", 30)
+    store.set_account("pkg", "")
+    assert store.play_seconds("pkg", "2026-11-10") == 150.0
+
+
+def test_habit_key_is_stable_and_per_account(tmp_path):
+    from ournotes_auto.records import RecordStore
+
+    store = RecordStore(tmp_path)
+    key = store.habit_key("pkg")
+    assert key == RecordStore(tmp_path).habit_key("pkg") and key.endswith(":pkg:")
+    assert store.habit_key("other") != key
+    store.set_account("pkg", "alt")
+    assert store.habit_key("pkg") == key + "alt"

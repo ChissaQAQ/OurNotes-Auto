@@ -500,6 +500,127 @@ class FakeStop(threading.Event):
         return self.is_set()
 
 
+def natural_runner(tmp_path, max_plays=2):
+    runner, nav, store = make(tmp_path)
+    runner.cfg.play.humanize.enabled = True
+    runner.cfg.play.humanize.rest_every_plays = 1
+    runner.cfg.play.humanize.rest_min_s = runner.cfg.play.humanize.rest_max_s = 4
+    runner.cfg.play.humanize.rare_rest_chance = 0
+    runner.cfg.play.humanize.long_rest_minutes = 0
+    runner.cfg.loop.max_plays = max_plays
+    runner.stop = FakeStop()
+    runner.clock = runner.humanizer.clock = lambda: runner.stop.now
+    return runner, nav, store
+
+
+def test_natural_rest_is_between_plays_and_not_after_last(tmp_path):
+    runner, nav, _ = natural_runner(tmp_path)
+    assert runner.run().plays == 2
+    assert runner.stop.waits == [4]
+    assert nav.calls.count("start:zero") == 2
+    assert runner.humanizer.plays == 2
+    runner, _, _ = natural_runner(tmp_path / "one", max_plays=1)
+    assert runner.run().plays == 1
+    assert runner.stop.waits == []
+
+
+def test_stop_during_natural_rest_does_not_start_another_song(tmp_path):
+    runner, nav, _ = natural_runner(tmp_path)
+
+    def stop_during_rest(seconds):
+        runner.stop.set()
+        return True
+
+    runner.stop.wait = stop_during_rest
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0
+    assert nav.calls.count("start:zero") == 1
+
+
+def test_natural_rest_is_skipped_when_song_source_is_exhausted(tmp_path):
+    runner, _, _ = natural_runner(tmp_path, max_plays=0)
+    runner.source.advance = lambda nav, first: first
+    assert runner.run().plays == 1
+    assert runner.stop.waits == []
+
+
+def test_natural_rest_keeps_update_responsive(tmp_path):
+    runner, nav, _ = natural_runner(tmp_path, max_plays=0)
+    runner.cfg.loop.wait_lb = True
+    runner.cfg.game.lb_cost = 3
+    wait = runner.stop.wait
+
+    def update_during_rest(seconds):
+        runner.update.set()
+        return wait(seconds)
+
+    runner.stop.wait = update_during_rest
+    stats = runner.run()
+    assert stats.restart and stats.plays == 1
+    assert nav.calls.count("start:stop") == 1
+
+
+T_DAY = 1_793_000_000.0  # 假的电脑时间（Unix 秒）
+
+
+def capped_runner(tmp_path, used_h, hours=2.0):
+    """每日演奏上限 ``hours`` 小时、今天已演奏 ``used_h`` 小时；电脑时间跟着 FakeStop 睡过的时长走。"""
+    from ournotes_auto.records import game_day
+
+    runner, nav, store = make(tmp_path)
+    runner.cfg.loop.daily_hours = hours
+    runner.cfg.loop.max_plays = 3
+    runner.stop = FakeStop()
+    runner.wall_clock = lambda: T_DAY + runner.stop.now
+    if used_h:
+        store.add_play_seconds(runner.cfg.device.package, game_day(T_DAY), used_h * 3600)
+    return runner, nav, store
+
+
+def test_daily_cap_ends_non_idle_tasks(tmp_path):
+    runner, nav, _ = capped_runner(tmp_path, used_h=2)
+    stats = runner.run()
+    assert stats.plays == 0 and stats.capped and stats.failures == 0
+    assert not any(c.startswith("start") for c in nav.calls)
+    assert "到了每日演奏上限" in stats.summary()
+
+
+def test_daily_cap_counts_time_of_each_play(tmp_path):
+    from ournotes_auto.records import game_day
+
+    runner, _, store = capped_runner(tmp_path, used_h=0, hours=1)
+    runner.cfg.loop.max_plays = 10
+    t = [0.0]
+
+    def clock():  # 每看一次时间过去 700 秒：一局至少算 700 秒
+        t[0] += 700
+        return t[0]
+
+    runner.clock = clock
+    stats = runner.run()
+    assert stats.capped and 1 <= stats.plays < 10
+    assert store.play_seconds(runner.cfg.device.package, game_day(T_DAY)) >= 3600
+    assert store.play_seconds(runner.cfg.device.package, "2000-01-01") == 0  # 别的游戏日不算
+
+
+def test_idle_waits_for_next_game_day_at_daily_cap(tmp_path):
+    from ournotes_auto.records import next_game_day
+
+    runner, nav, _ = capped_runner(tmp_path, used_h=3)
+    runner.cfg.loop.wait_lb = True
+    runner.cfg.game.lb_cost = 3
+    runner.cfg.loop.max_plays = 1
+    stats = runner.run()
+    assert stats.plays == 1 and not stats.capped
+    assert runner.wall_clock() >= next_game_day(T_DAY) + 300  # 等到下一个游戏日（换日后 5 分钟）才打
+    assert max(runner.stop.waits) <= 600  # 分段等，期间照常检查更新、定时领取
+
+
+def test_daily_cap_off_by_default(tmp_path):
+    runner, _, _ = capped_runner(tmp_path, used_h=30, hours=0)
+    assert runner.run().plays == 3
+
+
 def idle(tmp_path, statuses, exhausted_at=(2,)):
     """挂机：第 ``exhausted_at`` 次 LIVE START 时 LB 用完，之后 ``lb_status`` 依次读到 ``statuses``。"""
     from ournotes_auto.runner import LbExhausted
