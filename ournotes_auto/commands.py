@@ -398,6 +398,7 @@ def _game_navigator(cfg: Config, args, source, touch):
     """能在闪退、标题画面卡住时重启游戏的导航器。"""
     from .device import adb
     from .nav.navigator import GameNavigator
+    from .records import RecordStore
 
     source.ipc.refresh_display_id()
     return GameNavigator(
@@ -409,6 +410,9 @@ def _game_navigator(cfg: Config, args, source, touch):
         restart_app=game_restarter(cfg, source, args.stop),
         app_running=lambda: adb.app_running(cfg.device),
         app_in_front=lambda: adb.app_in_front(cfg.device),
+        front_window=lambda: adb.front_window(cfg.device),
+        press_back=lambda: adb.press_back(cfg.device),
+        chores=RecordStore("data"),
     )
 
 
@@ -473,6 +477,18 @@ def _daily_jobs(text: str) -> list[str]:
     return jobs
 
 
+def _refresh_stats(cfg: Config) -> None:
+    """招募存了新的结果截图、做成了看广告等日常（成就、「今天的日常」要用）之后更新统计页；出错只记警告。
+    演奏任务自己每局都更新，不用这个。"""
+    from . import stats
+    from .cli import _library
+
+    try:
+        stats.refresh("data", library=_library(cfg))
+    except Exception as e:  # noqa: BLE001 - 统计页只是给人看的
+        logger.warning("更新统计页失败：%s", e)
+
+
 def cmd_daily(cfg: Config, args) -> int:
     """领取日常奖励（游戏没在运行时先启动），最后停在主界面。"""
     from .nav.daily import DAILY_JOBS, OPT_IN_JOBS
@@ -492,10 +508,54 @@ def cmd_daily(cfg: Config, args) -> int:
                 return 130
             logger.error("%s", e)
             return 1
+        finally:
+            if nav.recruit_shots or nav.chores:
+                _refresh_stats(cfg)
     if failed:
         logger.error("日常领取有项目出错：%s", "、".join(failed))
         return 1
     logger.info("日常领取完成")
+    return 0
+
+
+def _ad_jobs(text: str) -> list[str]:
+    import argparse
+
+    from .nav.ads import AD_JOBS
+
+    jobs = [j.strip() for j in text.split(",") if j.strip()]
+    bad = [j for j in jobs if j not in AD_JOBS]
+    if bad or not jobs:
+        raise argparse.ArgumentTypeError(f"应为 {','.join(AD_JOBS)} 中的若干项（逗号分隔）")
+    return jobs
+
+
+def cmd_ads(cfg: Config, args) -> int:
+    """看广告领每日奖励（游戏没在运行时先启动），最后停在主界面。"""
+    from .nav.ads import AD_JOBS
+    from .runner import NavigationError
+
+    jobs = args.jobs or list(AD_JOBS)
+    _launch_game(cfg)
+    with _device(cfg) as (source, touch):
+        nav = _game_navigator(cfg, args, source, touch)
+        try:
+            nav.leave_ad()  # 上次看到一半停了的广告还开着的话先关掉：不然会被当成认不出的画面去点
+            nav.go_home(timeout_s=180)
+            failed = nav.run_ads(jobs, studio_band=args.studio_band)
+        except NavigationError as e:
+            if args.stop.is_set():
+                logger.info("已停止")
+                return 130
+            logger.error("%s", e)
+            return 1
+        finally:
+            if nav.recruit_shots or nav.chores:
+                _refresh_stats(cfg)
+    if failed:
+        logger.error("看广告有项目出错：%s", "、".join(failed))
+        return 1
+    logger.info("看广告完成")
     return 0
 
 
@@ -532,7 +592,7 @@ def cmd_select(cfg: Config, args) -> int:
 
 
 def register(sub) -> None:
-    from .nav.screens import LB_MAX_COST
+    from .nav.screens import ARENA_BANDS, LB_MAX_COST
     from .sources import ARENA_BAND_MODES, SONG_MODES
 
     sp = sub.add_parser("screenshot", help="截图（可叠加判定线/轨道线核对几何参数）")
@@ -565,6 +625,22 @@ def register(sub) -> None:
         "gifts 礼物盒（默认除 story、event 外全部，总是按这个顺序）",
     )
     sp.set_defaults(func=cmd_daily)
+
+    sp = sub.add_parser(
+        "ads", help="看广告领每日奖励：观看 CM 招募（每天 3 次）、看广告恢复 LB（每天 2 次）、录音室练习的 SKIP（每天 1 次）；要游戏里放得出广告"
+    )
+    sp.add_argument(
+        "--jobs",
+        type=_ad_jobs,
+        help="只做这几项，逗号分隔：recruit 观看 CM 招募、lb 看广告恢复 LIVE BOOST、studio 录音室练习的 SKIP（默认全部，总是按这个顺序）",
+    )
+    sp.add_argument(
+        "--studio-band",
+        choices=("highest", *ARENA_BANDS),  # 同 nav.ads.STUDIO_BAND_MODES
+        default="highest",
+        help="录音室练习的 SKIP 用在哪个乐队：highest 练习Lv 最高的（默认），或者指定乐队",
+    )
+    sp.set_defaults(func=cmd_ads)
 
     sp = sub.add_parser("select", help="在乐曲选择页依次选中指定曲目（调试按曲目选歌）")
     sp.add_argument("songs", nargs="+", metavar="SONG", help="曲目 ID 或曲名")

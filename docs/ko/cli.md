@@ -61,6 +61,9 @@ ournotes-auto daily
 ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # 스튜디오 연습, 미션, 패스, 기간 한정 미션, 초보자 미션, T.G.W CARD, 무료 뽑기, 선물함
 ournotes-auto daily --jobs story   # 보지 않은 밴드 / 어나더 / 인연 스토리 스킵(명시해야 실행)
 ournotes-auto daily --jobs event   # 기간 한정 이벤트에서 보지 않은 이벤트 스토리 / 어나더 스토리 스킵(명시해야 실행)
+ournotes-auto ads                  # 광고를 보고 매일 보상 받기: CM 뽑기(3회), LIVE BOOST 회복(2회), 스튜디오 연습 SKIP(1회). 게임에서 광고가 재생되어야 함
+ournotes-auto ads --jobs lb        # 일부만 실행: recruit는 CM 뽑기, lb는 LIVE BOOST 회복, studio는 스튜디오 연습 SKIP
+ournotes-auto ads --studio-band mygo  # 스튜디오 연습 SKIP을 사용할 밴드: highest는 연습 Lv이 가장 높은 밴드(기본), mygo, avemujica, mewtype, millsage, dumbrock
 
 # 로컬 연주 기록 요약(총 판 수, AP한 채보, 아직 AP를 못 한 채보, 최근 몇 판), 통계 페이지 갱신(누적 실행 시간, 업적. 전체 페이지는 data/stats.html)
 ournotes-auto records [--recent 10]

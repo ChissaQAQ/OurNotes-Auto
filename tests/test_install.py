@@ -37,6 +37,9 @@ def project(tmp_path, monkeypatch):
         "agent/main.py",
         "ournotes_auto/cli.py",
         "ournotes_auto/__pycache__/cli.cpython-314.pyc",
+        "ournotes_auto/charts/jackets/100001.png",  # 随包附带的封面：app 层
+        "ournotes_auto/charts/bundle/charts.json",  # 随整包附带的谱面：进发布包，但不算 app 层、也不算运行环境
+        "ournotes_auto/charts/bundle/100001_expert.json.gz",
         "tasks/common.json",
         "locales/zh_cn.json",
         "docs/使用说明.md",
@@ -77,10 +80,9 @@ def _written(tmp_path: Path, kind: str) -> dict:
 
 def test_setting_only_for_mxu(tmp_path):
     mxu = _written(tmp_path, "mxu")
-    assert [s["name"] for s in mxu["setting"]] == ["stats", "global", "humanize"]
-    assert mxu["setting"][1]["option"] + mxu["setting"][2]["option"] == sorted(
-        mxu["global_option"], key=lambda o: o in mxu["setting"][2]["option"]
-    )
+    assert [s["name"] for s in mxu["setting"]] == ["stats", "global", "humanize", "update"]
+    grouped = mxu["setting"][1]["option"] + mxu["setting"][2]["option"] + mxu["setting"][3]["option"][1:]
+    assert sorted(grouped, key=mxu["global_option"].index) == mxu["global_option"] and len(set(grouped)) == len(grouped)
     assert (mxu["version"], mxu["agent"]["child_exec"], mxu["agent"]["child_args"]) == (
         "v9.9.9",
         "./python/python.exe",
@@ -182,6 +184,11 @@ def test_runtime_info_detects_dll_and_python_changes(tmp_path, project):
         assert install.runtime_info(tmp_path, "mxu")["files"] == python_changed
         _write(tmp_path, rel, "build 2")
         assert install.runtime_info(tmp_path, "mxu")["files"] == python_changed
+    # 随整包附带的谱面：每出一首新歌它就变，算进来的话每次发版都成了整包更新
+    for text in ("打包时的", "多了新歌"):
+        _write(tmp_path, f"{release.BUNDLE_DIR}/charts.json", text)
+        _write(tmp_path, f"{release.BUNDLE_DIR}/100001_expert.json.gz", text)
+        assert install.runtime_info(tmp_path, "mxu")["files"] == python_changed
     _write(tmp_path, "python/Lib/site-packages/numpy/core.pyd", "new")
     assert install.runtime_info(tmp_path, "mxu")["files"] != python_changed  # 依赖本身的文件照算
 
@@ -209,10 +216,13 @@ def test_release_writes_release_json(tmp_path, monkeypatch, project, kind):
         "docs/使用说明.md",
         "interface.json",
         "locales/zh_cn.json",
+        "ournotes_auto/charts/jackets/100001.png",
         "ournotes_auto/cli.py",
         "resource/pipeline/x.json",
         "tasks/common.json",
     ]
+    # 随整包附带的谱面在包里，不在 app 层的清单里
+    assert sorted(p.name for p in (out / release.BUNDLE_DIR).iterdir()) == ["100001_expert.json.gz", "charts.json"]
     assert info["files"]["interface.json"] == release.interface_digest(json.loads((project / "interface.json").read_text(encoding="utf-8")))
     # top 是包根目录下除用户数据外的全部条目，整包更新时只换这些
     assert info["top"] == sorted({p.name for p in out.iterdir()} - release.USER_DIRS)

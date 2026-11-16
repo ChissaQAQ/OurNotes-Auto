@@ -128,11 +128,17 @@ def _running(run, serial: str, package: str) -> bool:
     return bool(run("-s", serial, "shell", "pidof", package, check=False).stdout.strip())
 
 
+def _focus(run, serial: str) -> str | None:
+    """获得焦点的窗口（``包名/界面``，如 ``com.bilibili.sirius/com.bangdream.sirius.MainActivity``），读不到为 None。"""
+    out = run("-s", serial, "shell", "dumpsys", "window", check=False).stdout.decode("utf-8", "replace")
+    m = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^\s}]+)", out)
+    return m.group(1) if m else None
+
+
 def _in_front(run, serial: str, package: str) -> bool:
     """游戏的界面在前台（获得焦点的窗口属于它）；读不到时当作在前台。"""
-    out = run("-s", serial, "shell", "dumpsys", "window", check=False).stdout.decode("utf-8", "replace")
-    m = re.search(r"mCurrentFocus=Window\{\S+ \S+ ([^\s/}]+)", out)
-    return m is None or m.group(1) == package
+    focus = _focus(run, serial)
+    return focus is None or focus.split("/")[0] == package
 
 
 def app_running(cfg: DeviceConfig, timeout_s: float = 15.0) -> bool:
@@ -143,6 +149,18 @@ def app_running(cfg: DeviceConfig, timeout_s: float = 15.0) -> bool:
 def app_in_front(cfg: DeviceConfig, timeout_s: float = 15.0) -> bool:
     serial, run = _runner(cfg, timeout_s)
     return _in_front(run, serial, cfg.package)
+
+
+def front_window(cfg: DeviceConfig, timeout_s: float = 15.0) -> str | None:
+    """获得焦点的窗口（``包名/界面``），读不到为 None。看广告时用它分辨游戏、广告和广告弹出的商店页。"""
+    serial, run = _runner(cfg, timeout_s)
+    return _focus(run, serial)
+
+
+def press_back(cfg: DeviceConfig, timeout_s: float = 15.0) -> None:
+    """按一下返回键（看广告时关掉放完的广告、广告弹出的商店页）。"""
+    serial, run = _runner(cfg, timeout_s)
+    run("-s", serial, "shell", "input", "keyevent", "4")
 
 
 def start_app(cfg: DeviceConfig, timeout_s: float = 30.0) -> bool:

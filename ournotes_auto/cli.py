@@ -227,6 +227,7 @@ def cmd_backup(cfg: Config, args) -> int:
         return 0
     parts = [f"{result.records:,} 局演奏记录"] if result.records else []
     parts += [f"{result.arena:,} 局激奏舞台记录"] if result.arena else []
+    parts += [f"{result.chores:,} 条日常记录"] if result.chores else []
     parts += [f"{result.sessions:,} 次运行记录"] if result.sessions else []
     parts += [f"{result.achievements} 个成就"] if result.achievements else []
     parts += ["学到的 offset"] if result.offsets else []

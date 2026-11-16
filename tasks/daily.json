@@ -21,6 +21,20 @@
                 "DailyGifts"
             ],
             "default_check": true
+        },
+        {
+            "name": "看广告",
+            "label": "$task.Ads",
+            "entry": "OurNotes_Ads",
+            "group": [
+                "daily"
+            ],
+            "description": "$task.Ads.desc",
+            "option": [
+                "AdsRecruit",
+                "AdsLb",
+                "AdsStudio"
+            ]
         }
     ],
     "option": {
@@ -303,6 +317,167 @@
                 }
             ],
             "default_case": "Yes"
+        },
+        "AdsRecruit": {
+            "type": "switch",
+            "label": "$opt.AdsRecruit",
+            "description": "$opt.AdsRecruit.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_recruit": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_recruit": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "AdsLb": {
+            "type": "switch",
+            "label": "$opt.AdsLb",
+            "description": "$opt.AdsLb.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_lb": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_lb": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "AdsStudio": {
+            "type": "switch",
+            "label": "$opt.AdsStudio",
+            "description": "$opt.AdsStudio.desc",
+            "cases": [
+                {
+                    "name": "Yes",
+                    "option": [
+                        "AdsStudioBand"
+                    ],
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_studio": true
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "No",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_studio": false
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "Yes"
+        },
+        "AdsStudioBand": {
+            "type": "select",
+            "label": "$opt.AdsStudioBand",
+            "description": "$opt.AdsStudioBand.desc",
+            "cases": [
+                {
+                    "name": "highest",
+                    "label": "$opt.AdsStudioBand.highest",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_studio_band": "highest"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "mygo",
+                    "label": "$opt.ArenaBand.mygo",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_studio_band": "mygo"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "avemujica",
+                    "label": "$opt.ArenaBand.avemujica",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_studio_band": "avemujica"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "mewtype",
+                    "label": "$opt.ArenaBand.mewtype",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_studio_band": "mewtype"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "millsage",
+                    "label": "$opt.ArenaBand.millsage",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_studio_band": "millsage"
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "dumbrock",
+                    "label": "$opt.ArenaBand.dumbrock",
+                    "pipeline_override": {
+                        "OurNotesParam": {
+                            "attach": {
+                                "ads_studio_band": "dumbrock"
+                            }
+                        }
+                    }
+                }
+            ],
+            "default_case": "highest"
         }
     }
 }

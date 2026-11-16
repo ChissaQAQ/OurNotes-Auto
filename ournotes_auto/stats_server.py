@@ -36,6 +36,7 @@ FILES = {  # 地址 → data 里的文件、类型
     f"/{stats.PAGE_VER}": (stats.PAGE_VER, JS),
     f"/{stats.PAGE_LIVE}": (stats.PAGE_LIVE, JS),
 }
+SHOTS = f"/{stats.RECRUIT_DIR}/"  # 招募结果的截图：/recruit/<文件名>
 APPEAR_S = 120.0  # 等窗口出来最多多久（浏览器没打开窗口时不一直留着）
 CHECK_S = 5.0  # 每隔多久看一次窗口关了没有
 
@@ -66,6 +67,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if url.path == "/api/export":
             self._export()
+        elif url.path.startswith(SHOTS) and stats.RECRUIT_SHOT.fullmatch(url.path[len(SHOTS) :]):
+            # 「招募记录」的截图：只给名字对得上的文件（名字里没有路径分隔符）
+            try:
+                body = (self.server.data / stats.RECRUIT_DIR / url.path[len(SHOTS) :]).read_bytes()
+            except OSError:
+                self._send(404, b"not found", "text/plain; charset=utf-8")
+                return
+            self._send(200, body, "image/jpeg")
         elif url.path in FILES:
             name, kind = FILES[url.path]
             try:
@@ -94,11 +103,15 @@ class Handler(BaseHTTPRequestHandler):
         out = {
             "ok": True,
             "name": b.name,
-            "total": {"records": len(b.records), "arena": len(b.arena), "sessions": len(b.sessions), "achievements": len(b.unlocked)},
+            "total": {
+                "records": len(b.records), "arena": len(b.arena), "chores": len(b.chores), "sessions": len(b.sessions),
+                "achievements": len(b.unlocked),
+            },
             "records": result.records,
             "known": result.known,
             "bad": result.bad,
             "arena": result.arena,
+            "chores": result.chores,
             "sessions": result.sessions,
             "achievements": result.achievements,
             "offsets": result.offsets,

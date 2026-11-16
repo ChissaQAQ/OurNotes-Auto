@@ -1,3 +1,14 @@
+# What's New in v0.2.7
+
+- New task "Watch Ads" (#140): watches the in-game ads for the daily rewards — the CM gacha (3 pulls a day), LIVE BOOST recovery (twice a day) and the Studio Practice SKIP (once a day); each can be turned off individually. The game has to be able to show ads (the Google Play version), and for now only Simplified Chinese is recognized. It only taps the watch-ad buttons, never taps anything inside an ad, and never touches Stars or items
+- Fixed fresh installs failing to download song titles and jackets and so not recognizing songs (#142): the title table and the jackets used to recognize songs now come bundled instead of being downloaded from another site. A freshly downloaded package also ships with every chart available at release time, so those songs can be played even when the chart site is unreachable
+- Charts that were changed on the chart site are downloaded again instead of being served from the old cache forever
+- "Stats & Achievements" adds a "招募记录" (gacha log) tab for browsing past gacha result screenshots, "今天的日常" (today's dailies), Arena placement and per-band stats, a per-task summary of the run history, and 18 achievements (Arena, ads, gacha)
+- MXU Settings gains an "Updates" group; "Version Status" at the top shows the current version, the latest version and how far a pending update has got. When an update check fails, the log says why. A check is skipped only if one ran in the last 10 minutes (was 6 hours)
+- Claim Dailies: if opening an entry runs into the date change and the game has to log in again, it carries on after logging in instead of skipping that item
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.7
+
 # What's New in v0.2.6
 
 - New global option "Humanize: Natural Actions" (off by default): keeps the same habits for the whole game day, varies tap holds, flicks and menu dwell, and takes breaks — 30–90 seconds about every 8 plays, occasionally longer, plus a 10–30 minute break after about 75 minutes of playing. When song selection isn't aiming for AP, it also plays a random 1%–5% of GREATs per round and at least ±8ms timing variation even if Random GREAT is off

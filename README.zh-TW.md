@@ -50,9 +50,9 @@
 - MuMu 模擬器 12，解析度 **1280×720**，幀率不低於 60
 - 國際服，遊戲語言為简体中文、繁體中文、English 或 한국어（한국어要在任務設定裡把「遊戲語言」選成 한국어）；或日服（「遊戲語言」選「日本語（日服）」，用戶端要從 Google Play 安裝）
 - 遊戲內「節奏圖示速度」**5.00**（開了「隨機 GREAT」時務必保持，其他流速會讓按鍵整體偏移、GREAT 變 GOOD）；MV / 背景關閉，或換成較暗、不會動的背景；特效、演出等級建議調低
-- 能連網：譜面在執行時從譜面站 `assets.bdon.moe` 下載
+- 能連網：套件裡帶著發版時的全部譜面，之後新出的歌在執行時從譜面站 `assets.bdon.moe` 下載
 
-任務：啟動遊戲、切換帳號（國際服 B 站登入紀錄裡的帳號，不用密碼）、重複刷歌、清體力、掛機（LB 用完後等回復接著打）、AP補完、挑戰演出（活動期間）、激奏舞台（多人對局，可指定樂團或輪流打每個樂團，每局的名次和段位分都有紀錄）、掛機（激奏舞台）、領取日常、開啟統計視窗（累計執行時長、演奏數據和成就；換套件前在視窗裡匯出紀錄，在新的套件裡匯入）、推播測試（檢查「推播到手機」的設定：打歌完成、出錯和掛機遇到伺服器維護時推播到手機，支援 ntfy、Server醬、Bark、webhook）。各任務和選項的細節見[使用說明](docs/zh-TW/usage.md)，命令列用法見[命令列](docs/zh-TW/cli.md)。
+任務：啟動遊戲、切換帳號（國際服 B 站登入紀錄裡的帳號，不用密碼）、重複刷歌、清體力、掛機（LB 用完後等回復接著打）、AP補完、挑戰演出（活動期間）、激奏舞台（多人對局，可指定樂團或輪流打每個樂團，每局的名次和段位分都有紀錄）、掛機（激奏舞台）、領取日常、看廣告（觀看 CM 轉蛋、回復 LIVE BOOST、錄音室練習 SKIP，要遊戲裡放得出廣告；只等廣告播完再按返回鍵關掉，不點廣告裡的東西）、開啟統計視窗（累計執行時長、演奏數據和成就；換套件前在視窗裡匯出紀錄，在新的套件裡匯入）、推播測試（檢查「推播到手機」的設定：打歌完成、出錯和掛機遇到伺服器維護時推播到手機，支援 ntfy、Server醬、Bark、webhook）。各任務和選項的細節見[使用說明](docs/zh-TW/usage.md)，命令列用法見[命令列](docs/zh-TW/cli.md)。
 
 ## 實測效果與已知限制
 
@@ -97,6 +97,6 @@ Copyright (C) 2026 ChissaQAQ
 ## 致謝
 
 - [autodori](https://github.com/EvATive7/autodori)：設計參考（GPLv3）。本專案沒有複製其程式碼
-- [bdon.moe](https://bdon.moe/) 譜面站，[haneoka.org](https://haneoka.org/) 國際服曲名資料
+- [bdon.moe](https://bdon.moe/) 譜面站，[haneoka.org](https://haneoka.org/) 國際服曲名資料（隨套件附帶的曲名表整理自這裡，執行時不會連線）
 - [MaaFramework](https://github.com/MaaXYZ/MaaFramework)、[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 與 [MaaCommonAssets](https://github.com/MaaXYZ/MaaCommonAssets)（OCR 模型）
 - 圖形介面：[MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia)、[MXU](https://github.com/MistEO/MXU)

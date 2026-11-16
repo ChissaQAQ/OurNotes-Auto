@@ -244,8 +244,6 @@ class GameConfig:
 @dataclass
 class ChartsConfig:
     base_url: str = "https://assets.bdon.moe/chart-site/"
-    # 国际服曲名（多语言），仅用于把 OCR 识别到的曲名匹配到 musicId；留空则只用日文曲名
-    titles_url: str = "https://haneoka.org/api/v1/servers/intl/songs"
     cache_dir: str = "cache/charts"
     index_ttl_hours: float = 12.0
 
@@ -342,13 +340,18 @@ class Config:
     notify: NotifyConfig = field(default_factory=NotifyConfig)
 
 
+# 以前有、现在不用了的配置项（init-config 写出的配置文件里有）：不提示
+RETIRED = frozenset(("config.charts.titles_url",))
+
+
 def _build(cls: type, data: dict[str, Any], path: str) -> Any:
     hints = get_type_hints(cls)
     kwargs = {}
     for key, value in data.items():
         f = next((f for f in dataclasses.fields(cls) if f.name == key), None)
         if f is None:
-            logger.warning("未知配置项 %s.%s，已忽略", path, key)
+            if f"{path}.{key}" not in RETIRED:
+                logger.warning("未知配置项 %s.%s，已忽略", path, key)
             continue
         hint = hints[key]
         if dataclasses.is_dataclass(hint):

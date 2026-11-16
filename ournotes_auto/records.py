@@ -105,6 +105,40 @@ def parse_arena(line: str) -> ArenaResult:
     return r
 
 
+# 日常里每做成一项记一行的项目 → (名称, 游戏里每天能做几次)
+CHORE_KINDS = {
+    "missions": ("领取任务奖励", 1),
+    "recruit": ("免费招募", 1),
+    "ad_recruit": ("观看CM招募", 3),
+    "ad_lb": ("看广告恢复LB", 2),
+    "ad_studio": ("录音室练习SKIP", 1),
+}
+CHORE_ADS = ("ad_recruit", "ad_lb", "ad_studio")  # 看了一个广告的
+CHORE_RECRUITS = ("recruit", "ad_recruit")  # 招募了一次的
+
+
+@dataclass
+class Chore:
+    """看广告、招募、领取任务奖励做成的一项（``chores.jsonl``，统计与成就用）。"""
+
+    kind: str  # CHORE_KINDS 的键
+    shot: str = ""  # 招募结果截图的文件名（``data/recruit`` 里的）；不是招募、截图没存成时为空
+    timestamp: float = field(default_factory=time.time)
+
+
+CHORE_FIELDS = frozenset(f.name for f in fields(Chore))
+
+
+def parse_chore(line: str) -> Chore:
+    """``chores.jsonl`` 的一行，读法同 :func:`parse_result`。"""
+    c = Chore(**{k: v for k, v in json.loads(line).items() if k in CHORE_FIELDS})
+    if isinstance(c.timestamp, bool) or not isinstance(c.timestamp, (int, float)):
+        raise ValueError(f"时间不对：{c.timestamp!r}")
+    if not isinstance(c.kind, str) or not isinstance(c.shot, str):
+        raise ValueError(f"项目不对：{c.kind!r} {c.shot!r}")
+    return c
+
+
 def timing_ratio(fast: int | None, slow: int | None, cfg: AutoTuneConfig) -> float | None:
     """r = (SLOW-FAST)/(SLOW+FAST)；FAST+SLOW 不到 ``min_samples``（或没读到）时为 None。"""
     if fast is None or slow is None:
@@ -144,6 +178,7 @@ class RecordStore:
         self.dir = Path(data_dir)
         self.records_path = self.dir / "records.jsonl"
         self.arena_path = self.dir / "arena.jsonl"
+        self.chores_path = self.dir / "chores.jsonl"
         self.state_path = self.dir / "state.json"
 
     def _load_state(self) -> dict:
@@ -322,6 +357,15 @@ class RecordStore:
     def arena_history(self, limit: int | None = 20) -> list[ArenaResult]:
         """激奏舞台最近 ``limit`` 局（None 为全部），从旧到新。"""
         return _load(self.arena_path, parse_arena, limit)
+
+    def append_chore(self, chore: Chore) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        with self.chores_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(asdict(chore), ensure_ascii=False) + "\n")
+
+    def chore_history(self, limit: int | None = 20) -> list[Chore]:
+        """最近做成的 ``limit`` 项日常（None 为全部），从旧到新。"""
+        return _load(self.chores_path, parse_chore, limit)
 
     def autotune(self, result: PlayResult, cfg: AutoTuneConfig, note_speed: float = 5.0, label: str = "") -> float:
         """记录结果并按 FAST/SLOW 更新学到的 offset（全局或这张谱面的），返回修正量。"""

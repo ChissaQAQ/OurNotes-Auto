@@ -1,8 +1,11 @@
 """封面匹配：用乐队确认页左下角的封面识别曲目。
 
 OCR 用的中文模型读不出假名曲名，同系列曲名（Symbol I～IV）也只差编号；封面则每首歌都不同。
-做法：把截图里的封面与 haneoka 的缩略图都缩到 24x24，去均值后算相关系数。
+做法：把截图里的封面与缓存的封面缩略图都缩到 24x24，去均值后算相关系数。
 实测（MuMu 1280x720）正确曲目约 0.99，第二名约 0.55；曲库内最相似的两张封面之间也只有 0.81。
+
+封面随包附带（发版时的曲目，``ournotes_auto/charts/jackets/``，发版前用 tools/fetch_bundle.py 更新）；之后才出的新歌
+从谱面站那张谱面的清单里取，缩成 :data:`THUMB` 见方存进缓存（见 ``BdonClient.jacket``）。
 """
 
 from __future__ import annotations
@@ -12,12 +15,30 @@ import logging
 import cv2
 import numpy as np
 
-from ..charts.bdon import HostDown
+from ..charts.bdon import DIFFICULTIES, HostDown
 
 logger = logging.getLogger(__name__)
 
 JACKET_ROI = (13, 598, 95, 95)  # 乐队确认页左下角封面（1280x720 下的 x, y, w, h）
 DESIGN_W, DESIGN_H = 1280, 720
+# 包里、缓存里的封面边长：谱面站的原图 512x512、几百 KB，比较时还要缩到 24x24，用不着那么大。包里的每次更新都要下载，
+# 64 的 96 张共 0.95 MB（128 的 3.4 MB）；1500 多张真实截图上两种大小认出来的结果一样
+THUMB = 64
+
+
+def thumbnail(raw: bytes) -> bytes:
+    """封面原图（PNG）→ 边长不超过 :data:`THUMB` 的 PNG，存进缓存的是它。解不了时抛 ValueError。"""
+    img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise ValueError("无法解码封面图片")
+    h, w = img.shape[:2]
+    scale = THUMB / max(h, w)
+    if scale < 1:
+        img = cv2.resize(img, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode(".png", img)
+    if not ok:
+        raise ValueError("封面图片编码失败")
+    return buf.tobytes()
 
 
 def decode(raw: bytes) -> np.ndarray:
@@ -63,22 +84,24 @@ class JacketMatcher:
 
     @classmethod
     def load(cls, client, catalog) -> JacketMatcher:
-        """下载（有缓存）目录中每首曲目的封面缩略图；个别下载失败只少认这几首。"""
-        songs = [s for s in catalog.songs.values() if s.jacket_url]
+        """目录中每首曲目的封面：随包附带的，包里没有的用缓存里的、再没有就下载；个别下载失败只少认这几首。"""
+        songs = [s for s in catalog.songs.values() if s.difficulties]
         missing = sum(not client.jacket_cached(s.music_id) for s in songs)
         if missing:
-            logger.info("下载 %d 张曲目封面（用来认歌，之后有缓存）", missing)
+            logger.info("从谱面站下载 %d 张曲目封面（包里还没有的新歌，用来认歌，每张几百 KB，之后有缓存）", missing)
         images = {}
         skipped = 0
         for song in songs:
             try:
-                images[song.music_id] = decode(client.jacket(song.music_id, song.jacket_url))
+                # 默认打 EXPERT：先用它的清单，之后打歌不用再下载一遍
+                diffs = [d for d in reversed(DIFFICULTIES) if d in song.difficulties]
+                images[song.music_id] = decode(client.jacket(song.music_id, diffs or song.difficulties, thumbnail))
             except HostDown:
                 skipped += 1
             except (ConnectionError, LookupError, ValueError) as e:
                 logger.warning("封面 %d 获取失败：%s", song.music_id, e)
         if skipped:  # 一张一张记没用，说一次
-            logger.info("封面网站这次打开程序后下载失败过，%d 张封面下次打开程序再下载，这几首先按曲名认", skipped)
+            logger.info("谱面站这次打开程序后下载失败过，%d 张封面下次打开程序再下载，这几首先按曲名认", skipped)
         logger.debug("封面：%d 张", len(images))
         return cls(images)
 

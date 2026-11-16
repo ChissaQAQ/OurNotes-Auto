@@ -61,6 +61,9 @@ ournotes-auto daily
 ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # 錄音室練習、任務、通行證、期間限定任務、新手任務、T.G.W CARD、免費轉蛋、禮物盒
 ournotes-auto daily --jobs story   # 跳過沒看過的樂團 / 側寫 / 羈絆故事（要明確指定才做）
 ournotes-auto daily --jobs event   # 跳過限時活動沒看過的活動故事 / 側寫故事（要明確指定才做）
+ournotes-auto ads                  # 看廣告領每天的獎勵：觀看 CM 轉蛋（3 次）、回復 LIVE BOOST（2 次）、錄音室練習 SKIP（1 次）；要遊戲裡放得出廣告
+ournotes-auto ads --jobs lb        # 只做其中幾項：recruit 觀看 CM 轉蛋、lb 回復 LIVE BOOST、studio 錄音室練習 SKIP
+ournotes-auto ads --studio-band mygo  # 錄音室練習 SKIP 用在哪個樂團：highest 練習 Lv 最高的（預設）、mygo、avemujica、mewtype、millsage、dumbrock
 
 # 彙總本機演奏紀錄（總局數、AP 過的譜面、還沒 AP 的譜面、最近幾局），更新統計頁（累計時長、成就，完整頁面是 data/stats.html）
 ournotes-auto records [--recent 10]

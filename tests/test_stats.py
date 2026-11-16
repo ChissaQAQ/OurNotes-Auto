@@ -14,7 +14,7 @@ import pytest
 
 from ournotes_auto import stats, stats_page
 from ournotes_auto.nav.screens import ARENA_BANDS
-from ournotes_auto.records import ArenaResult, PlayResult, RecordStore
+from ournotes_auto.records import CHORE_KINDS, ArenaResult, Chore, PlayResult, RecordStore, game_day
 from ournotes_auto.runner import RunStats
 from ournotes_auto.stats import (
     ACHIEVEMENTS,
@@ -265,6 +265,45 @@ def test_refresh_new_achievements_batched(tmp_path, caplog):
         "按以往的演奏记录解锁了 6 个成就：「一气呵成」、「完美初体验」、「渐入佳境」、「一发入魂」、「初窥曲库」、「白璧微瑕」"
         f"（成就 7 / {N}）"
     ]
+
+
+def recruit_files(data, *names):
+    d = data / stats.RECRUIT_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        (d / name).write_bytes(b"jpg")
+
+
+def test_recruit_shots(tmp_path):
+    """招募结果的截图：按文件名认时间和哪种招募，新的在前；名字对不上的不算。"""
+    assert stats.recruit_shots(tmp_path) == []
+    recruit_files(
+        tmp_path, "20261116_030850_cm.jpg", "20261101_120000.jpg", "20261116_031023_cm.jpg",
+        "notes.txt", "20261399_000000.jpg", "20261116_030850_cm.jpg.bak", "x20261116_030850.jpg", "20261116_030850_paid.jpg",
+    )
+    shots = stats.recruit_shots(tmp_path)
+    assert [(s.name, s.kind) for s in shots] == [("20261116_031023_cm.jpg", "cm"), ("20261116_030850_cm.jpg", "cm"), ("20261101_120000.jpg", "")]
+    assert shots[-1].ts == datetime(2026, 11, 1, 12).timestamp()
+    assert set(stats.RECRUIT_KINDS) == {s.kind for s in shots}
+
+
+def test_page_recruits(tmp_path):
+    """「招募记录」页签：每张截图一格（新的在前，写着时间和哪种招募），图片不放进页面、只写文件名；多了一张截图页面的版本就变。"""
+    refresh(tmp_path, now=T0)
+    page = (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+    ver = (tmp_path / PAGE_VER).read_text(encoding="utf-8")
+    assert 'data-t="rec"' in page and 'data-pane="rec"' in page and "还没有招募记录" in page and '<figure class="shot"' not in page
+    recruit_files(tmp_path, "20261101_120000.jpg", "20261116_030850_cm.jpg", "20261116_031023_cm.jpg")
+    view = refresh(tmp_path, now=T0)
+    assert [s.name for s in view.recruits] == ["20261116_031023_cm.jpg", "20261116_030850_cm.jpg", "20261101_120000.jpg"]
+    page = (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+    assert (tmp_path / PAGE_VER).read_text(encoding="utf-8") != ver
+    assert "还没有招募记录" not in page and page.count('<figure class="shot"') == 3
+    names = re.findall(r'data-f="recruit/([^"]+)"', page)
+    assert names == [s.name for s in view.recruits] and "data:image" not in page
+    assert page.count(">观看CM招募</span>") == 2 and page.count(">免费招募</span>") == 1
+    assert 'data-pager="rc"' in page and 'data-n="3"' in page and 'id="shot-view"' in page
+    assert '<span class="cnt">3</span>' in page
 
 
 def test_page_version(tmp_path):
@@ -611,6 +650,12 @@ def test_page_arena_tab(tmp_path):
     assert '<div class="fk">MyGO!!!!!</div><div class="fv">1,035<small>分</small></div><div class="fs">2 局 · 平均第 1.5 名</div>' in strip
     assert '<div class="fk">Ave Mujica</div><div class="fv">-</div><div class="fs">1 局 · 平均第 5.0 名</div>' in strip
     assert "夢限大MewType" not in strip
+    # 最长连续第一名、段位分一共涨了多少、各名次的局数
+    assert '<div class="fk">最长连续第一名</div><div class="fv">1<small>局</small></div>' in strip
+    assert '<div class="fk">段位分累计</div><div class="fv">+27<small>分</small></div><div class="fs">平均每局 +9.0</div>' in strip
+    assert [re.search(rf'<div class="fk">第 {i} 名</div><div class="fv">(\d+)<small>局</small></div><div class="fs">(\d+%)</div>', strip).groups()
+            for i in range(1, 6)] == [("1", "33%"), ("1", "33%"), ("0", "0%"), ("0", "0%"), ("1", "33%")]
+    assert {"arena_1", "arena_first", "arena_points_1000"} <= set(view.unlocked) and "arena_bands" not in view.unlocked
 
 
 def test_page_arena_only(tmp_path):
@@ -930,3 +975,145 @@ def test_stats_window_command(tmp_path, monkeypatch):
     assert cli.cmd_stats_window(None, None) == 0
     assert calls == [("open", True), ("refresh",)]
     assert cli.build_parser().parse_args(["stats-window"]).func is cli.cmd_stats_window
+
+
+def test_achievement_table():
+    """成就的记号、名字不重复；每个分组都有徽章上的符号和图标（图标在页面的图标表里）。"""
+    assert len({a.id for a in ACHIEVEMENTS}) == N and len({a.name for a in ACHIEVEMENTS}) == N
+    for a in ACHIEVEMENTS:
+        assert a.group in stats.GROUPS and a.tier in stats.TIERS and a.target > 0, a.id
+        assert not a.hidden or a.hint, a.id
+        assert f'<symbol id="{stats_page.GROUP_ICON[a.group]}"' in stats_page.SPRITE, a.id
+
+
+def test_arena_totals():
+    """激奏舞台：局数（没演奏的也算）、各名次、连续第 1 名（名次没读到的局不算也不打断）、各乐队到过的最高段位分、
+    段位分的增减、ALL PERFECT 的局。成就按对局的时间解锁。"""
+    games = [
+        arena("mygo", 1, 20, 1000, 0, "a", 1, True, 0, 900, (100, 0, 0, 0, 0)),
+        arena("mygo", 1, 15, 1015, 0, "b", 2, True, 60, 900, (100, 2, 0, 0, 0)),
+        arena("mygo", None, None, None, 0, "?", None, False, 120),  # 结算没读到
+        arena("mygo", 1, 12, 1027, 0, "c", 3, True, 180, 900, (0, 0, 0, 0, 0)),  # 判定数全是 0：没读对，不算 AP
+        arena("avemujica", 4, -8, 992, 0, "d", 4, True, 240, 900, (100, 0, 0, 0, 1)),
+        arena("avemujica", 1, 30, 1022, 0, "e", 5, False, 300, None, (100, 0, 0, 0, 0)),  # 没演奏：不算 AP
+        arena(None, 2, 5, 400, 0, "f", 6, True, 360),
+    ]
+    t, reached = compute([], [], games=list(reversed(games)))
+    assert t.arena == 7 and t.plays == 0
+    assert dict(t.arena_places) == {1: 4, 4: 1, 2: 1}
+    assert (t.arena_best_first_streak, t.arena_first_streak) == (3, 0)
+    assert dict(t.arena_band_games) == {"mygo": 4, "avemujica": 2} and t.arena_points == {"mygo": 1027, "avemujica": 1022}
+    assert (t.arena_gain, t.arena_ap) == (74, 1)
+    assert reached["arena_1"] == reached["arena_first"] == reached["arena_points_1000"] == reached["arena_ap"] == T0
+    assert reached["arena_streak_3"] == T0 + 180
+    assert not {"arena_100", "arena_first_50", "arena_streak_5", "arena_bands", "arena_bands_1000", "arena_places", "arena_points_5000"} & set(reached)
+    assert A["arena_bands_1000"].value(t) == 2 and A["arena_places"].value(t) == 3
+
+    five = [arena(b, i + 1, 10, 1000 + i, 0, "x", 1, True, i) for i, b in enumerate(ARENA_BANDS)]
+    t, reached = compute([], [], games=five)
+    assert reached["arena_bands"] == reached["arena_bands_1000"] == reached["arena_places"] == T0 + 4
+    assert "arena_streak_3" not in reached
+    t, reached = compute([], [], games=[arena("mygo", 1, 10, 4990 + 10 * i, 0, "x", 1, True, i) for i in range(5)])
+    assert reached["arena_streak_5"] == T0 + 4 and reached["arena_points_5000"] == T0 + 1
+    # 每个激奏成就都够得着：按上面的数据能前进
+    assert all(a.value(t) > 0 for a in ACHIEVEMENTS if a.group == "激奏" and a.id != "arena_ap")
+
+
+def test_chore_totals():
+    """日常记录：看过的广告（观看CM招募、恢复 LB、录音室练习 SKIP）、招募（免费招募、观看CM招募）各算各的，
+    领取任务奖励两边都不算；成就按做成的时间解锁。"""
+    chores = [Chore("ad_lb", timestamp=T0 + i) for i in range(6)] + [Chore("ad_studio", timestamp=T0 + 10)]
+    chores += [Chore("ad_recruit", f"{i}.jpg", T0 + 20 + i) for i in range(3)]
+    chores += [Chore("recruit", timestamp=T0 + 30 + i) for i in range(7)] + [Chore("missions", timestamp=T0 + 40 + i) for i in range(50)]
+    chores.append(Chore("以后的新项目", timestamp=T0 + 99))
+    t, reached = compute([], [], chores=list(reversed(chores)))
+    assert (t.ads, t.recruits, t.chores["missions"]) == (10, 10, 50)
+    assert reached == {"ads_10": T0 + 22, "recruit_10": T0 + 36}
+    assert progress_text(A["ads_100"], A["ads_100"].value(t)) == "10 / 100 个"
+    t, reached = compute([play()], [])
+    assert (t.ads, t.recruits, t.arena) == (0, 0, 0) and not any(k.startswith(("ads_", "recruit_", "arena_")) for k in reached)
+
+
+def test_load_chores(tmp_path):
+    """日常记录：chores.jsonl 里的，加上只有截图的招募（加这份记录之前招募的），同一张截图只算一次；从旧到新。"""
+    assert stats.load_chores(tmp_path) == []
+    recruit_files(tmp_path, "20261101_120000.jpg", "20261116_030850_cm.jpg", "20261116_031023_cm.jpg", "notes.txt")
+    s = RecordStore(tmp_path)
+    late = datetime(2026, 11, 16, 3, 10, 24).timestamp()
+    s.append_chore(Chore("ad_recruit", "20261116_031023_cm.jpg", late))
+    s.append_chore(Chore("ad_lb", timestamp=late + 60))
+    chores = stats.load_chores(tmp_path)
+    assert [(c.kind, c.shot) for c in chores] == [
+        ("recruit", "20261101_120000.jpg"), ("ad_recruit", "20261116_030850_cm.jpg"), ("ad_recruit", "20261116_031023_cm.jpg"), ("ad_lb", ""),
+    ]
+    assert chores[0].timestamp == datetime(2026, 11, 1, 12).timestamp() and chores[2].timestamp == late
+    store(tmp_path, [play()])
+    view = refresh(tmp_path, now=late + 120)
+    assert (view.totals.ads, view.totals.recruits) == (3, 3) and view.chores == chores
+    assert "看过的广告" in (tmp_path / PAGE_MD).read_text(encoding="utf-8")
+
+
+def test_page_chores_card(tmp_path):
+    """概览的「今天的日常」：这个游戏日（北京时间 3:00 换日）里各项做成了几次；从来没记过时不显示。"""
+    store(tmp_path, [play()])
+    refresh(tmp_path, now=T0)
+    assert 'id="chores"' not in (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+    RecordStore(tmp_path / "only").append_chore(Chore("ad_lb", timestamp=T0))  # 只看过广告、还没打过歌：也显示
+    refresh(tmp_path / "only", now=T0)
+    assert 'id="chores"' in (tmp_path / "only" / PAGE_HTML).read_text(encoding="utf-8")
+
+    now = T0 + 6 * H  # 换日前 7 分钟
+    assert game_day(now) == game_day(T0) != game_day(now + 600) and game_day(T0 - 18 * H) != game_day(T0)
+    s = RecordStore(tmp_path)
+    for c in (Chore("ad_lb", timestamp=T0 - 18 * H), Chore("missions", timestamp=T0 - 18 * H),  # 昨天的
+              Chore("ad_lb", timestamp=T0), Chore("ad_lb", timestamp=T0 + 60), Chore("ad_recruit", "a.jpg", T0 + 120), Chore("recruit", "b.jpg", T0 + 180)):
+        s.append_chore(c)
+
+    def card(when):
+        refresh(tmp_path, now=when)
+        page = (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+        raw = page[page.index('<section class="card mt" id="chores">'):]
+        return raw[:raw.index("</section>")]
+
+    def fig(text, name):
+        return re.search(rf'<div class="fk">{name}</div><div class="fv">(.*?)</div><div class="fs">(.*?)</div>', text).groups()
+
+    today = card(now)
+    assert f"游戏日 {game_day(now)[5:]}" in today and today.count('<div class="fig">') == len(CHORE_KINDS)
+    assert fig(today, "看广告恢复LB")[0] == "2<small>/ 2 次</small>" and fig(today, "观看CM招募")[0] == "1<small>/ 3 次</small>"
+    assert fig(today, "免费招募")[0] == "1<small>/ 1 次</small>" and fig(today, "录音室练习SKIP") == ("0<small>/ 1 次</small>", "还没做")
+    assert fig(today, "领取任务奖励") == ("没领", "还没做") and fig(today, "看广告恢复LB")[1].endswith(" 做的")
+    tomorrow = card(now + 600)  # 换日后：都还没做
+    assert fig(tomorrow, "看广告恢复LB") == ("0<small>/ 2 次</small>", "还没做") and f"游戏日 {game_day(now + 600)[5:]}" in tomorrow
+    yesterday = card(T0 - 18 * H + 300)
+    assert fig(yesterday, "领取任务奖励")[0] == "已领" and fig(yesterday, "看广告恢复LB")[0] == "1<small>/ 2 次</small>"
+
+
+def test_page_tasks_card(tmp_path):
+    """运行记录的「按任务汇总」：每种任务一行（次数、时长、局数、AP），时长多的在前；只跑过一种任务时不列。"""
+    store(tmp_path, [play()])
+    rows = [
+        {"start": T0, "end": T0 + 2 * H, "task": "挂机", "plays": 30, "ap": 27},
+        {"start": T0 + 3 * H, "end": T0 + 4 * H, "task": "挂机", "plays": 10, "ap": 10},
+    ]
+    (tmp_path / SESSIONS).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+    refresh(tmp_path, now=T0 + DAY)
+    assert 'id="tasks"' not in (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+
+    rows += [
+        {"start": T0 + 5 * H, "end": T0 + 9 * H, "task": "激奏舞台", "plays": 60, "ap": 3},
+        {"start": T0 + 10 * H, "end": T0 + 10 * H + 900, "task": "<b>清体力", "plays": 0, "ap": 0},
+        {"start": T0 + 11 * H, "end": T0 + 11 * H + 600, "plays": 2, "ap": 2},  # 以前的记录没有任务名
+    ]
+    (tmp_path / SESSIONS).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+    refresh(tmp_path, now=T0 + DAY)
+    page = (tmp_path / PAGE_HTML).read_text(encoding="utf-8")
+    raw = page[page.index('id="tasks"'):]
+    body = raw[raw.index("<tbody>"):raw.index("</tbody>")]
+    got = re.findall(r'<tr><td>(.*?)</td><td class="num">(\d+)</td><td>.*?</span>([^<]*)</span></td><td class="num">([\d,]+)</td><td class="num">([\d,]+) ', body)
+    assert got == [
+        ("激奏舞台", "1", "4.0 小时", "60", "3"), ("挂机", "2", "3.0 小时", "40", "37"),
+        ("&lt;b&gt;清体力", "1", "15 分钟", "0", "0"), ("打歌任务", "1", "10 分钟", "2", "2"),
+    ]
+    assert 'style="width:100.0%"' in body or 'style="width:100%"' in body
+    assert page.index('id="tasks"') < page.index('<tbody data-pg="sp">')

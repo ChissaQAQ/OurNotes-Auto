@@ -33,6 +33,7 @@ with patch.object(server, "setup_logging"), \
     start.assert_called_once_with("test-id")
     ensure.assert_called_once()  # 不在仓库目录下写 data/stats.md
     card.assert_called_once()
+    update.write_card.assert_called_once()  # 设置页的「版本状态」卡片
     update.start_on_launch.assert_called_once()  # MFAA 打开界面时查更新
     import os, time
     assert 0 <= time.time() - float(os.environ[server.LAUNCHED_ENV]) < 600  # 演奏进程按它判断这次打开程序（#108）
@@ -107,7 +108,7 @@ with tempfile.TemporaryDirectory() as d:
         release.write_json(iface, old)
         server._ensure_stats_card(root)
     new = json.loads(iface.read_text(encoding="utf-8"))
-    assert [s["name"] for s in new["setting"]] == ["stats", "global", "humanize"] and release.STATS_OPTION in new["option"]
+    assert [s["name"] for s in new["setting"]] == ["stats", "global", "humanize", "update"] and release.STATS_OPTION in new["option"]
     assert (new["version"], new["github"], new["agent"]["child_exec"]) == ("v0.1.6.6", "https://example.com", "python/python.exe")
     assert release.interface_digest(new) == release.interface_digest(old)  # 不算改了文件
     text = iface.read_text(encoding="utf-8")
@@ -126,7 +127,13 @@ with tempfile.TemporaryDirectory() as d:
     one["setting"] = one["setting"][:1] + [{**one["setting"][1], "option": one["global_option"]}]
     release.write_json(iface, one)
     server._ensure_stats_card(root)
-    assert [s["name"] for s in json.loads(iface.read_text(encoding="utf-8"))["setting"]] == ["stats", "global", "humanize"]
+    assert [s["name"] for s in json.loads(iface.read_text(encoding="utf-8"))["setting"]] == ["stats", "global", "humanize", "update"]
+    # v0.2.6：有「拟人化」分组，「检查更新」「自动更新」还在「所有任务共用」里，没有「更新」分组
+    two = release.render_interface(src, "mxu", "v0.2.6")
+    two["setting"] = two["setting"][:1] + [{**two["setting"][1], "option": two["setting"][1]["option"] + list(release.UPDATE_OPTIONS)}, two["setting"][2]]
+    release.write_json(iface, two)
+    server._ensure_stats_card(root)
+    assert json.loads(iface.read_text(encoding="utf-8"))["setting"] == release.render_interface(src, "mxu")["setting"]
 ''')
 
 

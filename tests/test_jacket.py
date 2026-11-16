@@ -1,11 +1,13 @@
 """封面匹配与曲目识别（封面优先、曲名兜底）。"""
 
+import re
+
 import cv2
 import numpy as np
 import pytest
 
-from ournotes_auto.charts.catalog import Catalog, Song
-from ournotes_auto.nav.jacket import JACKET_ROI, JacketMatcher, crop_jacket, decode
+from ournotes_auto.charts.catalog import Catalog, Song, load_titles
+from ournotes_auto.nav.jacket import JACKET_ROI, THUMB, JacketMatcher, crop_jacket, decode, thumbnail
 from ournotes_auto.runner import NavigationError, SongLabel, identify_song
 
 
@@ -111,8 +113,10 @@ class JacketClient:
     def jacket_cached(self, music_id):
         return music_id in self.cached
 
-    def jacket(self, music_id, url):
+    def jacket(self, music_id, difficulties, shrink=None):
         self.fetched.append(music_id)
+        self.asked = getattr(self, "asked", {})
+        self.asked[music_id] = (list(difficulties), shrink)
         if music_id == 3:
             raise ConnectionError("timeout")
         ok, buf = cv2.imencode(".png", jacket(music_id))
@@ -120,9 +124,11 @@ class JacketClient:
 
 
 def catalog_with_jackets():
+    """1～3 有谱面（2 没有 EXPERT），4 在索引里一张谱面都没有：取不了封面。"""
     songs = {mid: Song(mid, [str(mid)]) for mid in (1, 2, 3, 4)}
-    for mid in (1, 2, 3):
-        songs[mid].jacket_url = f"/j/{mid}.png"
+    songs[1].difficulties = {"easy": {}, "expert": {}, "hard": {}}
+    songs[2].difficulties = {"normal": {}, "easy": {}}
+    songs[3].difficulties = {"expert": {}}
     return Catalog(songs)
 
 
@@ -131,7 +137,39 @@ def test_load_skips_failed_jackets(caplog):
     with caplog.at_level("INFO"):
         m = JacketMatcher.load(client, catalog_with_jackets())
     assert m.ids == [1, 2] and client.fetched == [1, 2, 3]
-    assert "下载 2 张曲目封面" in caplog.text
+    assert "从谱面站下载 2 张曲目封面" in caplog.text
+    # 从高难度的清单取（默认打 EXPERT，之后打歌不用再下载一遍），存进缓存前缩小
+    assert client.asked[1] == (["expert", "hard", "easy"], thumbnail) and client.asked[2][0] == ["normal", "easy"]
+
+
+def test_thumbnail():
+    """谱面站的封面原图 512x512：缩成 THUMB 见方再存（带透明度的照样带着）；本来就小的不放大；解不了的报错。"""
+    big = cv2.cvtColor(jacket(5, 512), cv2.COLOR_BGR2BGRA)
+    big[:40, :40, 3] = 0
+    ok, buf = cv2.imencode(".png", big)
+    small = thumbnail(buf.tobytes())
+    img = cv2.imdecode(np.frombuffer(small, np.uint8), cv2.IMREAD_UNCHANGED)
+    assert img.shape == (THUMB, THUMB, 4) and img[2, 2, 3] == 0 and img[THUMB - 2, THUMB - 2, 3] == 255
+    assert len(small) < len(buf.tobytes()) / 4
+    # 缩小了也认得出：和原图贴到截图上的封面是同一首
+    m = JacketMatcher({mid: decode(thumbnail(cv2.imencode(".png", jacket(mid, 512))[1].tobytes())) for mid in (5, 6, 7)})
+    assert m.identify(crop_jacket(screen_with(jacket(6, 512))))[0] == 6
+    ok, buf = cv2.imencode(".png", jacket(8, 48))
+    assert cv2.imdecode(np.frombuffer(thumbnail(buf.tobytes()), np.uint8), cv2.IMREAD_UNCHANGED).shape[:2] == (48, 48)
+    with pytest.raises(ValueError, match="无法解码"):
+        thumbnail(b"not a png")
+
+
+def test_bundled_jackets(real_jackets):
+    """随包附带的封面（发版前用 tools/fetch_bundle.py 更新）：文件名是 musicId，都解得开、已经缩小过；
+    曲名表里的曲目都有；每张最像的是它自己。"""
+    files = sorted(real_jackets.iterdir())
+    assert len(files) >= 96 and all(re.fullmatch(r"\d+\.png", p.name) for p in files)
+    images = {int(p.stem): decode(p.read_bytes()) for p in files}
+    assert all(max(img.shape[:2]) <= THUMB for img in images.values())
+    assert set(load_titles()) <= set(images)
+    m = JacketMatcher(images)
+    assert all(m.rank(img)[0][0] == mid for mid, img in images.items())
 
 
 def test_load_skips_host_down_quietly(caplog):
@@ -139,11 +177,11 @@ def test_load_skips_host_down_quietly(caplog):
     from ournotes_auto.charts.bdon import HostDown
 
     class DownClient(JacketClient):
-        def jacket(self, music_id, url):
+        def jacket(self, music_id, difficulties, shrink=None):
             if music_id != 1:
                 self.fetched.append(music_id)
-                raise HostDown("haneoka.org")
-            return super().jacket(music_id, url)
+                raise HostDown("assets.bdon.moe")
+            return super().jacket(music_id, difficulties, shrink)
 
     with caplog.at_level("INFO"):
         m = JacketMatcher.load(DownClient(cached=(1,)), catalog_with_jackets())

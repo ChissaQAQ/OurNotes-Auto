@@ -12,7 +12,20 @@ import pytest
 
 from ournotes_auto import release
 from ournotes_auto.config import AutoTuneConfig
-from ournotes_auto.records import ArenaResult, PlayResult, RecordStore, game_day, next_game_day, parse_arena, suggest_offset_delta
+from ournotes_auto.records import (
+    CHORE_ADS,
+    CHORE_KINDS,
+    CHORE_RECRUITS,
+    ArenaResult,
+    Chore,
+    PlayResult,
+    RecordStore,
+    game_day,
+    next_game_day,
+    parse_arena,
+    parse_chore,
+    suggest_offset_delta,
+)
 
 # 实测（MuMu，迷星叫 EASY，91 个有时机的判定）：offset=0 时整体晚约 8ms，
 # 按键离散度约 1.5ms，PERFECT 中心 ±2.4ms 内不标 FAST/SLOW
@@ -283,3 +296,20 @@ def test_habit_key_is_stable_and_per_account(tmp_path):
     assert store.habit_key("other") != key
     store.set_account("pkg", "alt")
     assert store.habit_key("pkg") == key + "alt"
+
+
+def test_chore_history(tmp_path):
+    """看广告、招募、领取任务奖励每做成一项在 chores.jsonl 里记一行；读法同演奏记录：新字段不管、读不了的行跳过、按时间排。"""
+    store = RecordStore(tmp_path)
+    assert store.chore_history() == []
+    store.append_chore(Chore("ad_recruit", "20261116_030850_cm.jpg", timestamp=200.0))
+    store.append_chore(Chore("missions", timestamp=100.0))
+    with (tmp_path / "chores.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"kind": "ad_lb", "timestamp": 300.0, "new_field": 1}) + "\n")
+        f.write(json.dumps({"kind": "ad_lb", "timestamp": "坏了"}) + "\n" + json.dumps({"kind": 3, "timestamp": 1.0}) + "\nnot json\n[1]\n")
+    assert not store.records_path.exists() and not store.arena_path.exists()
+    got = store.chore_history(limit=None)
+    assert [(c.kind, c.shot) for c in got] == [("missions", ""), ("ad_recruit", "20261116_030850_cm.jpg"), ("ad_lb", "")]
+    assert [c.kind for c in store.chore_history(limit=1)] == ["ad_lb"]
+    assert parse_chore(json.dumps(asdict(got[1]), ensure_ascii=False)) == got[1]
+    assert set(CHORE_ADS) | set(CHORE_RECRUITS) <= set(CHORE_KINDS) and all(n >= 1 for _, n in CHORE_KINDS.values())

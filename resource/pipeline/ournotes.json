@@ -52,6 +52,10 @@
             "daily_tgw": true,
             "daily_recruit": true,
             "daily_gifts": true,
+            "ads_recruit": true,
+            "ads_lb": true,
+            "ads_studio": true,
+            "ads_studio_band": "highest",
             "notify_channel": "off",
             "notify_target": "",
             "notify_events": "all"
@@ -86,6 +90,17 @@
                 "custom_action": "OurNotesRun",
                 "custom_action_param": {
                     "task": "daily"
+                }
+            }
+        }
+    },
+    "OurNotes_Ads": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "ads"
                 }
             }
         }

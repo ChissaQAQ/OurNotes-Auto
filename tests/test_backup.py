@@ -12,7 +12,7 @@ import pytest
 
 from ournotes_auto import backup, release, stats
 from ournotes_auto.backup import BackupError, export_bundle, import_bundle, read_source
-from ournotes_auto.records import ArenaResult, PlayResult, RecordStore
+from ournotes_auto.records import ArenaResult, Chore, PlayResult, RecordStore
 from ournotes_auto.runner import RunStats
 from ournotes_auto.stats import RUNNING, SESSIONS, UNLOCKED, Session, Tracker, load_sessions, session_row
 
@@ -93,6 +93,61 @@ def test_round_trip(tmp_path, docs):
 
 def arena(band, t, **kw):
     return json.dumps(asdict(ArenaResult(band=band, placement=1, ap_gain=10, title="春日影", timestamp=t, **kw)), ensure_ascii=False)
+
+
+def test_chores_round_trip(tmp_path, docs):
+    """日常记录（chores.jsonl：看广告、招募、领取任务奖励的次数）一起导出、导入；只有截图的招募也带上（截图不在备份里，
+    次数要跟着走），同一次招募不会算两遍；旧版本导出的备份里没有也照常导入。"""
+    old_root = tmp_path / "old"
+    old = make(old_root / "data", [rec(1, T0)])
+    s = RecordStore(old)
+    s.append_chore(Chore("ad_lb", timestamp=T0))
+    s.append_chore(Chore("ad_recruit", "20261116_031023_cm.jpg", T0 + 60))
+    with (old / backup.CHORES).open("a", encoding="utf-8") as f:
+        f.write("{坏的\n")
+    (old / stats.RECRUIT_DIR).mkdir()
+    for name in ("20261101_120000.jpg", "20261116_031023_cm.jpg"):  # 第一张是加这份记录之前招募的
+        (old / stats.RECRUIT_DIR / name).write_bytes(b"jpg")
+    path, b = export_bundle(old, old_root)
+    assert len(b.chores) == 3
+    with zipfile.ZipFile(path) as z:
+        assert backup.CHORES in z.namelist() and not any(n.startswith(stats.RECRUIT_DIR) for n in z.namelist())
+
+    new = make(tmp_path / "new" / "data")
+    RecordStore(new).append_chore(Chore("ad_lb", timestamp=T0))
+    result = import_bundle(new, read_source(path, new))
+    assert (result.records, result.chores) == (1, 2)
+    assert [(c.kind, c.shot) for c in stats.load_chores(new)] == [
+        ("ad_lb", ""), ("ad_recruit", "20261116_031023_cm.jpg"), ("recruit", "20261101_120000.jpg"),
+    ] or [c.kind for c in stats.load_chores(new)].count("recruit") == 1
+    assert len(stats.load_chores(new)) == 3
+    assert import_bundle(new, read_source(path, new)).backup is None
+    assert import_bundle(new, read_source(old_root, new)).backup is None  # 直接选旧的包目录也读 chores.jsonl
+
+    # 把截图也复制过来之后（使用说明里说要的话自己复制）：还是 3 次，不会把截图再算一遍
+    (new / stats.RECRUIT_DIR).mkdir()
+    for p in (old / stats.RECRUIT_DIR).iterdir():
+        (new / stats.RECRUIT_DIR / p.name).write_bytes(p.read_bytes())
+    assert len(stats.load_chores(new)) == 3
+
+    # 这边只有截图、没有记录（旧的包的 data 整个复制过来的）：备份里同一张截图的招募不再加
+    copy = make(tmp_path / "copy" / "data")
+    (copy / stats.RECRUIT_DIR).mkdir()
+    for p in (old / stats.RECRUIT_DIR).iterdir():
+        (copy / stats.RECRUIT_DIR / p.name).write_bytes(p.read_bytes())
+    result = import_bundle(copy, read_source(path, copy))
+    assert result.chores == 1 and len(stats.load_chores(copy)) == 3
+
+    only = make(tmp_path / "only" / "data")  # 只看过广告、没打过歌：也能导出、导入
+    RecordStore(only).append_chore(Chore("ad_studio", timestamp=T0 + 120))
+    assert import_bundle(new, read_source(only, new)).chores == 1
+    path2, b2 = export_bundle(only, tmp_path / "only")
+    assert (len(b2.records), len(b2.chores)) == (0, 1)
+
+    manifest = json.dumps({"app": backup.APP, "format": backup.FORMAT, "version": "0.2.6"})
+    older = _zip(tmp_path / "v026.zip", {backup.MANIFEST: manifest, "records.jsonl": rec(2, T0) + "\n"})
+    result = import_bundle(new, read_source(older, new))
+    assert (result.records, result.chores) == (1, 0) and read_source(older, new).chores == []
 
 
 def test_arena_round_trip(tmp_path, docs):

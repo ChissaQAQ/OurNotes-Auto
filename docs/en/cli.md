@@ -61,6 +61,9 @@ ournotes-auto daily
 ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # Studio Practice, Missions, Mission Pass, Limited-Time Missions, Beginner Missions, T.G.W CARD, free gacha pull, Gift Box
 ournotes-auto daily --jobs story   # skip unread Band / Another / Bond Story episodes (only when specified explicitly)
 ournotes-auto daily --jobs event   # skip unread Event Story / Another Story episodes of the limited-time event (only when specified explicitly)
+ournotes-auto ads                  # watch ads for the daily rewards: the CM gacha (3 pulls), LIVE BOOST recovery (twice) and the Studio Practice SKIP (once); the game must be able to show ads
+ournotes-auto ads --jobs lb        # only some of them: recruit = CM gacha, lb = LIVE BOOST recovery, studio = Studio Practice SKIP
+ournotes-auto ads --studio-band mygo  # which band the Studio Practice SKIP is used on: highest = highest Practice Lv (default), mygo, avemujica, mewtype, millsage, dumbrock
 
 # Summarize local play records (total rounds, charts AP'd, charts not yet AP, recent rounds) and update the stats page (run time, achievements; full page: data/stats.html)
 ournotes-auto records [--recent 10]

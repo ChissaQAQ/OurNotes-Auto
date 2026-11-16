@@ -1,5 +1,6 @@
 """自动更新（Agent 这边）：任务开始时（MFAA 打开界面时也查）到 GitHub 查最新 Release 的 update.json，有新版本就
-启动后台的更新器（ournotes_auto/updater.py）下载、在合适的时机换上；任务结束时在界面日志里报告进度。
+启动后台的更新器（ournotes_auto/updater.py）下载、在合适的时机换上；任务结束时在界面日志里报告进度，
+查到的结果和进度也写进 MXU 设置页的「版本状态」卡片（release.update_card）。
 
 更新器用复制到 cache/update/runner/ 的嵌入式 Python 运行，界面、Agent 退出或整包替换都不影响它。Agent 和更新器
 用锁配合（ournotes_auto/release.py）：演奏进程运行期间锁住 busy/<pid>.lock，更新器只在没有演奏进程时替换文件；
@@ -32,22 +33,35 @@ from ..release import is_newer, parse_version
 logger = logging.getLogger(__name__)
 
 REPO = release.REPO
-DOWNLOAD_URL = f"https://github.com/{REPO}/releases/latest"  # 跳转到最新正式发布的，不含草稿和预发布
+DOWNLOAD_URL = release.DOWNLOAD_URL
 MANIFEST_URL = f"{DOWNLOAD_URL}/download/{release.UPDATE_ASSET}"
 URL_ENV = "OURNOTES_UPDATE_URL"  # 测试用：换成别的 update.json 地址
-CACHE_TTL_S = 6 * 3600  # MXU 每次运行任务都重启 Agent，查过的结果缓存一阵，免得每次都访问 GitHub
+# 任务开始时（MFAA 打开界面时也）查一次；MXU 每次运行任务都重启 Agent，这么久内查过的用缓存，免得连着开始任务时每次都访问 GitHub
+CACHE_TTL_S = release.CHECK_TTL_S
+RECHECK_S = 6 * 3600  # 任务一直在运行（挂机）时隔多久再查一次
 RETRY_S = 3600  # 更新器出错（网络等）后隔多久再试
 STATUS_POLL_S = 30.0  # 任务运行中多久看一次更新器的状态
 APPLY_WAIT_S = 60.0  # 启动演奏进程前最多等更新器换文件多久
 HOT_WAIT_S = 15 * 60  # 挂机为热更新退出后最多等多久（多开时要等其他实例也到安全点退出）
 RUNNER_DIR = f"{release.UPDATE_DIR}/runner"
-AUTO_OFF_FILE = f"{release.UPDATE_DIR}/auto_off"  # 关掉「自动更新」时建立，正在等待的更新器看到后退出
+AUTO_OFF_FILE = release.AUTO_OFF_FILE
 ANNOUNCED_FILE = f"{release.UPDATE_DIR}/announced.json"  # 已经提示过的更新结果，每个版本只提示一次
 _TAG_URL = re.compile(r"/releases/tag/([^/?#]+)$")
 
 
 class UpdateBusyError(RuntimeError):
     """更新锁不可用，不能启动会读取项目文件的演奏进程。"""
+
+
+def failure_reason(e: Exception) -> str:
+    """检查更新没查到的原因，给用户看的短句（完整的异常在调试日志里）。"""
+    if isinstance(e, requests.Timeout):  # 连接超时既是 Timeout 也是 ConnectionError
+        return "连接 GitHub 超时"
+    if isinstance(e, requests.ConnectionError):
+        return "连不上 GitHub"
+    if isinstance(e, requests.HTTPError) and e.response is not None:
+        return f"GitHub 返回 HTTP {e.response.status_code}"
+    return str(e)[:80] or type(e).__name__
 
 
 def current_version(root: Path) -> str | None:
@@ -165,6 +179,8 @@ class UpdateCheck:
         self._checked_at = -math.inf
         self._auto = True
         self._notice: tuple[str, str] | None = None  # 只提示的新版本：(版本, 下载页)
+        self._error: str | None = None  # 这次检查更新没查到的原因
+        self._card_lock = threading.Lock()  # 检查的线程和任务的线程都会重写设置页的卡片、动它要读的文件
         self._said: set[tuple] = set()  # 这个 Agent 进程里已经提示过的
         self._polled_at = -math.inf
         self._hot = False
@@ -175,9 +191,11 @@ class UpdateCheck:
     def start(self, check: bool = True, auto: bool = True) -> None:
         """任务开始时调用：``check`` 为「检查更新」，``auto`` 为「自动更新」（要先开检查更新）。"""
         self._auto = check and auto
-        self._set_auto_flag(self._auto)
+        self._set_flag(AUTO_OFF_FILE, not self._auto)
+        self._set_flag(release.CHECK_OFF_FILE, not check)
         self._polled_at = -math.inf  # 上一个任务缓存的状态不作数，第一次 hot_ready 重新读
         self._hot = False
+        self.write_card()  # 开关变了卡片上的说法跟着变；查完再写一次
         if check:
             self._maybe_check()
 
@@ -192,22 +210,23 @@ class UpdateCheck:
             return
         self._maybe_check()
 
-    def _maybe_check(self) -> None:
-        """后台查一次；Agent 常驻（MFAA）时隔一阵再查。"""
+    def _maybe_check(self, gap_s: float = CACHE_TTL_S) -> None:
+        """后台查一次；这个 Agent 进程里 ``gap_s`` 秒内查过就不查（MFAA 的 Agent 常驻，任务运行中也会来问）。"""
         if self._thread is not None and self._thread.is_alive():
             return
-        if time.monotonic() - self._checked_at < CACHE_TTL_S:
+        if time.monotonic() - self._checked_at < gap_s:
             return
         self._checked_at = time.monotonic()
         self._thread = threading.Thread(target=self._run, name="update-check", daemon=True)
         self._thread.start()
 
-    def _set_auto_flag(self, auto: bool) -> None:
+    def _set_flag(self, rel: str, on: bool) -> None:
+        """建立或删掉 ``rel`` 这个标记文件（开发环境不留）。"""
         if release.read_release(self.root) is None:
             return
-        path = self.root / AUTO_OFF_FILE
+        path = self.root / rel
         try:
-            if auto:
+            if not on:
                 path.unlink(missing_ok=True)
             elif not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -215,12 +234,39 @@ class UpdateCheck:
         except OSError:
             pass
 
+    def _set_error(self, reason: str | None) -> None:
+        """记下这次检查没查到的原因（设置页的卡片上显示，任务结束时提示），查到了就清掉。"""
+        self._error = reason
+        if release.read_release(self.root) is None:
+            return
+        path = self.root / release.CHECK_ERROR_FILE
+        # 和写卡片用同一把锁：Windows 上文件正被另一个线程读着时删不掉。万一没删掉（更新器也会读）也不要紧，
+        # 卡片只在它比上次查到的时间新时才当作没查到
+        with self._card_lock, contextlib.suppress(OSError):
+            if reason is None:
+                path.unlink(missing_ok=True)
+            else:
+                release.write_json(path, {"time": time.time(), "error": reason})
+
+    def write_card(self) -> None:
+        """重写 MXU 设置页的「版本状态」卡片（release.update_card）。"""
+        with self._card_lock:
+            release.write_update_card(self.root)
+
     def _run(self) -> None:
+        try:
+            self._check()
+        finally:
+            self.write_card()
+
+    def _check(self) -> None:
         try:
             info = self._lookup()
         except Exception as e:  # noqa: BLE001 - 查不到就算了，不影响任务
             logger.debug("检查更新失败：%s", e)
+            self._set_error(failure_reason(e))
             return
+        self._set_error(None)
         latest, manifest = info.get("version"), info.get("manifest")
         current = current_version(self.root)
         if not is_newer(latest, current):
@@ -274,7 +320,7 @@ class UpdateCheck:
             return self._hot
         self._polled_at = time.monotonic()
         if self._auto:
-            self._maybe_check()
+            self._maybe_check(RECHECK_S)
         st = self.status() or {}
         self._hot = (
             self._auto
@@ -386,3 +432,7 @@ class UpdateCheck:
                 logger.info("自动更新到 %s 暂时没成功（%s），稍后会重试；也可以到 %s 手动下载", version, st.get("error", ""), url)
         if self._notice and is_newer(self._notice[0], current) and self._say_once("notice", self._notice[0]):
             logger.info("发现新版本 %s（当前 %s），可到 %s 下载", self._notice[0], current, self._notice[1])
+        # 连不上 GitHub 的每次都查不到，一天只提示一次
+        if self._error and self._announce_once("check_failed", time.strftime("%Y-%m-%d")):
+            logger.info("检查更新没成功（%s）；浏览器打得开 github.com、这里一直失败时，在选项「网络代理」里填代理软件的 HTTP 端口", self._error)
+        self.write_card()

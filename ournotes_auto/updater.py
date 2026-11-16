@@ -40,7 +40,7 @@ logger = logging.getLogger("ournotes_auto.updater")
 
 LOG_FILE = "data/update.log"
 LOG_MAX_BYTES = 1 << 20
-AUTO_OFF_FILE = f"{release.UPDATE_DIR}/auto_off"  # 和 agent/update.py 一致
+AUTO_OFF_FILE = release.AUTO_OFF_FILE
 BACKUP_DIR = f"{release.UPDATE_DIR}/backup"
 MAX_WAIT_S = 24 * 3600
 IDLE_S = 120.0  # 界面闲置（没有任务、用户没在操作）多久后重启它
@@ -489,8 +489,11 @@ class Updater:
         self._status_at = 0.0
 
     def set_status(self, state: str, **extra: Any) -> None:
+        changed = state != self.status.get("state")
         self.status = {**{k: self.status.get(k) for k in ("version", "tier", "url")}, "state": state, "time": time.time(), **extra}
         release.write_json(self.root / release.STATUS_FILE, self.status)
+        if changed:  # MXU 设置页的「版本状态」卡片跟着变（换上新版本、界面重开时没有 Agent 来写）；下载进度不算
+            release.write_update_card(self.root)
 
     def _progress(self, fraction: float) -> None:
         now = self.clock()
