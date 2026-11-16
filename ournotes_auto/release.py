@@ -21,10 +21,15 @@ import time
 import zipfile
 from collections.abc import Iterable, Mapping
 from contextlib import suppress
+from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 REPO = "ChissaQAQ/OurNotes-Auto"
+DOWNLOAD_URL = f"https://github.com/{REPO}/releases/latest"  # 跳转到最新正式发布的，不含草稿和预发布
+# 最新正式发布的版本号做成的图片（shields.io）：MXU 设置页的卡片里用，界面打开设置页时自己联网取，不用运行任务
+BADGE_URL = f"https://img.shields.io/github/v/release/{REPO}?label={quote('最新版本')}&color=7c5cff"
 UPDATE_ASSET = "update.json"  # 每个 Release 附带的更新清单（tools/make_update.py 生成）
 RELEASE_FILE = "release.json"  # 发布包根目录里：版本、界面种类、运行环境指纹、文件清单
 FORMAT = 1  # release.json / update.json 的格式
@@ -37,6 +42,10 @@ APP_DIRS = ("agent", "ournotes_auto", "tasks", "locales", "docs", "resource")
 APP_TOP_FILES = ("interface.json", "LICENSE", "TERMS_OF_SERVICE.md", "THIRD_PARTY_NOTICES.md", "config.example.yaml")
 APP_TOP_PATTERN = re.compile(r"README[^/]*\.md")
 MODEL_DIR = "resource/model"  # OCR 模型体积大、很少变，算运行环境（整包更新）
+# 随整包附带的谱面（约 7 MB，tools/fetch_bundle.py 生成，程序里是 charts/bdon.py 的 BUNDLE）。只在整包里：不算 app 层
+# （自动更新不下载它、也不动它），也不算运行环境（它变了不用整包更新）。安装目录里没有、比谱面站旧都不要紧，
+# 缺的、旧的谱面程序照常从谱面站下载
+BUNDLE_DIR = "ournotes_auto/charts/bundle"
 # Agent 进程加载的本项目文件。MFAA 的 Agent 常驻，这些改了要重启界面才生效；tests/test_release.py 检查 Agent
 # 实际导入的模块都在这里。ournotes_auto/__init__.py 只有版本号（测试检查），Agent 用旧的版本号不影响运行，不算。
 SHELL = frozenset(
@@ -62,6 +71,11 @@ UPDATER_LOCK = f"{UPDATE_DIR}/updater.lock"  # 更新器运行期间锁住，同
 STATUS_FILE = f"{UPDATE_DIR}/status.json"  # 更新器的进度，Agent 读了在界面日志里提示
 MANIFEST_FILE = f"{UPDATE_DIR}/manifest.json"  # Agent 下载的 update.json（带检查时间），更新器按它更新
 FAILED_FILE = f"{UPDATE_DIR}/failed.json"  # 更新失败、已经还原的版本，不再自动重试
+AUTO_OFF_FILE = f"{UPDATE_DIR}/auto_off"  # 关掉「检查更新」或「自动更新」时建立，正在等待的更新器看到后退出
+CHECK_OFF_FILE = f"{UPDATE_DIR}/check_off"  # 关掉「检查更新」时建立（MXU 设置页的卡片上说明）
+CHECK_ERROR_FILE = f"{UPDATE_DIR}/check_error.json"  # 最近一次检查更新没查到的时间和原因；查到了就删掉
+CHECK_TTL_S = 600  # 检查更新的结果缓存多久：MXU 每次开始任务都启动新的 Agent，这么久内查过就不再访问 GitHub
+UPDATE_CARD = "data/update_mxu.md"  # MXU 设置页「更新」一组里「版本状态」卡片的内容（update_card）
 EXIT_UPDATE = 75  # 演奏进程为了热更新在安全点退出的退出码，Agent 看到后用同样的参数重新启动它
 EXIT_RERUN = 76  # 挂机在游戏日期变更后退出的退出码，Agent 看到后按顺序重跑挂机前面的任务，再用同样的参数重新启动它
 _VERSION = re.compile(r"v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?")
@@ -87,11 +101,17 @@ def is_newer(latest: str | None, current: str | None) -> bool:
 STATS_OPTION = "StatsView"  # MXU 设置页「统计与成就」卡片：没有可选项的多选框，只为显示说明（data/stats_mxu.md）
 # MXU 设置页单独一组「拟人化」的全局选项（其余全局选项在「所有任务共用」）
 HUMANIZE_OPTIONS = ("HumanBehavior", "HumanGreat", "HumanTiming", "HumanPosition", "DailyHours")
+# MXU 设置页单独一组「更新」的全局选项，排在「版本状态」卡片（UPDATE_OPTION）下面
+UPDATE_OPTIONS = ("CheckUpdate", "AutoUpdate")
+# 「版本状态」卡片：同样是没有可选项的多选框（data/update_mxu.md）。定义在 tasks/common.json 里、只有 MXU 的设置页引用，
+# 不像 STATS_OPTION 那样打包时生成：v0.2.0～v0.2.6 算 interface.json 的摘要时只会去掉 STATS_OPTION，
+# 打包时再加别的选项，它们整包更新时核对新包的 interface.json 就对不上了
+UPDATE_OPTION = "UpdateView"
 
 
 def render_interface(data: Mapping[str, Any], kind: str, version: str | None = None, agent_exec: str = AGENT_EXEC, agent_args: Iterable[str] = AGENT_ARGS) -> dict:
     """项目的 interface.json → 界面 ``kind``（mfaa / mxu）用的：写版本号和 Agent 启动命令，MXU 另加设置页的
-    「统计与成就」卡片和全局选项分组（所有任务共用、拟人化）。"""
+    「统计与成就」卡片和全局选项分组（所有任务共用、拟人化、更新）。"""
     data = dict(data)
     if version:
         data["version"] = version
@@ -103,8 +123,9 @@ def render_interface(data: Mapping[str, Any], kind: str, version: str | None = N
             **data.get("option", {}),
             STATS_OPTION: {"type": "checkbox", "label": f"$opt.{STATS_OPTION}", "description": f"$opt.{STATS_OPTION}.desc", "cases": []},
         }
-        shared = [o for o in data["global_option"] if o not in HUMANIZE_OPTIONS]
+        shared = [o for o in data["global_option"] if o not in HUMANIZE_OPTIONS and o not in UPDATE_OPTIONS]
         humanize = [o for o in data["global_option"] if o in HUMANIZE_OPTIONS]
+        update = [o for o in data["global_option"] if o in UPDATE_OPTIONS]
         data["setting"] = [
             {
                 "name": "stats",
@@ -127,6 +148,15 @@ def render_interface(data: Mapping[str, Any], kind: str, version: str | None = N
                     "label": "$setting.humanize",
                     "description": "$setting.humanize.desc",
                     "option": humanize,
+                }
+            )
+        if update:
+            data["setting"].append(
+                {
+                    "name": "update",
+                    "label": "$setting.update",
+                    "description": "$setting.update.desc",
+                    "option": [UPDATE_OPTION, *update],
                 }
             )
     return data
@@ -175,7 +205,7 @@ def is_app_file(rel: str) -> bool:
         return False
     if len(parts) == 1:
         return rel in APP_TOP_FILES or APP_TOP_PATTERN.fullmatch(rel) is not None
-    return parts[0] in APP_DIRS and not rel.startswith(MODEL_DIR + "/")
+    return parts[0] in APP_DIRS and not rel.startswith((MODEL_DIR + "/", BUNDLE_DIR + "/"))
 
 
 def app_files(root: Path) -> list[str]:
@@ -297,6 +327,122 @@ def read_json(path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------- MXU 设置页的「版本状态」卡片
+
+_CARD_STRONG = "color:var(--color-text-primary);font-weight:600"
+_MANUAL = "请到发布页手动下载"
+
+
+def _when(t: Any) -> str:
+    """Unix 时间 → ``11-15 14:02``；不是时间时为空串。"""
+    try:
+        return time.strftime("%m-%d %H:%M", time.localtime(float(t)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+
+
+def _stamp(data: Mapping[str, Any], key: str) -> float:
+    """``data[key]`` 里的 Unix 时间；没有、不是数时为负无穷。"""
+    try:
+        return float(data[key])
+    except (KeyError, TypeError, ValueError):
+        return float("-inf")
+
+
+def _update_step(root: Path, check: Mapping[str, Any], status: Mapping[str, Any]) -> str:
+    """查到的新版本更新到哪一步了（和任务结束时日志里的提示说法一致，见 agent/update.py 的 report）。"""
+    latest, manifest = check["version"], check.get("manifest")
+    if (root / AUTO_OFF_FILE).exists():
+        return f"没有开「自动更新」，{latest} {_MANUAL}。"
+    failed = read_json(root / FAILED_FILE)
+    state = status.get("state") if status.get("version") == latest else None
+    if state == "failed" or (isinstance(failed, dict) and latest in failed):
+        return f"自动更新到 {latest} 失败过，已恢复原版本（详见 data/update.log），{_MANUAL}。"
+    if not isinstance(manifest, dict) or _stamp(manifest, "format") > FORMAT:
+        return f"{latest} 不能自动更新，{_MANUAL}。"
+    if state == "downloading":
+        return f"正在后台下载 {latest}。"
+    if state == "waiting" and status.get("tier") == "hot":
+        return f"{latest} 已下载，没有任务运行时自动换上。"
+    if state == "waiting":
+        return f"{latest} 已下载，任务都结束、界面空闲 2 分钟后自动重启界面完成更新。"
+    if state == "waiting_close":
+        return f"{latest} 已下载；开着「启动时自动执行」时不会自动重启界面，关闭界面后自动完成更新。"
+    if state == "applying":
+        return f"正在换上 {latest}。"
+    if state == "error":
+        return f"自动更新到 {latest} 暂时没成功（{status.get('error') or '原因不明'}），稍后会重试；也可以到发布页手动下载。"
+    return f"{latest} 会在开始任务后自动下载，下载好了自动换上。"
+
+
+def update_card(root: Path) -> str | None:
+    """MXU 设置页「更新」一组里「版本状态」卡片的内容（打开设置页时读一次）；不是 MXU 的发布包时为 None。
+
+    当前版本、最新版本、上次检查更新的结果、新版本更新到哪一步了。最新版本是一张图片（:data:`BADGE_URL`）：
+    界面打开设置页时自己联网取，不用运行任务，取不到时不占位置；关掉「检查更新」后不放这张图（不联网）。
+    其余的来自 Agent 和更新器留在 ``cache/update`` 里的文件，Agent 在任务开始、检查完、任务结束时重写，
+    更新器在状态变化时重写（换上新版本、界面重开时没有 Agent）。整张卡片是一个 HTML 块，中间不能有空行。"""
+    local = read_release(root)
+    if local is None or local.get("ui") != "mxu":
+        return None
+    current = str(local.get("version"))
+    check, error, status = (read_json(root / rel) for rel in (MANIFEST_FILE, CHECK_ERROR_FILE, STATUS_FILE))
+    check = check if isinstance(check, dict) and isinstance(check.get("version"), str) else {}
+    error = error if isinstance(error, dict) else {}
+    status = status if isinstance(status, dict) else {}
+    newer = is_newer(check.get("version"), current)
+    checking = not (root / CHECK_OFF_FILE).exists()
+    if not checking:
+        rows = ["「检查更新」关着：开始任务时不会检查，这里也不联网取最新版本。"]
+    elif _stamp(error, "time") > _stamp(check, "checked_at"):
+        rows = [
+            f"{_when(error['time'])} 检查更新没成功（{error.get('error') or '原因不明'}）。"
+            "浏览器打得开 github.com、这里一直失败时，在「所有任务共用」的「网络代理」里填代理软件的 HTTP 端口。"
+        ]
+    elif not check:
+        rows = ["还没有检查过更新，开始任意任务时会检查。"]
+    else:
+        found = f"发现新版本 {check['version']}" if newer else "已是最新版本"
+        rows = [f"{_when(check.get('checked_at'))} 检查：{found}。"]
+    if status.get("state") == "rollback_failed":
+        rows.append(f"自动更新到 {status.get('version')} 后还原失败，任务暂时开始不了：请手动恢复备份，或把发布包解压到新目录。")
+    elif newer:
+        rows.append(_update_step(root, check, status))
+    elif status.get("state") == "done" and status.get("version") == current:
+        rows.append(f"{_when(status.get('time'))} 已自动更新到 {current}。")
+    link = f'<a href="{escape(DOWNLOAD_URL)}" target="_blank" rel="noopener noreferrer"'
+    badge = (
+        f'{link} title="打开 GitHub 上最新版本的发布页" style="display:inline-flex;line-height:0">'
+        f'<img src="{escape(BADGE_URL)}" alt="" style="display:block"></a>'
+    )
+    hint = f"「最新版本」是打开设置页时联网取的（shields.io，取不到时不显示）。开始任务时检查更新，{CHECK_TTL_S // 60} 分钟内查过的不重复查。"
+    head = (
+        '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;font-size:13px">'
+        f'<span>当前版本 <b style="{_CARD_STRONG}">{escape(current)}</b></span>{badge if checking else ""}</div>'
+    )
+    foot = (
+        f'<div style="font-size:12px;color:var(--color-text-tertiary)">{hint if checking else ""}'
+        f'{link} style="color:var(--color-accent);white-space:nowrap">更新内容与手动下载</a></div>'
+    )
+    body = "\n".join([head, *(f"<div>{escape(row.strip())}</div>" for row in rows), foot])
+    return f'<div style="display:flex;flex-direction:column;gap:6px;margin:4px 0 2px;line-height:1.5">\n{body}\n</div>\n'
+
+
+def write_update_card(root: Path) -> None:
+    """写出 :func:`update_card`（内容没变时不写）。卡片只是给人看的，出什么错都不能影响任务和更新。"""
+    try:
+        text = update_card(root)
+        if text is None:
+            return
+        path = root / UPDATE_CARD
+        with suppress(OSError):
+            if path.read_text(encoding="utf-8") == text:
+                return
+        write_text(path, text)
+    except Exception:  # noqa: BLE001 - 见上
+        pass
 
 
 # ---------------------------------------------------------------- 锁

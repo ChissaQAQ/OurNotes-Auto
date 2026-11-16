@@ -126,7 +126,7 @@ def load_catalog(cfg: Config, refresh: bool = False) -> tuple[BdonClient, Catalo
 
 
 def load_jackets_async(cfg: Config, catalog: Catalog) -> Future:
-    """在后台线程里加载封面（第一次运行要下载，约半分钟），同时去连模拟器、进乐曲选择页；
+    """在后台线程里加载封面（包里还没有的新歌要从谱面站下载），同时去连模拟器、进乐曲选择页；
     导航第一次用到封面时再等它（见 :attr:`GameNavigator.jackets`）。用自己的连接，仍是逐个下载。"""
     from .charts.bdon import BdonClient
     from .nav.jacket import JacketMatcher

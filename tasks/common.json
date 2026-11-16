@@ -364,6 +364,12 @@
             ],
             "default_case": "Yes"
         },
+        "UpdateView": {
+            "type": "checkbox",
+            "label": "$opt.UpdateView",
+            "description": "$opt.UpdateView.desc",
+            "cases": []
+        },
         "Proxy": {
             "type": "input",
             "label": "$opt.Proxy",

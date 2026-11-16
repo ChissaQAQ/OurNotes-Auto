@@ -1,8 +1,9 @@
-"""备份与恢复：演奏记录（含激奏舞台的）、运行记录、成就和学到的 offset 导出成一个 zip，在新下载的包里导入（合并，不覆盖）。
+"""备份与恢复：演奏记录（含激奏舞台的）、运行记录、日常记录（看广告、招募、领取任务奖励的次数）、成就和学到的 offset
+导出成一个 zip，在新下载的包里导入（合并，不覆盖）。
 
 「统计与成就」窗口里的「备份与恢复」导出时由用户选存到哪里（见 stats_server.py）；命令行导出默认放在
 「文档\\OurNotes-Auto」（删掉旧的包也还在），导入时不指定来源就用那里最新的一份。
-也能直接从旧的包目录（或它的 data 文件夹）导入。招募截图（``data/recruit``）不在备份里。
+也能直接从旧的包目录（或它的 data 文件夹）导入。招募截图（``data/recruit``）不在备份里（招募的次数在日常记录里）。
 
 导入时这边已有的记录一行不动，只在末尾接上没有的；改动前先把要改的文件复制到 ``data/import_backup``，
 写到一半出错就还原。有打歌任务在运行时不导入（它们会同时写演奏记录）。
@@ -20,18 +21,19 @@ import time
 import zipfile
 import zlib
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import BinaryIO
 
 from . import __version__, release, stats
-from .records import parse_arena, parse_result
+from .records import parse_arena, parse_chore, parse_result
 
 APP = "OurNotes-Auto"
 FORMAT = 1  # 备份的格式，改了就加 1；比自己新的不导入（要先更新）
 MANIFEST = "manifest.json"  # 备份里：格式、导出的版本和时间、电脑的记号
 RECORDS = "records.jsonl"
 ARENA = "arena.jsonl"  # 激奏舞台各局的名次、段位分（旧版本导出的备份里没有）
+CHORES = "chores.jsonl"  # 日常记录（旧版本导出的备份里没有）
 STATE = "state.json"
 OFFSETS = "offsets.json"  # 备份里：state.json 里学到的 offset
 OFFSET_KEYS = ("learned_offset_ms", "recent_residuals", "chart_offsets")
@@ -55,6 +57,7 @@ class Bundle:
 
     records: list[str] = field(default_factory=list)  # records.jsonl 的各行
     arena: list[str] = field(default_factory=list)  # arena.jsonl 的各行
+    chores: list[str] = field(default_factory=list)  # chores.jsonl 的各行
     sessions: list[str] = field(default_factory=list)  # sessions.jsonl 的各行
     unlocked: dict[str, float] = field(default_factory=dict)
     offsets: dict = field(default_factory=dict)  # OFFSET_KEYS 里有的
@@ -70,6 +73,7 @@ class Result:
     known: int = 0  # 这边已经有的局
     bad: int = 0  # 读不了的行
     arena: int = 0  # 激奏舞台的局（演奏了的同时也算在 records 里）
+    chores: int = 0  # 日常记录
     sessions: int = 0
     achievements: int = 0
     offsets: bool = False
@@ -139,6 +143,16 @@ def _arena_key(line: str) -> tuple | None:
     return key
 
 
+def _chore_key(line: str) -> tuple | None:
+    """日常记录里一项的记号（时间、项目、截图）；读不了的行为 None。"""
+    try:
+        c = parse_chore(line)
+        key = (round(c.timestamp, 3), c.kind, c.shot)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return key
+
+
 def _session_key(line: str) -> tuple | None:
     try:
         s = stats.parse_session(json.loads(line))
@@ -176,12 +190,14 @@ def _read_state(path: Path):
 
 
 def read_dir(data: Path) -> Bundle:
-    """一个 data 文件夹里的记录。正在运行、或进程被强行结束还没补记的运行（``data/running``）也算上。"""
+    """一个 data 文件夹里的记录。正在运行、或进程被强行结束还没补记的运行（``data/running``）也算上；
+    日常记录里带上只有截图的招募（见 ``stats.load_chores``：截图不在备份里，次数要跟着走）。"""
     sessions = _lines(data / stats.SESSIONS)
     sessions += [json.dumps(stats.session_row(s), ensure_ascii=False) for _, s in stats.running_files(data) if s is not None]
     return Bundle(
         records=[line for line in _lines(data / RECORDS) if _record_key(line) is not None],
         arena=[line for line in _lines(data / ARENA) if _arena_key(line) is not None],
+        chores=[json.dumps(asdict(c), ensure_ascii=False) for c in stats.load_chores(data)],
         sessions=sessions,
         unlocked=stats.load_unlocked(data / stats.UNLOCKED) or {},
         offsets=_offsets(_read_state(data / STATE)),
@@ -193,7 +209,7 @@ def read_dir(data: Path) -> Bundle:
 def _prepare(data: Path, now: float | None) -> tuple[Bundle, dict, str]:
     """要导出的内容、manifest 和文件名。"""
     b = read_dir(data)
-    if not (b.records or b.arena or b.sessions or b.unlocked):
+    if not (b.records or b.arena or b.chores or b.sessions or b.unlocked):
         raise BackupError("还没有演奏记录，不用备份")
     t = time.time() if now is None else now
     manifest = {"format": FORMAT, "app": APP, "version": __version__, "exported": round(t), "machine": b.machine}
@@ -239,6 +255,8 @@ def _fill_zip(target: Path | BinaryIO, manifest: dict, b: Bundle) -> None:
         z.writestr(RECORDS, "".join(line + "\n" for line in b.records))
         if b.arena:
             z.writestr(ARENA, "".join(line + "\n" for line in b.arena))
+        if b.chores:
+            z.writestr(CHORES, "".join(line + "\n" for line in b.chores))
         z.writestr(stats.SESSIONS, "".join(line + "\n" for line in b.sessions))
         z.writestr(stats.UNLOCKED, json.dumps({"unlocked": b.unlocked}, ensure_ascii=False, indent=2))
         if b.offsets:
@@ -274,8 +292,8 @@ def read_zip(src: Path | BinaryIO, name: str = "") -> Bundle:
             fmt = manifest.get("format")
             if not isinstance(fmt, int) or fmt > FORMAT:
                 raise BackupError(f"{name} 是新版本（v{manifest.get('version', '?')}）导出的，先把 OurNotes-Auto 更新到这个版本或更新的版本再导入")
-            records, arena, sessions, unlocked, offsets = (
-                _member(z, n) for n in (RECORDS, ARENA, stats.SESSIONS, stats.UNLOCKED, OFFSETS)
+            records, arena, chores, sessions, unlocked, offsets = (
+                _member(z, n) for n in (RECORDS, ARENA, CHORES, stats.SESSIONS, stats.UNLOCKED, OFFSETS)
             )
     except (zipfile.BadZipFile, zlib.error, UnicodeDecodeError, EOFError, NotImplementedError) as e:
         raise BackupError(f"{name} 不是 OurNotes-Auto 的备份，或者已经损坏（{e}）") from e
@@ -287,6 +305,7 @@ def read_zip(src: Path | BinaryIO, name: str = "") -> Bundle:
     return Bundle(
         records=split(records),
         arena=split(arena),
+        chores=split(chores),
         sessions=split(sessions),
         unlocked=(stats.parse_unlocked(unlocked) if unlocked else None) or {},
         offsets=_offsets(offsets_data),
@@ -301,7 +320,7 @@ def read_source(src: Path, data: Path) -> Bundle:
         source = src / "data" if (src / "data").is_dir() else src
         if source.resolve() == data.resolve():
             raise BackupError("选的是这个包自己的记录，不用导入")
-        if not any((source / n).exists() for n in (RECORDS, ARENA, stats.SESSIONS, stats.UNLOCKED)):
+        if not any((source / n).exists() for n in (RECORDS, ARENA, CHORES, stats.SESSIONS, stats.UNLOCKED)):
             raise BackupError(f"{src} 里没有演奏记录：要选导出的备份文件、旧的包目录或它的 data 文件夹")
         return read_dir(source)  # 从这台电脑上的文件夹导入：算同一台电脑
     if not src.is_file():
@@ -369,6 +388,20 @@ def _merge(data: Path, b: Bundle) -> tuple[Result, dict[str, str]]:
     if new:
         files[ARENA] = _append(text, new)
         result.arena = len(new)
+
+    # 这边只有截图的招募（见 stats.load_chores）也算已经有了：从同一个包复制出来的目录里是同一批截图
+    text = _text(data / CHORES)
+    have = {(round(c.timestamp, 3), c.kind, c.shot) for c in stats.load_chores(data)}
+    shots = {key[2] for key in have if key[2]}
+    new = []
+    for line in b.chores:
+        key = _chore_key(line)
+        if key is not None and key not in have and key[2] not in shots:
+            have.add(key)
+            new.append(line)
+    if new:
+        files[CHORES] = _append(text, new)
+        result.chores = len(new)
 
     text = _text(data / stats.SESSIONS)
     have = {stats.session_key(s) for s in stats.load_sessions(data)}

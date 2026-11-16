@@ -1,4 +1,5 @@
-"""统计与成就：从演奏记录（``data/records.jsonl``）和运行记录（``data/sessions.jsonl``）算出累计数据和成就，
+"""统计与成就：从演奏记录（``data/records.jsonl``）、运行记录（``data/sessions.jsonl``）、激奏舞台的对局
+（``data/arena.jsonl``）和日常记录（``data/chores.jsonl``：看广告、招募、领取任务奖励）算出累计数据和成就，
 写成几个页面：
 
 - ``data/stats.html``：「统计与成就」窗口（见 :mod:`.stats_window`）里显示的完整页面，打完一局自动刷新；
@@ -18,19 +19,20 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from urllib.parse import quote
 
 from . import release, stats_window
 from .agent.logs import client_name
-from .records import ArenaResult, PlayResult, RecordStore
+from .records import CHORE_ADS, CHORE_RECRUITS, ArenaResult, Chore, PlayResult, RecordStore
 from .report import ChartStats
 from .sources import DIFFICULTIES
 
@@ -46,6 +48,11 @@ PAGE_MXU = "stats_mxu.md"
 PAGE_HTML = "stats.html"
 PAGE_VER = "stats_ver.js"  # 内容是 statsVer("<版本>")：页面每隔几秒读一次，版本变了就重新载入（file:// 下不能 fetch）
 VER_MARK = "__STATS_VER__"  # 页面里写版本的地方
+# data/recruit：招募结果的截图（nav.daily 存的），文件名是「截图时间[_cm].jpg」，_cm 是观看 CM 招募、没有后缀的是免费招募
+RECRUIT_DIR = "recruit"
+RECRUIT_SHOT = re.compile(r"(\d{8}_\d{6})(?:_(cm))?\.jpg")
+RECRUIT_KINDS = {"": "免费招募", "cm": "观看CM招募"}
+SHOT_CHORES = {"": "recruit", "cm": "ad_recruit"}  # 截图是哪种招募 → 日常记录里的项目（records.CHORE_KINDS）
 PAGE_LIVE = "stats_live.js"  # 内容是 statsLive([...])：正在运行的各在做什么（见 write_live），页面就地更新、不重新载入
 MXU_CONFIG = Path("config", "mxu-OurNotesAuto.json")  # MXU 的配置：config/mxu-<interface.json 的 name>.json
 MXU_PORT = 12701  # MXU 自带的本机网页服务的默认端口（MXU 设置里能改）
@@ -210,6 +217,10 @@ DATE_EGGS: dict[str, Callable[[time.struct_time], bool]] = {
 }
 
 
+def _int(x: object) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool)
+
+
 def _palindrome(score: int) -> bool:
     s = str(score)
     return len(s) >= 6 and s == s[::-1]
@@ -274,6 +285,15 @@ class Totals:
     heartbreak: int = 0  # 连续 AP 停在 99 局
     eggs: set[str] = field(default_factory=set)  # 碰上过的 DATE_EGGS
     overlaps: int = 0  # 和别的运行同时在跑的运行
+    arena: int = 0  # 激奏舞台的对局（没演奏的也算）
+    arena_places: Counter = field(default_factory=Counter)  # 名次（1～5）→ 局数
+    arena_first_streak: int = 0  # 当前连续第 1 名的局数（名次没读到的局不算也不打断）
+    arena_best_first_streak: int = 0
+    arena_band_games: Counter = field(default_factory=Counter)  # 乐队 → 局数
+    arena_points: dict[str, int] = field(default_factory=dict)  # 乐队 → 到过的最高段位分
+    arena_gain: int = 0  # 段位分的增减加起来
+    arena_ap: int = 0  # 激奏舞台里 ALL PERFECT 的局
+    chores: Counter = field(default_factory=Counter)  # 日常记录：项目（records.CHORE_KINDS）→ 做成的次数
     lib: Library = field(default_factory=Library, repr=False)
     _song_ap: dict[int, set[str]] = field(default_factory=dict, repr=False)
     _songs: set[int] = field(default_factory=set, repr=False)
@@ -367,6 +387,33 @@ class Totals:
             self.lucky += r.score % 1000 == 777
             self.palindrome += _palindrome(r.score)
 
+    @property
+    def ads(self) -> int:
+        """看过的广告。"""
+        return sum(self.chores[k] for k in CHORE_ADS)
+
+    @property
+    def recruits(self) -> int:
+        """招募的次数（免费招募、观看CM招募）。"""
+        return sum(self.chores[k] for k in CHORE_RECRUITS)
+
+    def add_arena(self, g: ArenaResult) -> None:
+        self.arena += 1
+        if _int(g.placement) and 1 <= g.placement <= 5:
+            self.arena_places[g.placement] += 1
+            self.arena_first_streak = self.arena_first_streak + 1 if g.placement == 1 else 0
+            self.arena_best_first_streak = max(self.arena_best_first_streak, self.arena_first_streak)
+        if isinstance(g.band, str) and g.band:
+            self.arena_band_games[g.band] += 1
+            if _int(g.ap_total):
+                self.arena_points[g.band] = max(self.arena_points.get(g.band, 0), g.ap_total)
+        if _int(g.ap_gain):
+            self.arena_gain += g.ap_gain
+        self.arena_ap += g.played is True and _int(g.perfect) and g.perfect > 0 and (g.great, g.good, g.bad, g.miss) == (0, 0, 0, 0)
+
+    def add_chore(self, c: Chore) -> None:
+        self.chores[c.kind] += 1
+
     def add_session(self, s: Session) -> None:
         self.runs += 1
         self.run_s += s.seconds
@@ -399,7 +446,7 @@ class Achievement:
     hint: str = ""  # 隐藏成就解锁前的提示
 
 
-GROUPS = {"演奏": "♪", "完美": "★", "音符": "♫", "谱面": "◆", "乐队": "♬", "时长": "◔", "日常": "✦", "趣味": "☺"}  # 分组 → 徽章上的符号
+GROUPS = {"演奏": "♪", "完美": "★", "音符": "♫", "谱面": "◆", "乐队": "♬", "激奏": "♛", "时长": "◔", "日常": "✦", "趣味": "☺"}  # 分组 → 徽章上的符号
 TIERS = {1: "铜", 2: "银", 3: "金", 4: "传说"}
 
 
@@ -478,6 +525,19 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
     Achievement("band_1000", "乐队", "铁杆粉丝", "同一个乐队的歌演奏 1,000 局", 1000, lambda t: max(t.band_plays.values(), default=0), "局", tier=2),
     Achievement("band_5000", "乐队", "乐队专属", "同一个乐队的歌演奏 5,000 局", 5000, lambda t: max(t.band_plays.values(), default=0), "局", tier=3),
     Achievement("band_all_expert", "乐队", "乐队毕业", "一个乐队的每首歌的 EXPERT 都打出过 AP", 100, _band_done, "%", tier=3),
+    Achievement("arena_1", "激奏", "初登舞台", "打完 1 局激奏舞台", 1, lambda t: t.arena, "局"),
+    Achievement("arena_100", "激奏", "舞台常客", "激奏舞台累计 100 局", 100, lambda t: t.arena, "局", tier=2),
+    Achievement("arena_1000", "激奏", "身经百战", "激奏舞台累计 1,000 局", 1000, lambda t: t.arena, "局", tier=3),
+    Achievement("arena_first", "激奏", "拔得头筹", "在激奏舞台拿到第 1 名", 1, lambda t: t.arena_places[1], "次"),
+    Achievement("arena_first_50", "激奏", "常胜乐队", "在激奏舞台累计拿到 50 次第 1 名", 50, lambda t: t.arena_places[1], "次", tier=3),
+    Achievement("arena_streak_3", "激奏", "连战连捷", "激奏舞台连续 3 局第 1 名", 3, lambda t: t.arena_best_first_streak, "局", tier=2),
+    Achievement("arena_streak_5", "激奏", "势不可挡", "激奏舞台连续 5 局第 1 名", 5, lambda t: t.arena_best_first_streak, "局", tier=4),
+    Achievement("arena_points_1000", "激奏", "崭露头角", "一个乐队的段位分达到 1,000", 1000, lambda t: max(t.arena_points.values(), default=0), "分", tier=2),
+    Achievement("arena_points_5000", "激奏", "一方霸主", "一个乐队的段位分达到 5,000", 5000, lambda t: max(t.arena_points.values(), default=0), "分", tier=4),
+    Achievement("arena_bands", "激奏", "五团巡演", "5 个乐队都打过激奏舞台", 5, lambda t: len(t.arena_band_games), "个"),
+    Achievement("arena_bands_1000", "激奏", "齐头并进", "5 个乐队的段位分都达到 1,000", 5, lambda t: sum(v >= 1000 for v in t.arena_points.values()), "个", tier=3),
+    Achievement("arena_places", "激奏", "名次集邮", "激奏舞台的第 1～5 名都拿过", 5, lambda t: len(t.arena_places), "种", hidden=True, hint="每个名次都体验一遍"),
+    Achievement("arena_ap", "激奏", "舞台上的完美", "在激奏舞台里打出 ALL PERFECT", 1, lambda t: t.arena_ap, "局", hidden=True, tier=2, hint="和别人同台也一个不漏"),
     Achievement("hours_10", "时长", "初露锋芒", "累计运行 10 小时", 10, _hours, "小时"),
     Achievement("hours_100", "时长", "勤勤恳恳", "累计运行 100 小时", 100, _hours, "小时", tier=2),
     Achievement("hours_500", "时长", "不眠乐手", "累计运行 500 小时", 500, _hours, "小时", tier=3),
@@ -497,6 +557,11 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
     Achievement("day_streak_30", "日常", "日日不辍", "连续 30 天每天都有演奏", 30, lambda t: t.best_day_streak, "天", tier=3),
     Achievement("day_streak_100", "日常", "百日不断", "连续 100 天每天都有演奏", 100, lambda t: t.best_day_streak, "天", tier=4),
     Achievement("all_hours", "日常", "二十四时", "0 点到 23 点的每个钟点都演奏过", 24, lambda t: len(t.per_hour), "个", tier=2),
+    Achievement("ads_10", "日常", "广告看客", "累计看 10 个广告", 10, lambda t: t.ads, "个"),
+    Achievement("ads_100", "日常", "忠实观众", "累计看 100 个广告", 100, lambda t: t.ads, "个", tier=2),
+    Achievement("ads_500", "日常", "金牌观众", "累计看 500 个广告", 500, lambda t: t.ads, "个", tier=3),
+    Achievement("recruit_10", "日常", "试试手气", "累计招募 10 次（免费招募、观看CM招募）", 10, lambda t: t.recruits, "次"),
+    Achievement("recruit_100", "日常", "百次招募", "累计招募 100 次（免费招募、观看CM招募）", 100, lambda t: t.recruits, "次", tier=2),
     Achievement("night_100", "日常", "夜猫子", "凌晨 2-5 点累计演奏 100 局", 100, lambda t: sum(t.per_hour[h] for h in NIGHT_HOURS), "局", hidden=True, hint="大家都睡着的时候"),
     Achievement("day_300", "日常", "爆肝之日", "一天里演奏 300 局", 300, lambda t: t.best_day, "局", hidden=True, tier=3, hint="某一天打了特别多局"),
     Achievement("day_500", "日常", "肝帝", "一天里演奏 500 局", 500, lambda t: t.best_day, "局", hidden=True, tier=4, hint="比「爆肝之日」还要拼"),
@@ -521,9 +586,14 @@ ACHIEVEMENTS: tuple[Achievement, ...] = (
 
 
 def compute(
-    records: list[PlayResult], sessions: list[Session], library: Library | None = None
+    records: list[PlayResult],
+    sessions: list[Session],
+    library: Library | None = None,
+    games: Sequence[ArenaResult] = (),
+    chores: Sequence[Chore] = (),
 ) -> tuple[Totals, dict[str, float]]:
-    """按时间顺序累加，返回最后的数据和各成就第一次达成的时间。
+    """按时间顺序累加，返回最后的数据和各成就第一次达成的时间。``games`` 是激奏舞台的对局（演奏了的局同时
+    在 ``records`` 里，这里只看名次、段位分），``chores`` 是日常记录。
 
     不在任何一次运行记录里的演奏（统计功能加入之前打的）按演奏记录估算时长（见 GAP_S），其余按运行记录算。
     按每局判断而不是按第一次运行记录之前、之后：导入了别处的记录后，两边统计功能加入的时间不一样。
@@ -541,8 +611,10 @@ def compute(
     early = [r.timestamp for r in records if outside(r.timestamp)]
     gaps = [b - a for a, b in zip(early, early[1:]) if b - a <= GAP_S]
     typical = median(gaps) if gaps else 0.0  # 每段开头那局算一局的典型时长
-    events: list[tuple[float, PlayResult | Session]] = [(r.timestamp, r) for r in records]
+    events: list[tuple[float, PlayResult | Session | ArenaResult | Chore]] = [(r.timestamp, r) for r in records]
     events += [(s.end, s) for s in sessions]
+    events += [(g.timestamp, g) for g in games]
+    events += [(c.timestamp, c) for c in chores]
     events.sort(key=lambda e: e[0])
     totals = Totals(lib=library or Library())
     reached: dict[str, float] = {}
@@ -553,6 +625,10 @@ def compute(
         if isinstance(item, Session):
             totals.add_session(item)
             prev = None  # 估算的一段不跨过运行记录
+        elif isinstance(item, ArenaResult):
+            totals.add_arena(item)
+        elif isinstance(item, Chore):
+            totals.add_chore(item)
         else:
             totals.add_play(item)
             if outside(when):
@@ -596,6 +672,15 @@ def parse_unlocked(text: str) -> dict[str, float] | None:
 
 
 @dataclass
+class RecruitShot:
+    """一张招募结果的截图。"""
+
+    name: str  # RECRUIT_DIR 里的文件名
+    ts: float  # 截图的时刻（文件名里的本地时间）
+    kind: str  # RECRUIT_KINDS 的键
+
+
+@dataclass
 class View:
     """生成页面要用的全部数据。"""
 
@@ -609,9 +694,34 @@ class View:
     library: Library = field(default_factory=Library)
     doing: dict[str, dict] = field(default_factory=dict)  # 正在运行的在做什么：live_key → stats_live.js 里的一项
     arena: list[ArenaResult] = field(default_factory=list)  # 激奏舞台的每一局，新的在前
+    recruits: list[RecruitShot] = field(default_factory=list)  # 招募结果的截图，新的在前
+    chores: list[Chore] = field(default_factory=list)  # 日常记录（见 load_chores），从旧到新
 
 
 ARENA_MATCH_S = 30.0  # 激奏舞台的一局最多比它的演奏记录晚这么久（对局都要几分钟，不会认错局）
+
+
+def recruit_shots(data_dir: Path) -> list[RecruitShot]:
+    """``data_dir`` 下 RECRUIT_DIR 里的招募结果截图，新的在前。名字对不上的文件不算。"""
+    shots = []
+    with suppress(OSError):
+        for path in (data_dir / RECRUIT_DIR).iterdir():
+            m = RECRUIT_SHOT.fullmatch(path.name)
+            if m is None:
+                continue
+            with suppress(ValueError):
+                shots.append(RecruitShot(path.name, datetime.strptime(m.group(1), "%Y%m%d_%H%M%S").timestamp(), m.group(2) or ""))
+    return sorted(shots, key=lambda s: s.name, reverse=True)
+
+
+def load_chores(data_dir: Path, shots: Sequence[RecruitShot] | None = None) -> list[Chore]:
+    """日常记录（看广告、招募、领取任务奖励各做成了几次），从旧到新。有截图、记录里却没有的招募也算上
+    （加这份记录之前招募的；同一张截图只算一次）。``shots`` 没给时读 ``data_dir`` 里的截图。"""
+    chores = RecordStore(data_dir).chore_history(limit=None)
+    known = {c.shot for c in chores if c.shot}
+    shots = recruit_shots(data_dir) if shots is None else shots
+    chores += [Chore(SHOT_CHORES.get(s.kind, "recruit"), s.name, s.ts) for s in shots if s.name not in known]
+    return sorted(chores, key=lambda c: c.timestamp)
 
 
 def arena_plays(records: list[PlayResult], games: list[ArenaResult]) -> set[int]:
@@ -697,7 +807,10 @@ def refresh(
     running = [s for s in sessions if any(s is r for r in busy + mine)]
     records = RecordStore(d).history(limit=None)
     library = library or Library()
-    totals, reached = compute(records, sessions, library)
+    games = RecordStore(d).arena_history(limit=None)
+    shots = recruit_shots(d)
+    chores = load_chores(d, shots)
+    totals, reached = compute(records, sessions, library, games, chores)
     stored = load_unlocked(d / UNLOCKED)
     known = stored or {}
     new = [a for a in ACHIEVEMENTS if a.id in reached and a.id not in known]
@@ -711,12 +824,14 @@ def refresh(
     else:
         for a in new:
             logger.info("★ 解锁成就「%s」：%s（%s）", a.name, a.desc, count)
-    games = RecordStore(d).arena_history(limit=None)
     in_arena = arena_plays(records, games)  # 总数、成就照常算，「全部演奏」里分开列
     plays = sorted((r for i, r in enumerate(records) if i not in in_arena), key=lambda r: -r.timestamp)
     arena = sorted(games, key=lambda g: -g.timestamp)
     doing = {r["key"]: r for r in write_live(d)}  # 先于页面写：新页面读到的一定包括刚开始的这次、不包括刚结束的
-    view = View(totals, unlocked, sessions, time.time() if now is None else now, title or library.title, running, plays, library, doing, arena)
+    view = View(
+        totals, unlocked, sessions, time.time() if now is None else now, title or library.title, running, plays, library, doing, arena,
+        shots, chores,
+    )
     root = d.resolve().parent
     shortcut = root / stats_window.SHORTCUT
     release.write_text(d / PAGE_MD, render_md(view, d / PAGE_HTML, _client(root), shortcut if shortcut.exists() else None))
@@ -972,6 +1087,12 @@ def _facts(view: View) -> list[tuple[str, str]]:
     ]
     if t.unread:
         rows.append(("结算没读全的局", f"{t.unread:,} 局（不算 AP / FC）"))
+    if t.arena:
+        rows.append(("激奏舞台", f"{t.arena:,} 局，第 1 名 {t.arena_places[1]:,} 局，最长连续第 1 名 {t.arena_best_first_streak} 局"))
+    if t.ads:
+        rows.append(("看过的广告", f"{t.ads:,} 个"))
+    if t.recruits:
+        rows.append(("招募", f"{t.recruits:,} 次（免费招募 {t.chores['recruit']:,}、观看CM招募 {t.chores['ad_recruit']:,}）"))
     return rows
 
 

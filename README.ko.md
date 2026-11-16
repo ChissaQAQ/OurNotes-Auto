@@ -50,9 +50,9 @@
 - MuMu 에뮬레이터 12, 해상도 **1280×720**, 프레임 레이트 60 이상
 - 국제 서버, 게임 언어는 简体中文, 繁體中文, English 또는 한국어(한국어는 작업 설정에서 「게임 언어」를 한국어로 선택해야 함), 또는 일본 서버(「게임 언어」를 「日本語 (일본 서버)」로 선택, 클라이언트는 Google Play에서 설치해야 함)
 - 게임 내 「노트 속도」 **5.00**(「랜덤 GREAT」를 켰다면 반드시 유지. 다른 속도에서는 누르는 타이밍이 전체적으로 어긋나 GREAT가 GOOD이 됨). MV / 배경은 끄거나 어둡고 움직이지 않는 배경으로 변경. 이펙트, 연출 레벨은 낮추기를 권장
-- 인터넷 연결: 채보는 실행 중에 채보 사이트 `assets.bdon.moe`에서 다운로드
+- 인터넷 연결: 패키지에는 릴리스 시점의 모든 채보가 들어 있고, 이후 추가된 곡은 실행 중에 채보 사이트 `assets.bdon.moe`에서 다운로드
 
-작업: 게임 시작, 계정 전환(국제 서버의 bilibili 로그인 기록에 있는 계정, 비밀번호 불필요), 반복 플레이, LB 소진, 방치 플레이(LB를 다 쓰면 회복을 기다렸다가 계속 플레이), AP 채우기, 챌린지 라이브(이벤트 기간), 격주 스테이지(멀티 대전. 밴드를 지정하거나 돌아가며 플레이할 수 있고, 판마다 순위와 랭크 포인트를 기록), 방치 플레이(격주 스테이지), 데일리 수령, 통계 창 열기(누적 실행 시간, 연주 데이터, 업적. 패키지를 바꾸기 전에 창에서 기록을 내보내고 새 패키지에서 가져오기), 알림 테스트(「휴대폰 알림」 설정 확인. 연주 완료, 오류, 방치 플레이 중 서버 점검을 휴대폰으로 알립니다. ntfy, Server酱, Bark, webhook 지원). 각 작업과 옵션의 자세한 내용은 [사용 설명서](docs/ko/usage.md)를, 명령줄 사용법은 [명령줄](docs/ko/cli.md)을 참고하세요.
+작업: 게임 시작, 계정 전환(국제 서버의 bilibili 로그인 기록에 있는 계정, 비밀번호 불필요), 반복 플레이, LB 소진, 방치 플레이(LB를 다 쓰면 회복을 기다렸다가 계속 플레이), AP 채우기, 챌린지 라이브(이벤트 기간), 격주 스테이지(멀티 대전. 밴드를 지정하거나 돌아가며 플레이할 수 있고, 판마다 순위와 랭크 포인트를 기록), 방치 플레이(격주 스테이지), 데일리 수령, 광고 보기(CM 뽑기, LIVE BOOST 회복, 스튜디오 연습 SKIP. 게임에서 광고가 재생되어야 하며, 광고가 끝나기를 기다렸다가 뒤로 가기 키로 닫을 뿐 광고 안은 누르지 않음), 통계 창 열기(누적 실행 시간, 연주 데이터, 업적. 패키지를 바꾸기 전에 창에서 기록을 내보내고 새 패키지에서 가져오기), 알림 테스트(「휴대폰 알림」 설정 확인. 연주 완료, 오류, 방치 플레이 중 서버 점검을 휴대폰으로 알립니다. ntfy, Server酱, Bark, webhook 지원). 각 작업과 옵션의 자세한 내용은 [사용 설명서](docs/ko/usage.md)를, 명령줄 사용법은 [명령줄](docs/ko/cli.md)을 참고하세요.
 
 ## 실측 결과와 알려진 제한
 
@@ -97,6 +97,6 @@ Copyright (C) 2026 ChissaQAQ
 ## 감사의 말
 
 - [autodori](https://github.com/EvATive7/autodori): 설계 참고(GPLv3). 이 프로젝트는 그 코드를 복사하지 않았습니다
-- [bdon.moe](https://bdon.moe/) 채보 사이트, [haneoka.org](https://haneoka.org/) 국제 서버 곡명 데이터
+- [bdon.moe](https://bdon.moe/) 채보 사이트, [haneoka.org](https://haneoka.org/) 국제 서버 곡명 데이터(함께 들어 있는 곡명표는 여기서 정리한 것이며, 실행 중에는 접속하지 않습니다)
 - [MaaFramework](https://github.com/MaaXYZ/MaaFramework), [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)과 [MaaCommonAssets](https://github.com/MaaXYZ/MaaCommonAssets)(OCR 모델)
 - GUI: [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia), [MXU](https://github.com/MistEO/MXU)

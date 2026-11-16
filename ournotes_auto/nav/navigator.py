@@ -56,7 +56,7 @@ from ..config import Config
 from ..device.base import FrameSource
 from ..humanize import Humanizer
 from ..player.guard import load_template, pause_visible
-from ..records import RecordStore, game_day
+from ..records import Chore, RecordStore, game_day
 from ..result_reader import OcrItem, ResultCounts, merge, parse_int, parse_totals
 from ..runner import GameUpdateRequired, LbExhausted, NavigationError, ScreenFrozen, ServerMaintenance, SongLabel
 from .jacket import JacketMatcher, crop_jacket
@@ -117,6 +117,7 @@ from .screens import (
     title_startable,
 )
 from .account import BTN_MENU_CLOSE, AccountMixin
+from .ads import AdsMixin
 from .arena import (
     ARENA_FAILED_GUESS_S,
     ARENA_OPTIONS_TAP_S,
@@ -157,7 +158,7 @@ BTN_LB_COST = (920, 665)  # 乐队确认页：消耗LB（打开 LIVE BOOST消耗
 BTN_LB_RECOVER = (940, 575)
 LB_RECOVER_ROI: Rect = (860, 545, 160, 60)
 # 恢复LIVE BOOST 弹窗：左取消右 OK。OK 只在开了 game.lb_refill、核对过选中的是「道具」页、数量和预览之后点
-# （星钻、广告分页绝不点）；其余时候只点取消。按钮文字分别只在左右半边找
+# （星钻分页绝不点，「观看广告」分页只有看广告的任务点，见 ads.py）；其余时候只点取消。按钮文字分别只在左右半边找
 BTN_LB_RECOVER_CANCEL = (498, 663)
 LB_RECOVER_CANCEL_ROI: Rect = (400, 630, 200, 70)
 BTN_LB_RECOVER_OK = (782, 663)
@@ -296,7 +297,7 @@ class _LbPick:
     all_taps: int = 0  # 点「全部消耗」
     dragged: bool = False  # 找最大消耗时拖过列表
 
-class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, ArenaMixin, AccountMixin):
+class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, ChallengeMixin, ArenaMixin, AccountMixin):
     def __init__(
         self,
         config: Config,
@@ -310,6 +311,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         app_running: Callable[[], bool] | None = None,
         store: RecordStore | None = None,
         app_in_front: Callable[[], bool] | None = None,
+        front_window: Callable[[], str | None] | None = None,
+        press_back: Callable[[], None] | None = None,
+        chores: RecordStore | None = None,
     ):
         self.cfg = config
         # 开了自然操作才生成、记下操作习惯的种子（同一游戏日同一套）
@@ -328,6 +332,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         self.restart_app = restart_app
         self.app_running = app_running
         self.app_in_front = app_in_front  # 游戏的界面在前台（认不出的画面上试着点一下恢复之前查）
+        # 看广告（ads.py）：获得焦点的窗口（``包名/界面``）、按返回键
+        self.front_window = front_window
+        self.press_back = press_back
         self.last_screen = Screen.UNKNOWN
         self.prev_screen = Screen.UNKNOWN  # 上一次 look 认出的画面
         self._frame = None
@@ -366,6 +373,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         self._options_since = 0.0  # 这次开始看到演出前选项设置的时刻（激奏舞台里等它自己过去）
         self._ready_at = -ARENA_OPTIONS_TAP_S  # 激奏舞台上次点准备完毕的时刻（之后弹出的演出前选项设置点「演出」）
         self._band_templates: dict[str, np.ndarray] | None = None  # 激奏舞台首页的乐队标志（第一次用时加载）
+        self.recruit_shots: list[Path] = []  # 这次存下的招募结果截图（存了就要更新统计页的「招募记录」）
+        self._chore_store = chores if chores is not None else store  # 做成的看广告、招募、领取任务奖励记在这里（没有就不记）
+        self.chores: list[Chore] = []  # 这次记下的（有的话结束时更新统计页）
         self._side_templates: dict[str, np.ndarray | None] = {}  # 主界面左侧入口的图标（第一次用时加载）
         cp = config.game.challenge_cost
         if cp is not None and cp not in CP_RADIO:
@@ -1500,7 +1510,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, StoryMixin, ChallengeMixin, Are
         已恢复 OK，回到消耗设置弹窗，返回补充的 LB 数。``held`` 是消耗设置弹窗上读到的持有数（预览左边的数字
         常常漏读，就用它）。选中的不是「道具」页、没有能用的饮料（或剩余额度不够）、
         数量或预览对不上时点取消、返回 0，本次运行不再补充。只点饮料行的「+」和这几个弹窗的 OK / 取消，
-        「星钻」「观看广告」分页绝不点。"""
+        「星钻」「观看广告」分页这里绝不点。"""
         drinks = lb_drinks(items)
         problem = None
         if not self._items_tab():

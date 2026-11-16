@@ -1,8 +1,12 @@
-"""曲名匹配：OCR 误差、同系列曲名的歧义与等级消歧。"""
+"""曲名匹配：OCR 误差、同系列曲名的歧义与等级消歧；随包附带的曲名表。"""
+
+import json
+import logging
 
 import pytest
 
-from ournotes_auto.charts.catalog import Catalog, Song, normalize
+from ournotes_auto.charts import catalog as catalog_mod
+from ournotes_auto.charts.catalog import TITLES, Catalog, Song, load_titles, normalize
 
 
 def song(mid, title, easy, expert):
@@ -62,3 +66,56 @@ def test_match(text, kw, expected):
 
 def test_match_without_margin_for_human_input():
     assert mid("Symbol", min_margin=0) in (100033, 100034, 100035, 100036)
+
+
+class IndexClient:
+    """只有谱面站索引的假客户端。"""
+
+    def __init__(self, *entries):
+        self.entries = [{"musicId": mid, "difficulty": diff, "title": title, "bands": [band], "level": 20} for mid, diff, title, band in entries]
+
+    def index(self, refresh=False):
+        return self.entries
+
+
+def test_bundled_titles():
+    """随包附带的曲名表（#142：不再从别的网站取）：每首歌五种语言的曲名（日、英、繁中、简中、韩），都不空。"""
+    raw = json.loads(TITLES.read_text(encoding="utf-8"))
+    assert len(raw) >= 96 and all(k.isdigit() and len(v) == 5 and all(isinstance(t, str) and t for t in v) for k, v in raw.items())
+    titles = load_titles()
+    assert titles[100001] == ["迷星叫", "Mayoiuta", "迷星叫", "迷星叫", "헤매는 노래"]
+    assert titles[100008][3] == "诗超绊" and titles[100008][2] == "詩超絆"
+
+
+def test_load_uses_bundled_titles():
+    """曲目目录：谱面站的索引 + 曲名表。各语言的曲名都认得出，显示用简中的；表里没有的新歌只有谱面站的曲名；
+    表里有、谱面站没有的不进目录（打不了）。"""
+    client = IndexClient(
+        (100001, "expert", "迷星叫", "MyGO!!!!!"), (100001, "easy", "迷星叫", "MyGO!!!!!"),
+        (100008, "expert", "詩超絆", "MyGO!!!!!"), (999999, "expert", "新しい歌", "MyGO!!!!!"),
+    )
+    cat = Catalog.load(client)
+    assert sorted(cat.songs) == [100001, 100008, 999999]
+    assert cat.get(100001).titles == ["迷星叫", "Mayoiuta", "迷星叫", "迷星叫", "헤매는 노래"]
+    assert sorted(cat.get(100001).difficulties) == ["easy", "expert"] and cat.get(100001).band == "MyGO!!!!!"
+    assert cat.get(100008).display_title() == "诗超绊" and cat.get(999999).display_title() == "新しい歌"
+    for text, want in (("Mayoiuta", 100001), ("헤매는 노래", 100001), ("Utakotoba", 100008), ("诗超绊", 100008), ("新しい歌", 999999)):
+        assert cat.match(text)[0].music_id == want, text
+
+
+def test_titles_file_missing_or_broken(tmp_path, monkeypatch, caplog):
+    """曲名表丢了、坏了：记一行警告，只用谱面站的曲名，照常能用（封面还认得出歌）。"""
+    bad = tmp_path / "titles.json"
+    with caplog.at_level(logging.WARNING, logger=catalog_mod.logger.name):
+        assert load_titles(bad) == {}
+        bad.write_text("{坏的", encoding="utf-8")
+        assert load_titles(bad) == {}
+        bad.write_text('{"1": "不是列表", "x": []}', encoding="utf-8")
+        assert load_titles(bad) == {}
+    assert len(caplog.records) == 3 and all("读不了曲名表" in r.getMessage() for r in caplog.records)
+    bad.write_text('{"100001": ["迷星叫", "", null, "迷星叫"]}', encoding="utf-8")
+    assert load_titles(bad) == {100001: ["迷星叫", "迷星叫"]}  # 空的不要
+    monkeypatch.setattr(catalog_mod, "TITLES", tmp_path / "nope.json")
+    monkeypatch.setattr(catalog_mod.load_titles, "__defaults__", (tmp_path / "nope.json",))
+    cat = Catalog.load(IndexClient((100008, "expert", "詩超絆", "MyGO!!!!!")))
+    assert cat.get(100008).titles == ["詩超絆"] and cat.match("诗超绊")[0].music_id == 100008  # 繁简换成一样的说法再比

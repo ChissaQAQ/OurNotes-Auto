@@ -247,10 +247,10 @@ def _ensure_stats_page(data: Path = Path("data")) -> None:
 
 
 def _ensure_stats_card(root: Path = ROOT) -> None:
-    """MXU 发布包的 interface.json 里设置页的分组（「统计与成就」卡片、所有任务共用、拟人化）和这个版本的不一样时
+    """MXU 发布包的 interface.json 里设置页的分组（「统计与成就」卡片、所有任务共用、拟人化、更新）和这个版本的不一样时
     重新生成（下次打开界面显示）。
 
-    更新器用旧版本的 release.py 生成 interface.json，从没有这张卡片、没有「拟人化」分组的版本更新过来时要在这里补。"""
+    更新器用旧版本的 release.py 生成 interface.json，从没有这张卡片、没有「拟人化」「更新」分组的版本更新过来时要在这里补。"""
     info = release.read_release(root)
     if not info or info.get("ui") != "mxu":
         return
@@ -265,7 +265,7 @@ def _ensure_stats_card(root: Path = ROOT) -> None:
     except (OSError, ValueError, TypeError, KeyError) as e:
         logger.debug("补设置页的分组失败：%s", e)
         return
-    logger.info("更新了设置页的分组（统计与成就、所有任务共用、拟人化），下次打开界面时显示")
+    logger.info("更新了设置页的分组（统计与成就、所有任务共用、拟人化、更新），下次打开界面时显示")
 
 
 def _started(pid: int) -> float | None:
@@ -316,6 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     os.environ[LAUNCHED_ENV] = str(_launched())
     _ensure_stats_page()
     _ensure_stats_card()
+    UPDATE.write_card()  # 设置页的「版本状态」卡片：刚更新过来、还没有时先写出来
     if not AgentServer.start_up(argv[-1]):
         logger.error("Agent 服务启动失败")
         return 1

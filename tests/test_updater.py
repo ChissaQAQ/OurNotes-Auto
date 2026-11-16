@@ -35,11 +35,11 @@ def _tree(root: Path, files: dict) -> Path:
 
 
 def _snapshot(root: Path) -> dict[str, bytes]:
-    """包里的文件（cache、__pycache__ 除外）。"""
+    """包里的文件（cache、__pycache__、更新器写的设置页卡片除外）。"""
     out = {}
     for p in root.rglob("*"):
         parts = p.relative_to(root).parts
-        if p.is_file() and parts[0] != "cache" and "__pycache__" not in parts:
+        if p.is_file() and parts[0] != "cache" and "__pycache__" not in parts and "/".join(parts) != release.UPDATE_CARD:
             out["/".join(parts)] = p.read_bytes()
     return out
 
@@ -222,13 +222,29 @@ def test_files_apply_and_rollback(tmp_path):
     assert "ournotes_auto/gone.py" not in after and "ournotes_auto/__pycache__/runner.cpython-314.pyc" not in after
     assert after["config/config.yaml"] == b"user" and after["mxu.exe"] == b"ui"
     iface = json.loads(after["interface.json"])
-    assert iface["version"] == "v0.2.0" and iface["setting"][-1]["option"] == ["CheckUpdate", "AutoUpdate"]
+    assert iface["version"] == "v0.2.0" and iface["setting"][-1]["option"] == [release.UPDATE_OPTION, "CheckUpdate", "AutoUpdate"]
     assert iface["agent"]["child_exec"] == release.AGENT_EXEC
     info = release.read_release(root)
     assert info["version"] == "v0.2.0" and info["files"] == manifest["files"] == release.manifest_files(root)
     assert info["runtime"] == local["runtime"] and info["top"] == local["top"]
     job.rollback()
     assert _snapshot(root) == before
+
+
+def test_bundled_charts_only_change_with_full_update(tmp_path):
+    """随整包附带的谱面不在 app 层的清单里：热更新、重启更新不带它、也不动它（缺的、旧的谱面程序自己从谱面站取）；
+    整包更新换成新包里的。"""
+    rel = f"{release.BUNDLE_DIR}/100001_expert.json.gz"
+    root, stage = tmp_path / "pkg", _tree(tmp_path / "stage", {**NEW, rel: "new chart", "mxu.exe": "ui2"})
+    local = _package(root, {**OLD, rel: "old chart"})
+    manifest = {"version": "v0.2.0", "files": release.manifest_files(stage)}
+    assert rel not in local["files"] and rel not in manifest["files"]
+    assert release.tier(local, {**manifest, "runtime": {"mxu": local["runtime"]}}) != "full"  # 谱面变了不用整包更新
+    FilesApply(root, stage, local, manifest, tmp_path / "backup").run()
+    assert (root / rel).read_text(encoding="utf-8") == "old chart" and (root / "ournotes_auto/runner.py").read_text(encoding="utf-8") == "new"
+    release.write_json(stage / release.RELEASE_FILE, {"version": "v0.3.0"})
+    FullApply(root, stage, release.read_release(root), tmp_path / "backup-full").run()
+    assert (root / rel).read_text(encoding="utf-8") == "new chart" and (root / "mxu.exe").read_text(encoding="utf-8") == "ui2"
 
 
 def test_files_apply_repairs_disk(tmp_path):
@@ -299,7 +315,8 @@ def test_update_keeps_user_interface_fields(tmp_path, full):
     after = json.loads((root / "interface.json").read_text(encoding="utf-8"))
     assert after["github"] == "https://example.com/x"
     assert after["name"] == "OurNotes" and after["version"] == "v0.2.0"
-    assert [s["name"] for s in after["setting"]] == ["stats", "global"] and after["setting"][1]["option"] == ["CheckUpdate", "AutoUpdate"]
+    assert [s["name"] for s in after["setting"]] == ["stats", "global", "update"]
+    assert after["setting"][2]["option"] == [release.UPDATE_OPTION, "CheckUpdate", "AutoUpdate"]
     assert after["option"] == {release.STATS_OPTION: release.render_interface(IFACE, "mxu")["option"][release.STATS_OPTION]}
     assert after["agent"]["child_exec"] == release.AGENT_EXEC
     job.rollback()
@@ -482,6 +499,29 @@ def test_run_hot(setup):
     assert not system.killed and not system.launched  # 热更新不动界面
     assert not (root / updater.BACKUP_DIR / "v0.1.0").exists()  # 成功了备份也删掉
     assert not (root / release.UPDATE_DIR / "v0.2.0").exists()  # 下载的用完删掉
+
+
+def test_status_rewrites_card(setup):
+    """更新器的状态变了就重写 MXU 设置页的「版本状态」卡片（下载进度不算）：换上新版本、界面重开时没有 Agent 来写。"""
+    root, _, _ = setup()
+    up, _, _ = _updater(root)
+    card = root / release.UPDATE_CARD
+    up.status = {"version": "v0.2.0", "tier": "restart", "url": None}
+    up.set_status("downloading", progress=0.0)
+    assert "正在后台下载 v0.2.0。" in card.read_text(encoding="utf-8")
+    card.write_text("x", encoding="utf-8")
+    up.set_status("downloading", progress=0.5)
+    assert card.read_text(encoding="utf-8") == "x"
+    up.set_status("waiting")
+    assert "v0.2.0 已下载，任务都结束" in card.read_text(encoding="utf-8")
+    assert up.run() == 0  # 换上新版本
+    text = card.read_text(encoding="utf-8")
+    assert ">v0.2.0</b>" in text and "已是最新版本。" in text and "已自动更新到 v0.2.0。" in text
+    # MFAA 没有这张卡片
+    card.unlink()
+    release.write_json(root / release.RELEASE_FILE, {**release.read_release(root), "ui": "mfaa"})
+    up.set_status("idle")
+    assert not card.exists()
 
 
 def test_run_hot_waits_for_worker(setup):

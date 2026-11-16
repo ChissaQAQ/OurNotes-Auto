@@ -12,17 +12,20 @@ import html
 import json
 import math
 import time
+from collections import Counter
 from collections.abc import Sequence
 from datetime import date, timedelta
 
 from .backup import MAX_UPLOAD
-from .records import PlayResult
+from .records import CHORE_KINDS, PlayResult, game_day
 from .report import ChartStats, judgements, verdict
 from .sources import DIFFICULTIES
 from .stats import (
     ACHIEVEMENTS,
     GROUPS,
     PAGE_SIZE,
+    RECRUIT_DIR,
+    RECRUIT_KINDS,
     RUNS_PAGE_SIZE,
     TIERS,
     VER_MARK,
@@ -34,6 +37,7 @@ from .stats import (
     _date,
     _diff_rows,
     _facts,
+    _int,
     _pct,
     _when,
     backup_text,
@@ -125,8 +129,8 @@ poll();
 setInterval(poll,3000);
 })();"""
 
-TABS = (("ov", "概览", "u-grid"), ("ach", "成就", "u-trophy"), ("data", "演奏数据", "u-chart"), ("charts", "谱面", "u-music"), ("runs", "运行记录", "u-history"))
-GROUP_ICON = {"演奏": "g-note", "完美": "g-star", "音符": "g-notes", "谱面": "g-diamond", "乐队": "g-band", "时长": "g-clock", "日常": "g-spark", "趣味": "g-smile"}
+TABS = (("ov", "概览", "u-grid"), ("ach", "成就", "u-trophy"), ("data", "演奏数据", "u-chart"), ("charts", "谱面", "u-music"), ("runs", "运行记录", "u-history"), ("rec", "招募记录", "u-image"))
+GROUP_ICON = {"演奏": "g-note", "完美": "g-star", "音符": "g-notes", "谱面": "g-diamond", "乐队": "g-band", "激奏": "g-crown", "时长": "g-clock", "日常": "g-spark", "趣味": "g-smile"}
 WEEK = "一二三四五六日"
 UI_KEY = "stats-ui"  # sessionStorage 里存界面状态（页签、子页签、筛选、搜索、排序、展开的歌、表格滚动、页码）
 
@@ -398,6 +402,7 @@ SPRITE = (
     '<symbol id="g-notes" viewBox="0 0 24 24"><path d="M21 3v12.5a3.5 3.5 0 1 1-2-3.16V7.6l-9 1.8v8.1a3.5 3.5 0 1 1-2-3.16V5.2z"/></symbol>'
     '<symbol id="g-diamond" viewBox="0 0 24 24"><path d="M12 2.5l8.5 9.5-8.5 9.5L3.5 12z"/></symbol>'
     '<symbol id="g-band" viewBox="0 0 24 24"><path d="M12 2a3.5 3.5 0 0 1 3.5 3.5v6a3.5 3.5 0 0 1-7 0v-6A3.5 3.5 0 0 1 12 2zM6 11h2a4 4 0 0 0 8 0h2a6 6 0 0 1-5 5.9V20h3v2H8v-2h3v-3.1A6 6 0 0 1 6 11z"/></symbol>'
+    '<symbol id="g-crown" viewBox="0 0 24 24"><path d="M3 7l4.5 4L12 4l4.5 7L21 7l-1.8 10H4.8zM5 19h14v2H5z"/></symbol>'
     '<symbol id="g-clock" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm0 2.6a7.4 7.4 0 1 0 0 14.8 7.4 7.4 0 0 0 0-14.8zM10.8 7h2.4v4.4l3.3 2-1.2 2-4.5-2.7z"/></symbol>'
     '<symbol id="g-spark" viewBox="0 0 24 24"><path d="M12 2Q13.4 10.6 22 12Q13.4 13.4 12 22Q10.6 13.4 2 12Q10.6 10.6 12 2z"/></symbol>'
     '<symbol id="g-smile" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zM7 9.5a1.5 1.5 0 1 0 3 0 1.5 1.5 0 1 0-3 0zm7 0a1.5 1.5 0 1 0 3 0 1.5 1.5 0 1 0-3 0zM7.2 13.5h9.6a4.8 4.8 0 0 1-9.6 0z"/></symbol>'
@@ -428,6 +433,7 @@ SPRITE = (
     + _sym("u-folder", '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>')
     + _sym("u-alert", '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5v.01"/>')
     + _sym("u-x", '<path d="M6 6l12 12M18 6 6 18"/>')
+    + _sym("u-image", '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-4.6-4.6a2 2 0 0 0-2.8 0L5 20"/>')
     + _sym("u-file", '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M10 12h4M10 16h4"/>')
     + "</svg>"
 )
@@ -462,6 +468,7 @@ button{font:inherit;color:inherit}
 .top{position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--bg) 84%,transparent);backdrop-filter:blur(16px) saturate(1.5);border-bottom:1px solid var(--line)}
 .topin{display:flex;align-items:center;gap:20px;min-height:64px}
 .brand{display:flex;align-items:center;gap:12px;min-width:0}
+.brand>div{min-width:0}
 .logo{width:38px;height:38px;border-radius:11px;background:var(--grad);display:grid;place-items:center;color:#fff;flex:none;box-shadow:0 6px 14px -4px rgba(124,92,255,.55)}
 .logo .ic{width:20px;height:20px}
 .ttl{font-size:17px;font-weight:700;letter-spacing:.02em;line-height:1.25}
@@ -909,6 +916,21 @@ dialog.bk[open]{animation:din .22s cubic-bezier(.2,1,.3,1)}
 .bk-st{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+.shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px;padding:16px}
+.shot{margin:0;min-width:0}
+.shot button{display:block;width:100%;padding:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--sunk);cursor:zoom-in;aspect-ratio:16/9;transition:border-color .15s,box-shadow .15s}
+.shot button:hover{border-color:color-mix(in srgb,var(--acc) 55%,var(--line));box-shadow:var(--sh)}
+.shot button:focus-visible,.lb-b:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.shot img{display:block;width:100%;height:100%;object-fit:cover}
+.shot figcaption{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px;font-size:12.5px;color:var(--fg2);font-variant-numeric:tabular-nums}
+dialog.lb{width:min(1280px,calc(100vw - 32px));max-width:none;max-height:calc(100vh - 32px);padding:0;border:1px solid var(--line);border-radius:16px;background:var(--card);color:var(--fg);box-shadow:0 30px 80px -20px rgba(10,8,30,.45);overflow:hidden}
+dialog.lb::backdrop{background:rgba(16,14,30,.6);backdrop-filter:blur(3px)}
+dialog.lb img{display:block;width:100%;max-height:calc(100vh - 110px);object-fit:contain;background:#000}
+.lb-bar{display:flex;align-items:center;gap:8px;padding:8px 10px 8px 16px}
+.lb-cap{flex:1;min-width:0;font-size:13px;color:var(--fg2);font-variant-numeric:tabular-nums}
+.lb-b{display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:9px;background:none;color:var(--muted);cursor:pointer}
+.lb-b:hover{background:var(--hl);color:var(--fg)}
+.lb-b .ic{width:18px;height:18px}
 """
 
 # 页签、成就筛选、谱面表（搜索、难度、只看没 AP、排序、展开）、运行记录翻页、「全部演奏」的子页签和表格、悬停提示；界面状态存 sessionStorage，自动重新载入后恢复
@@ -997,6 +1019,18 @@ if(c){c.scrollIntoView({block:'center'});c.classList.remove('flash');void c.offs
 document.addEventListener('click',e=>{const a=e.target.closest('[data-a]');if(a){statsGoto(a.dataset.a);return;}
 const g=e.target.closest('[data-go]');if(!g)return;if(g.dataset.na){st.na=true;st.q='';st.cd='all';const q=$('#q');if(q)q.value='';filt();}
 tab(g.dataset.go);scrollTo(0,0);});
+const shots=$$('.shot');
+if(shots.length){
+const at=new URL(location.href),via=at.searchParams.get('path'),key=at.searchParams.get('key');
+const src=f=>{if(via){const u=new URL(location.href);u.searchParams.set('path',via.slice(0,via.lastIndexOf('/')+1)+f);return u.href;}return f+(key?'?key='+encodeURIComponent(key):'');};
+shots.forEach(f=>{const i=$('img',f);i.src=src(i.dataset.f);});
+pager('rc',(a,b)=>shots.forEach((f,i)=>{f.hidden=i<a||i>=b;}));
+const lb=$('#shot-view'),big=$('img',lb),cap=$('.lb-cap',lb);let at2=0;
+const show=i=>{at2=(i+shots.length)%shots.length;const f=shots[at2];big.src=$('img',f).src;cap.textContent=f.dataset.c+' · '+(at2+1)+' / '+shots.length;};
+shots.forEach((f,i)=>{$('button',f).onclick=()=>{show(i);lb.showModal();};});
+lb.addEventListener('click',e=>{const b=e.target.closest('[data-lb]');if(b){if(b.dataset.lb==='x')lb.close();else show(at2+(b.dataset.lb==='n'?1:-1));}else if(e.target===lb)lb.close();});
+lb.addEventListener('keydown',e=>{if(e.key==='ArrowLeft')show(at2-1);else if(e.key==='ArrowRight')show(at2+1);});
+}
 const tip=document.createElement('div');tip.className='tip';tip.hidden=true;document.body.appendChild(tip);
 let cur=null;
 function place(e){const w=tip.offsetWidth,h=tip.offsetHeight;let x=e.clientX+14,y=e.clientY+16;if(x+w>innerWidth-8)x=e.clientX-w-12;if(y+h>innerHeight-8)y=e.clientY-h-12;tip.style.left=Math.max(4,x)+'px';tip.style.top=Math.max(4,y)+'px';}
@@ -1062,13 +1096,14 @@ hd.append(ic('u-file'),el('b','',j.name||''));
 const item=(text,on,label,small)=>{const li=el('li',on?'':'z');li.append(el('b','',text),el('span','',label));if(small)li.append(el('small','',small));ul.append(li);};
 item('+'+n(j.records),j.records>0,'局演奏记录',j.known?'另有 '+n(j.known)+' 局这边已经有了':'');
 if(t.arena)item('+'+n(j.arena),j.arena>0,'局激奏舞台记录','名次、段位分');
+if(t.chores)item('+'+n(j.chores),j.chores>0,'条日常记录','看广告、招募、领取任务奖励的次数');
 item('+'+n(j.sessions),j.sessions>0,'次运行记录','');
 item('+'+n(j.achievements),j.achievements>0,'个成就','');
 item(j.offsets?'导入':'不变',!!j.offsets,'学到的 offset',j.offsets?'这边还没学过':'');
-pv.append(hd,el('div','bk-pvs','备份里有 '+n(t.records)+' 局演奏记录、'+(t.arena?n(t.arena)+' 局激奏舞台记录、':'')+n(t.sessions)+' 次运行记录、'+n(t.achievements)+' 个成就'),ul);
+pv.append(hd,el('div','bk-pvs','备份里有 '+n(t.records)+' 局演奏记录、'+(t.arena?n(t.arena)+' 局激奏舞台记录、':'')+(t.chores?n(t.chores)+' 条日常记录、':'')+n(t.sessions)+' 次运行记录、'+n(t.achievements)+' 个成就'),ul);
 if(j.bad)pv.append(el('p','bk-note','有 '+n(j.bad)+' 行演奏记录读不了，会跳过'));
 if(!j.changed)pv.append(el('p','bk-note','这边都有了，不用导入'));
-else if(!j.records&&!j.arena&&!j.sessions&&!j.achievements&&!j.offsets)pv.append(el('p','bk-note','只会把成就的解锁时间改早（备份里解锁得更早）'));
+else if(!j.records&&!j.arena&&!j.chores&&!j.sessions&&!j.achievements&&!j.offsets)pv.append(el('p','bk-note','只会把成就的解锁时间改早（备份里解锁得更早）'));
 if(j.changed){const c=btn('btn','取消'),g=btn('btn pri','确认导入','u-upload');c.dataset.bk='cancel';g.dataset.bk='go';c.onclick=reset;g.onclick=importIt;act.append(c,g);}
 else{const o=btn('btn pri','好');o.dataset.bk='ok';o.onclick=reset;act.append(o);}
 pv.append(act);pv.hidden=false;pv.scrollIntoView({block:'nearest'});}
@@ -1081,7 +1116,7 @@ async function importIt(){
 if(working||!src)return;lock(true);msg('wait','正在导入…');let done=false;
 try{const r=await call('api/import',{method:'POST',body:src.body,headers:src.headers}),j=await r.json();
 if(!j.backup){reset();msg('ok','这边都有了，没有改动');return;}
-const parts=[];if(j.records)parts.push(n(j.records)+' 局演奏记录');if(j.arena)parts.push(n(j.arena)+' 局激奏舞台记录');if(j.sessions)parts.push(n(j.sessions)+' 次运行记录');
+const parts=[];if(j.records)parts.push(n(j.records)+' 局演奏记录');if(j.arena)parts.push(n(j.arena)+' 局激奏舞台记录');if(j.chores)parts.push(n(j.chores)+' 条日常记录');if(j.sessions)parts.push(n(j.sessions)+' 次运行记录');
 if(j.achievements)parts.push(n(j.achievements)+' 个成就');if(j.offsets)parts.push('学到的 offset');
 ss('stats-flash','已从「'+j.name+'」导入 '+(parts.join('、')||'成就的解锁时间')+'。导入前的记录复制到了 '+j.backup);ss('stats-quiet','1');
 done=true;location.reload();}
@@ -1521,14 +1556,36 @@ def _backup_note(view: View) -> str:
 def _overview(view: View) -> str:
     t = view.totals
     if not (t.plays or t.runs):
-        return f'{_live_bar(view)}<div class="hero">{_ach_card(view)}{_empty_card()}</div>{_starter(view)}{_wall(view)}{_backup_note(view)}'
+        return (f'{_live_bar(view)}<div class="hero">{_ach_card(view)}{_empty_card()}</div>{_chores_card(view)}{_starter(view)}{_wall(view)}'
+                f'{_backup_note(view)}')
     today = _today(view)
     n_today = int(t.per_day.get(today, 0))
     n7 = sum(int(t.per_day.get(today - timedelta(days=i), 0)) for i in range(7))
     chart = (f'<section class="card fx"><h3 class="h">{_ic("u-chart")}最近 30 天<span class="sub">今天 {n_today:,} 局 · 近 7 天 {n7:,} 局</span>'
              f'<span class="r">{_legend()}</span></h3>{_days_chart(view, 200, 600, grow=True)}</section>')
-    return (f'{_live_bar(view)}<div class="hero">{_ach_card(view)}{_tiles(view)}</div>'
+    return (f'{_live_bar(view)}<div class="hero">{_ach_card(view)}{_tiles(view)}</div>{_chores_card(view)}'
             f'<div class="row3">{chart}{_goals_card(view)}{_unlocks_card(view)}</div>{_wall(view)}{_backup_note(view)}')
+
+
+def _chores_card(view: View) -> str:
+    """「今天的日常」：这个游戏日（北京时间 3:00 换日）里看广告、招募、领取任务奖励各做成了几次。
+    从来没记过（不用这几个任务）时不显示。"""
+    if not view.chores:
+        return ""
+    day = game_day(view.now)
+    done: dict[str, list[float]] = {}
+    for c in view.chores:
+        if game_day(c.timestamp) == day:
+            done.setdefault(c.kind, []).append(c.timestamp)
+    figs = []
+    for kind, (name, limit) in CHORE_KINDS.items():
+        times = done.get(kind, [])
+        sub = f"{_hm(max(times))} 做的" if times else "还没做"
+        value = ("已领" if times else "没领") if kind == "missions" else f"{len(times)} / {limit} 次"
+        figs.append(_fig(name, value, sub))
+    return (f'<section class="card mt" id="chores"><h3 class="h">{_ic("u-check")}今天的日常'
+            f'<span class="sub">游戏日 {_e(day[5:])} · 只算本工具做成的</span></h3>'
+            f'<div class="strip" style="--n:{len(figs)};padding:0;margin:0 -18px">{"".join(figs)}</div></section>')
 
 
 # ---------------------------------------------------------------- 成就
@@ -1822,10 +1879,6 @@ def _plays_json(view: View, plays: Sequence) -> str:
     return json.dumps(data, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
 
 
-def _int(x: object) -> bool:
-    return isinstance(x, int) and not isinstance(x, bool)
-
-
 def _arena_json(view: View, games: Sequence) -> str:
     """激奏舞台每局的数据，读法同 :func:`_plays_json`。每局 [时间, 乐队, 曲目, 名次, 段位分增减, 段位分, LB, P, G, g, B, M, 结果, 分数]：
     乐队是 ARENA_BANDS 里的名字（显示的名字另外存），曲目认出了是曲目 ID、没认出是难度选择页上读到的曲名，
@@ -1844,14 +1897,26 @@ def _arena_json(view: View, games: Sequence) -> str:
 
 
 def _arena_strip(games: Sequence) -> str:
-    """激奏舞台的汇总（``games`` 新的在前）：对局数、平均名次，每个打过的乐队现在的段位分（最近一局读到的）、局数和平均名次。"""
+    """激奏舞台的汇总（``games`` 新的在前）：对局数、平均名次、最长连续第一名、段位分一共涨了多少，各名次的局数，
+    每个打过的乐队现在的段位分（最近一局读到的）、局数和平均名次。"""
     def places(gs: Sequence) -> list[int]:
         return [g.placement for g in gs if _int(g.placement) and 1 <= g.placement <= 5]
 
     ps = places(games)
     first = ps.count(1)
-    figs = [_fig("对局", f"{len(games):,} 局", f"演奏了 {sum(g.played is True for g in games):,} 局"),
-            _fig("平均名次", f"{sum(ps) / len(ps):.2f}" if ps else "-", f"第一名 {first:,} 局（{_rate(first, len(ps), 0)}）" if ps else "")]
+    best = run = 0
+    for p in reversed(ps):  # 从旧到新；名次没读到的局不算也不打断（同 Totals.add_arena）
+        run = run + 1 if p == 1 else 0
+        best = max(best, run)
+    gains = [g.ap_gain for g in games if _int(g.ap_gain)]
+    top = [_fig("对局", f"{len(games):,} 局", f"演奏了 {sum(g.played is True for g in games):,} 局"),
+           _fig("平均名次", f"{sum(ps) / len(ps):.2f}" if ps else "-", f"第一名 {first:,} 局（{_rate(first, len(ps), 0)}）" if ps else ""),
+           _fig("最长连续第一名", f"{best:,} 局" if ps else "-"),
+           _fig("段位分累计", f"{sum(gains):+,} 分" if gains else "-", f"平均每局 {sum(gains) / len(gains):+.1f}" if gains else "")]
+    rank = [_fig(f"第 {i} 名", f"{ps.count(i):,} 局", _rate(ps.count(i), len(ps), 0)) for i in range(1, 6)] if ps else []
+    head = f'<div class="strip" style="--n:{len(top)}">{"".join(top)}</div>'
+    head += f'<div class="strip" style="--n:{len(rank)}">{"".join(rank)}</div>' if rank else ""
+    figs = []
     for band, name in BAND_NAMES.items():
         gs = [g for g in games if g.band == band]
         if not gs:
@@ -1859,7 +1924,30 @@ def _arena_strip(games: Sequence) -> str:
         total = next((g.ap_total for g in gs if _int(g.ap_total)), None)
         bp = places(gs)
         figs.append(_fig(name, "-" if total is None else f"{total:,} 分", f"{len(gs):,} 局" + (f" · 平均第 {sum(bp) / len(bp):.1f} 名" if bp else "")))
-    return f'<div class="strip" style="--n:{len(figs)}">{"".join(figs)}</div>'
+    return head + (f'<div class="strip" style="--n:{len(figs)}">{"".join(figs)}</div>' if figs else "")
+
+
+def _tasks_card(runs: Sequence[Session]) -> str:
+    """「按任务汇总」：各任务运行了几次、多久、打了几局，时长多的在前。只跑过一种任务时不列。"""
+    by: dict[str, list[float]] = {}
+    for s in runs:
+        row = by.setdefault(s.task or "打歌任务", [0, 0.0, 0, 0])
+        row[0] += 1
+        row[1] += s.seconds
+        row[2] += s.plays
+        row[3] += s.ap
+    if len(by) < 2:
+        return ""
+    longest = max(row[1] for row in by.values())
+    rows = "".join(
+        f'<tr><td>{_e(task)}</td><td class="num">{int(n):,}</td>'
+        f'<td><span class="dur"><span class="bar"><i style="width:{_w(_ratio(sec, longest))}"></i></span>{_e(duration(sec))}</span></td>'
+        f'<td class="num">{int(plays):,}</td><td class="num">{int(ap):,} <span class="muted">{_rate(ap, plays)}</span></td></tr>'
+        for task, (n, sec, plays, ap) in sorted(by.items(), key=lambda kv: -kv[1][1])
+    )
+    return (f'<section class="card tblcard mt" id="tasks"><div class="tbar"><h3 class="h" style="margin:0">{_ic("u-layers")}按任务汇总'
+            f'<span class="sub">每种任务一行，时长多的在前</span></h3></div><div style="overflow-x:auto"><table><thead><tr><th>任务</th>'
+            f'<th class="num">次数</th><th>累计时长</th><th class="num">局数</th><th class="num">AP</th></tr></thead><tbody>{rows}</tbody></table></div></section>')
 
 
 def _plays_card(view: View) -> str:
@@ -1900,6 +1988,7 @@ def _runs(view: View) -> str:
         runs = [*view.live, *sorted((s for s in view.sessions if id(s) not in live_ids), key=lambda s: -s.start)]
         longest = max((s.seconds for s in runs), default=0)
         rows = [_session_row(s, longest, id(s) in live_ids) for s in runs]
+        parts.append(_tasks_card(runs))
         parts.append(f'<section class="card tblcard mt pgc"><div class="tbar"><h3 class="h" style="margin:0">{_ic("u-history")}运行记录'
                      f'<span class="sub">每次打歌任务一行，新的在前</span></h3></div><div style="overflow-x:auto"><table><thead><tr><th>时间</th><th>任务</th><th>时长</th>'
                      f'<th class="num">局数</th><th class="num">AP</th><th class="num">等 LB</th><th class="num">跳过</th></tr></thead>'
@@ -1917,6 +2006,35 @@ def _runs(view: View) -> str:
     return "".join(parts)
 
 
+SHOTS_PAGE_SIZE = 24  # 「招募记录」一页放几张截图
+
+
+def _recruits(view: View) -> str:
+    """招募结果的截图（data/recruit）：免费招募、观看 CM 招募每次存一张。图片不放进页面里，由 PAGE_JS 按打开方式
+    （直接打开的文件 / 窗口背后的服务 / MXU 网页服务）填地址；点开看大图，左右键翻。"""
+    shots = view.recruits
+    if not shots:
+        return (f'<section class="card empty">{ART}<div><h2>还没有招募记录</h2><p>「领取日常」的免费招募、「看广告」的观看CM招募，'
+                f"每次的结果都会截一张图，列在这里（图片在 data/{RECRUIT_DIR}/）。</p></div></section>")
+    counts = Counter(s.kind for s in shots)
+    figs = [_fig("招募截图", f"{len(shots):,} 张", f"{_d(shots[-1].ts)} 起")]
+    figs += [_fig(name, f"{counts[kind]:,} 次") for kind, name in RECRUIT_KINDS.items()]
+    cards = []
+    for shot in shots:
+        kind, when = RECRUIT_KINDS.get(shot.kind, shot.kind), _t(shot.ts)
+        cards.append(f'<figure class="shot" data-c="{_e(when)} · {_e(kind)}"><button type="button" title="看大图">'
+                     f'<img loading="lazy" decoding="async" alt="{_e(kind)} {_e(when)}" data-f="{RECRUIT_DIR}/{_e(shot.name)}"></button>'
+                     f'<figcaption><span>{_e(when)}</span><span class="vd {"ap" if shot.kind else "fc"}">{_e(kind)}</span></figcaption></figure>')
+    return (f'<section class="card strip" style="--n:{len(figs)}">{"".join(figs)}</section>'
+            f'<section class="card tblcard mt pgc"><div class="tbar"><h3 class="h" style="margin:0">{_ic("u-image")}招募记录'
+            f'<span class="sub">每次招募的结果截图，新的在前；点图片看大图</span></h3></div>'
+            f'<div class="shots">{"".join(cards)}</div>{_pager("rc", len(cards), "张", SHOTS_PAGE_SIZE)}</section>'
+            f'<dialog class="lb" id="shot-view" aria-label="招募结果"><img alt="招募结果的截图"><div class="lb-bar"><span class="lb-cap"></span>'
+            f'<button class="lb-b" type="button" data-lb="p" title="上一张" aria-label="上一张">{_ic("u-left")}</button>'
+            f'<button class="lb-b" type="button" data-lb="n" title="下一张" aria-label="下一张">{_ic("u-right")}</button>'
+            f'<button class="lb-b" type="button" data-lb="x" title="关闭" aria-label="关闭">{_ic("u-x")}</button></div></dialog>')
+
+
 # ---------------------------------------------------------------- 页面
 
 
@@ -1925,7 +2043,7 @@ def _header(view: View) -> str:
     got = sum(a.id in view.unlocked for a in ACHIEVEMENTS)
     since = f" · {_d(t.first)} 起" if t.first is not None else ""
     songs = len({mid for mid, _ in t.charts})
-    counts = {"ach": f"{got}/{len(ACHIEVEMENTS)}", "charts": f"{songs:,}" if songs else ""}
+    counts = {"ach": f"{got}/{len(ACHIEVEMENTS)}", "charts": f"{songs:,}" if songs else "", "rec": f"{len(view.recruits):,}" if view.recruits else ""}
     btns = []
     for k, name, icon in TABS:
         extra = f'<span class="cnt">{counts[k]}</span>' if counts.get(k) else ""
@@ -1969,7 +2087,7 @@ def _backup_dialog(view: View) -> str:
 
 def render_html(view: View) -> str:
     """「统计与成就」窗口的页面（data/stats.html）。"""
-    panes = (("ov", _overview), ("ach", _achievements), ("data", _play_data), ("charts", _charts_tab), ("runs", _runs))
+    panes = (("ov", _overview), ("ach", _achievements), ("data", _play_data), ("charts", _charts_tab), ("runs", _runs), ("rec", _recruits))
     body = "".join(f'<section class="pane" data-pane="{k}">{fn(view)}</section>' for k, fn in panes)
     return (f'<!doctype html><html lang="zh-CN" data-tab="ov"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{_e(TITLE)}</title>'

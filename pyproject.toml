@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ournotes-auto"
-version = "0.2.6"
+version = "0.2.7"
 description = "BanG Dream! Our Notes 自动演奏工具（MuMu 模拟器 + MaaFramework）"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -27,6 +27,9 @@ ournotes-auto = "ournotes_auto.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["ournotes_auto*"]
+
+[tool.setuptools.package-data]
+ournotes_auto = ["charts/*.json", "charts/jackets/*.png", "charts/bundle/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

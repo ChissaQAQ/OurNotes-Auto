@@ -13,6 +13,7 @@
 界面用的 MaaFramework 动态库取当前 Python 环境里 maafw 包的那一份（MFAA 自带的会被替换），保证界面和 Agent 版本一致。
 发布模式的 pip 依赖用运行本脚本的 Python 安装，它的版本要和嵌入式 Python 一致；依赖版本按 tools/constraints.txt 固定。
 OCR 模型不在仓库里，组装前先运行 tools/fetch_ocr.py；韩文等其他语言的模型不打进发布包，用户选了对应的游戏语言时再下载。
+随包附带的封面、谱面在仓库里（ournotes_auto/charts/ 下的 jackets、bundle），发版前先运行 tools/fetch_bundle.py 更新。
 MFAA 与 MXU 的用户配置都放在各自目录的 config/ 下，所以两者分开组装、分开发布。
 发布模式另外写 release.json（版本、运行环境指纹、文件清单），自动更新靠它判断要换哪些文件，见 ournotes_auto/release.py。
 """
@@ -176,7 +177,10 @@ def runtime_info(out: Path, kind: str) -> dict:
     runtime_files = hashlib.sha256()
     for path in sorted(p for p in out.rglob("*") if p.is_file()):
         rel = path.relative_to(out).as_posix()
-        if path.relative_to(out).parts[0] in release.USER_DIRS or rel == release.RELEASE_FILE or release.is_app_file(rel) or rel.startswith(release.MODEL_DIR + "/"):
+        if path.relative_to(out).parts[0] in release.USER_DIRS or rel == release.RELEASE_FILE or release.is_app_file(rel):
+            continue
+        # 模型另算（model）；随整包附带的谱面不算运行环境：每出一首新歌它就变，算进来的话每次都成了整包更新
+        if rel.startswith((release.MODEL_DIR + "/", release.BUNDLE_DIR + "/")):
             continue
         if "__pycache__" in path.parts or path.suffix == ".pyc":
             continue

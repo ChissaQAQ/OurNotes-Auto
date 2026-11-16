@@ -20,6 +20,7 @@
   - 抽卡演出只点右上角的「SKIP」，招募结算存一张截图（data/recruit/）后只点「招募TOP」，绝不点「再次招募」。
   - 招募前后核对星钻数（免费和付费）没变。
 - 不碰付费招募、礼包、交换所、通行证高级档和 pt 旁的「+」，不用星钻。
+- 看广告领的奖励（观看 CM 招募、恢复 LIVE BOOST、录音室练习的 SKIP）是另一个任务，在 ads.py。
 - 看故事（跳过没看过的乐队故事、视角故事、羁绊故事，限时活动的活动故事、视角故事）在 story.py。
 """
 
@@ -37,6 +38,7 @@ import numpy as np
 
 from ..logfile import log_image
 from ..player.guard import load_template
+from ..records import CHORE_KINDS, Chore
 from ..result_reader import OcrItem
 from ..runner import NavigationError, ServerMaintenance
 from .jacket import crop_jacket
@@ -172,9 +174,14 @@ RECRUIT_DIALOG_CANCEL_ROI: Rect = (340, 600, 300, 70)
 _RECRUIT_COST = re.compile(r"消耗(\d[\d,]*)个")
 RECRUIT_DIALOG_FRAMES = 2  # 连续这么多帧都写着消耗 0 个星钻才点 OK
 RECRUIT_DIALOG_BAD_FRAMES = 3  # 弹窗上连续这么多帧读不出「消耗0个星钻」就点取消
-# 招募结算：顶部「招募结算」，底部中间「招募TOP」，右下「再次招募」（绝不能点）
+# 观看 CM 招募（看广告，见 ads.py）的「确认招募」弹窗：「观看广告，进行1次招募。」「不会消耗星钻。」，比上面那个矮
+CM_DIALOG_TITLE_ROI: Rect = (440, 90, 400, 60)
+CM_DIALOG_OK_ROI: Rect = (640, 540, 300, 60)
+CM_DIALOG_CANCEL_ROI: Rect = (340, 540, 300, 60)
+# 招募结算：顶部「招募结算」，底部中间「招募TOP」，右下「再次招募」（绝不能点）。
+# 不能再招募时（观看 CM 招募今天的最后一次）没有「再次招募」，「招募TOP」在右下角它的位置上
 RECRUIT_RESULT_TITLE_ROI: Rect = (440, 40, 400, 55)
-RECRUIT_TOP_ROI: Rect = (740, 630, 260, 60)
+RECRUIT_TOP_ROI: Rect = (740, 630, 540, 60)
 RECRUIT_AGAIN_MIN_DX = 150  # 「招募TOP」离「再次招募」至少这么远才点
 # 生日招募等送赠品时，演出 SKIP 后弹出「获得招募赠品」（「以下道具已发送至礼物盒。」，只有 OK），标题比一般弹窗靠上（#128）
 RECRUIT_GIFT_TITLE_ROI: Rect = (400, 0, 480, 80)
@@ -182,7 +189,14 @@ RECRUIT_TIMEOUT_S = 90.0  # 点了 OK 之后这么久没回到招募页就报错
 RECRUIT_SKIP_RETAP_S = 3.0
 RECRUIT_TOP_RETAP_S = 5.0
 RECRUIT_SHOT_DELAY_S = 1.5  # 招募结算出现后等成员卡片都翻出来再截图
-RECRUIT_SHOT_DIR = Path("data/recruit")  # 免费招募结果的截图（相对于程序目录，界面日志按这个路径显示）
+RECRUIT_SHOT_DIR = Path("data/recruit")  # 招募结果的截图（相对于程序目录，界面日志按这个路径显示；统计页的「招募记录」也读这里）
+RECRUIT_SHOT_CM = "cm"  # 观看 CM 招募的截图，文件名以 _cm 结尾（免费招募的没有后缀）
+# 录音室练习里某个乐队详情页的 SKIP 弹窗（看广告 / 用道具立刻拿练习奖励，见 ads.py）：左「关闭」、中「道具」、右「广告」
+STUDIO_SKIP_TITLE_ROI: Rect = (540, 95, 200, 55)
+STUDIO_SKIP_TEXT = "练习奖励"  # 「获得相当于360分钟的练习奖励」
+STUDIO_SKIP_CLOSE_ROI: Rect = (230, 545, 260, 90)
+# 从主界面点入口时弹出这些（游戏要回标题画面重新登录）：登录完再开一次，不当成没有这个入口
+REOPEN_SCREENS = frozenset((Screen.DATE_CHANGE, Screen.CONNECT_ERROR))
 # 左上角有主页按钮、可以直接点它回主界面的画面
 HOME_BUTTON_SCREENS = frozenset(
     (
@@ -339,7 +353,7 @@ def free_recruit_ok(items: list[OcrItem]) -> OcrItem | None:
 
 
 def recruit_top(items: list[OcrItem]) -> OcrItem | None:
-    """招募结算画面底部的「招募TOP」（右边的「再次招募」绝不能点，离它太近时不认）。"""
+    """招募结算画面底部的「招募TOP」（「再次招募」绝不能点，离它太近时不认）。只按认出的文字的位置点。"""
     if find(items, "招募结算", RECRUIT_RESULT_TITLE_ROI, exact=True) is None:
         return None
     top = find(items, "招募TOP", RECRUIT_TOP_ROI, exact=True)
@@ -358,6 +372,37 @@ def recruit_gift_ok(items: list[OcrItem]) -> OcrItem | None:
     if any(find(items, text, exact=True) for text in ("取消", "确定")) or find(items, "购买") or find(items, "再次招募"):
         return None
     return find(items, "OK", REWARD_OK_ROI, exact=True)
+
+
+def cm_recruit_dialog(items: list[OcrItem]) -> bool:
+    """观看 CM 招募的「确认招募」弹窗（比花星钻的那个矮，标题、按钮的位置不一样）。"""
+    return find(items, "确认招募", CM_DIALOG_TITLE_ROI, exact=True) is not None
+
+
+def cm_recruit_ok(items: list[OcrItem]) -> OcrItem | None:
+    """观看 CM 招募的「确认招募」写着「观看广告，进行1次招募。」「不会消耗星钻。」（没有「将消耗」「付费」）时右下角的 OK。"""
+    if not cm_recruit_dialog(items):
+        return None
+    if any(find(items, text) is None for text in ("观看广告", "1次招募", "不会消耗星钻")):
+        return None
+    if find(items, "将消耗") or find(items, "付费"):
+        return None
+    return find(items, "OK", CM_DIALOG_OK_ROI, exact=True)
+
+
+def cm_recruit_cancel(items: list[OcrItem]) -> OcrItem | None:
+    """观看 CM 招募的「确认招募」左下角的「取消」。"""
+    return find(items, "取消", CM_DIALOG_CANCEL_ROI, exact=True) if cm_recruit_dialog(items) else None
+
+
+def studio_skip_dialog(items: list[OcrItem]) -> bool:
+    """录音室练习的 SKIP 弹窗（标题「SKIP」，写着「获得相当于360分钟的练习奖励」）。"""
+    return find(items, "SKIP", STUDIO_SKIP_TITLE_ROI, exact=True) is not None and find(items, STUDIO_SKIP_TEXT) is not None
+
+
+def studio_skip_close(items: list[OcrItem]) -> OcrItem | None:
+    """SKIP 弹窗左下角的「关闭」（「道具」「广告」不在这里点）。"""
+    return find(items, "关闭", STUDIO_SKIP_CLOSE_ROI, exact=True) if studio_skip_dialog(items) else None
 
 
 def _gems_text(gems: tuple[int, int | None]) -> str:
@@ -418,16 +463,20 @@ class DailyMixin:
 
         每项开始前都回到主界面；某一项出错时记下来，接着做下一项。回不到主界面、服务器维护则整体报错。
         """
-        unknown = set(jobs) - set(DAILY_JOBS)
+        return self._run_jobs(DAILY_JOBS, jobs, "_daily_", "日常")
+
+    def _run_jobs(self, names: dict[str, str], jobs, prefix: str, kind: str) -> list[str]:
+        """按 ``names``（项目 → 名称）的顺序做 ``jobs`` 里的项目（方法名是 ``prefix`` + 项目），见 :meth:`run_daily`。"""
+        unknown = set(jobs) - set(names)
         if unknown:
-            raise ValueError(f"未知的日常项目：{', '.join(sorted(unknown))}")
+            raise ValueError(f"未知的{kind}项目：{', '.join(sorted(unknown))}")
         failed = []
-        for job, name in DAILY_JOBS.items():
+        for job, name in names.items():
             if job not in jobs:
                 continue
             self.go_home()
             try:
-                getattr(self, f"_daily_{job}")()
+                getattr(self, f"{prefix}{job}")()
             except ServerMaintenance:
                 raise
             except NavigationError as e:
@@ -447,6 +496,20 @@ class DailyMixin:
     def _daily_missions(self) -> None:
         if self._open_page("任务"):
             self._claim_tabs("任务", MISSION_TABS)
+            self._chore("missions")
+
+    def _chore(self, kind: str, shot: Path | None = None) -> None:
+        """记下做成了一项（看广告、招募、领取任务奖励，统计与成就用）。``shot`` 是招募结果的截图。
+        记不了只警告，不影响正在做的事。"""
+        if self._chore_store is None:
+            return
+        chore = Chore(kind, shot.name if shot is not None else "")
+        try:
+            self._chore_store.append_chore(chore)
+        except OSError as e:
+            logger.warning("%s：没记进统计（%s）", CHORE_KINDS[kind][0], e)
+            return
+        self.chores.append(chore)
 
     def _daily_pass(self) -> None:
         """左侧列表里的通行证逐个选中来领（通行证任务每个通行证各一份）：
@@ -529,6 +592,7 @@ class DailyMixin:
         self.tap(center(button), "免费招募")
         self._confirm_free_recruit()
         shot = self._settle_recruit()
+        self._chore("recruit", shot)
         if shot is not None:
             logger.info("免费招募：结果截图 %s", shot.as_posix())
             log_image(shot)
@@ -595,9 +659,13 @@ class DailyMixin:
                 raise self._fail(f"确认招募弹窗上{cost}，不是免费招募（{done}，没有招募）")
         raise self._fail("点了免费招募后没有弹出确认招募")
 
-    def _settle_recruit(self, timeout_s: float = RECRUIT_TIMEOUT_S) -> Path | None:
+    def _settle_recruit(
+        self, timeout_s: float = RECRUIT_TIMEOUT_S, what: str = "免费招募", stay_s: float | None = None, tag: str = ""
+    ) -> Path | None:
         """确认招募之后：演出只点右上角的「SKIP」，到招募结算存一张截图，点「招募TOP」，等回到招募页。返回截图路径。
         送赠品的招募（如生日招募）中途弹出「获得招募赠品」时点 OK（赠品已发送至礼物盒，#128）。
+        ``stay_s``（观看 CM 招募，见 ads.py）：这么久一直停在招募页、没有演出也没有结算，就是没有招募，报错。
+        ``tag``：截图文件名的后缀（哪一种招募，见 RECRUIT_SHOT_CM）。
 
         这里不按通用流程处理画面（招募演出会被认成登录奖励等），认不出的画面什么都不点。
         """
@@ -616,7 +684,7 @@ class DailyMixin:
                     top = recruit_top(items)
                     if top is None:
                         continue
-                    shot = self._save_recruit_shot()
+                    shot = self._save_recruit_shot(tag)
                     now = time.monotonic()
                 if top_at is None or now - top_at > RECRUIT_TOP_RETAP_S:
                     self.tap(center(top), "招募TOP")
@@ -628,18 +696,20 @@ class DailyMixin:
                 continue
             if top_at is not None and page_title(items) == "招募":
                 return shot
+            if stay_s is not None and skipped_at is None and now - start >= stay_s and page_title(items) == "招募":
+                raise self._fail(f"{what}：{stay_s:.0f}s 一直停在招募页，没有招募（广告的奖励没到手？）")
             skip = skip_button(items)
             if skip is not None and top_at is None and (skipped_at is None or now - skipped_at > RECRUIT_SKIP_RETAP_S):
                 self.tap(center(skip), "SKIP")
                 skipped_at = now
-        raise self._fail(f"免费招募后 {timeout_s:.0f}s 没有回到招募页")
+        raise self._fail(f"{what}后 {timeout_s:.0f}s 没有回到招募页")
 
-    def _save_recruit_shot(self) -> Path | None:
-        """把最近一帧（招募结算）存成 JPEG，存不了返回 None（不影响招募）。"""
+    def _save_recruit_shot(self, tag: str = "") -> Path | None:
+        """把最近一帧（招募结算）存成 JPEG（``时间[_tag].jpg``），存不了返回 None（不影响招募）。"""
         frame = self._frame
         if not isinstance(frame, np.ndarray):
             return None
-        path = RECRUIT_SHOT_DIR / f"{datetime.now():%Y%m%d_%H%M%S}.jpg"
+        path = RECRUIT_SHOT_DIR / f"{datetime.now():%Y%m%d_%H%M%S}{'_' + tag if tag else ''}.jpg"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             # cv2.imwrite 不支持非 ASCII 路径（程序目录可能含中文）
@@ -648,8 +718,9 @@ class DailyMixin:
                 raise OSError("JPEG 编码失败")
             path.write_bytes(buf.tobytes())
         except OSError as e:
-            logger.warning("免费招募：保存结果截图失败：%s", e)
+            logger.warning("招募：保存结果截图失败：%s", e)
             return None
+        self.recruit_shots.append(path)
         return path
 
     def _daily_gifts(self) -> None:
@@ -663,6 +734,13 @@ class DailyMixin:
         point = self._side_entry(title) if title in SIDE_ENTRIES else HOME_ENTRIES[title]
         if point is None:
             return False
+        self.tap(point, title)
+        if self._wait_page(title, retap=point):
+            return True
+        if self.last_screen not in REOPEN_SCREENS:
+            return False
+        # 点入口时游戏要重新登录（刚过每天 3:00 的日期变更等）：登录完回到主界面再开一次
+        self.go_home(timeout_s=180)
         self.tap(point, title)
         return self._wait_page(title, retap=point)
 
@@ -711,6 +789,8 @@ class DailyMixin:
             if retap is None:
                 self._dismiss(screen, items)
                 continue
+            if screen in REOPEN_SCREENS:
+                return False  # 交给 _open_page：重新登录后再开一次
             if got is not None:
                 logger.warning("点「%s」的入口打开的是「%s」，跳过", title, got)
                 return False
@@ -765,8 +845,14 @@ class DailyMixin:
             # 上次停在了招募结算 / 确认招募：只点「招募TOP」/「取消」（「再次招募」、OK 绝不点）
             top = recruit_top(items)
             cancel = find(items, "取消", RECRUIT_DIALOG_CANCEL_ROI, exact=True) if recruit_dialog(items) else None
+            cancel = cancel or cm_recruit_cancel(items)
             if top is not None or cancel is not None:
                 self.tap(center(top or cancel), "招募TOP" if top is not None else "取消")
+                self._sleep(1.5)
+                continue
+            close = studio_skip_close(items)  # 上次停在了录音室练习的 SKIP 弹窗：只点「关闭」
+            if close is not None:
+                self.tap(center(close), "关闭（SKIP）")
                 self._sleep(1.5)
                 continue
             title = page_title(items)

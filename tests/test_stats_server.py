@@ -13,6 +13,7 @@ from urllib.parse import quote
 import pytest
 
 from ournotes_auto import backup, release, stats, stats_server, stats_window
+from ournotes_auto.records import Chore, RecordStore
 from ournotes_auto.runner import RunStats
 from ournotes_auto.stats import Tracker
 from test_backup import OFFSETS, STATE, T0, H, arena, cli_main, files, make, rec, ses  # noqa: F401 - cli_main 是 fixture
@@ -108,6 +109,25 @@ def test_only_page_files(old, serve):
     assert call(srv, "POST", "/stats.html", b"")[0] == 404
 
 
+def test_recruit_shots_served(old, serve):
+    """「招募记录」的截图：只给 data/recruit 里名字对得上的图片，要带密钥；别的文件、往上走的路径都不给。"""
+    d = old / stats.RECRUIT_DIR
+    d.mkdir()
+    (d / "20261116_030850_cm.jpg").write_bytes(b"\xff\xd8cm")
+    (d / "20261101_120000.jpg").write_bytes(b"\xff\xd8free")
+    (d / "secret.txt").write_text("x", encoding="utf-8")
+    srv = serve(old)
+    status, headers, body = call(srv, "GET", "/recruit/20261116_030850_cm.jpg")
+    assert (status, body) == (200, b"\xff\xd8cm") and headers["Content-Type"] == "image/jpeg"
+    assert call(srv, "GET", f"/recruit/20261101_120000.jpg?key={srv.key}", key=False)[::2] == (200, b"\xff\xd8free")
+    assert call(srv, "GET", "/recruit/20261116_030850_cm.jpg", key=False)[0] == 403
+    for path in (
+        "/recruit/20261116_030851_cm.jpg", "/recruit/secret.txt", "/recruit/", "/recruit/../records.jsonl", "/recruit/..%2Frecords.jsonl",
+        "/recruit/20261116_030850_cm.jpg/", "/recruit/x/20261116_030850_cm.jpg", "/recruit/20261116_030850_cm.jpg%00",
+    ):
+        assert call(srv, "GET", path)[0] == 404, path
+
+
 def test_export(old, tmp_path, serve):
     """导出：zip 能读回来，X-Backup-Info 里是文件名和导出了多少（只有 ASCII）；没有记录时说清楚。"""
     srv = serve(old)
@@ -130,24 +150,28 @@ def test_preview_then_import(old, new, serve):
     refreshed = []
     srv = serve(new, refresh=lambda: refreshed.append(1))
     (old / backup.ARENA).write_text(arena("mygo", T0) + "\n", encoding="utf-8")
+    RecordStore(old).append_chore(Chore("ad_lb", timestamp=T0))
     _, blob, _ = backup.export_bytes(old)
     before = files(new)
     status, j = post(srv, "/api/preview", blob, "旧的 备份.zip")
     assert status == 200 and j["ok"] and j["name"] == "旧的 备份.zip"
-    assert j["total"] == {"records": 2, "arena": 1, "sessions": 1, "achievements": 1}
+    assert j["total"] == {"records": 2, "arena": 1, "chores": 1, "sessions": 1, "achievements": 1}
     assert (j["records"], j["known"], j["bad"], j["arena"], j["sessions"], j["achievements"], j["offsets"], j["changed"], j["backup"]) == (
         1, 1, 0, 1, 1, 1, True, True, "",
     )
+    assert j["chores"] == 1
     assert files(new) == before and not (new / backup.SAFETY_DIR).exists() and refreshed == []
 
     status, j = post(srv, "/api/import", blob, "旧的 备份.zip")
-    assert status == 200 and (j["records"], j["arena"], j["changed"]) == (1, 1, True) and refreshed == [1]
+    assert status == 200 and (j["records"], j["arena"], j["chores"], j["changed"]) == (1, 1, 1, True) and refreshed == [1]
+    assert [c.kind for c in RecordStore(new).chore_history(limit=None)] == ["ad_lb"]
     assert j["backup"].startswith(str(new / backup.SAFETY_DIR))
     assert len((new / "records.jsonl").read_text(encoding="utf-8").splitlines()) == 2
     assert (new / backup.ARENA).read_text(encoding="utf-8") == arena("mygo", T0) + "\n"
 
     status, j = post(srv, "/api/import", blob, "旧的 备份.zip")
-    assert status == 200 and (j["records"], j["known"], j["arena"], j["changed"], j["backup"]) == (0, 2, 0, False, "") and refreshed == [1]
+    assert status == 200 and (j["records"], j["known"], j["arena"], j["chores"], j["changed"], j["backup"]) == (0, 2, 0, 0, False, "")
+    assert refreshed == [1]
 
 
 def test_import_refresh_failure(old, new, serve, caplog):

@@ -1,11 +1,17 @@
-"""曲目目录：把选曲界面 OCR 到的曲名匹配到 musicId。"""
+"""曲目目录：把选曲界面 OCR 到的曲名匹配到 musicId。
+
+谱面站的索引里每首歌只有一个曲名（繁体中文区的写法）。各语言客户端显示的曲名在随包附带的 ``titles.json`` 里
+（musicId → [日, 英, 繁中, 简中, 韩]，2026-11-10 的曲目）；表里还没有的新歌只有谱面站的曲名，靠封面认。
+"""
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from rapidfuzz import fuzz, process
 
@@ -13,6 +19,18 @@ from ..nav.lang import localize
 from .bdon import BdonClient
 
 logger = logging.getLogger(__name__)
+
+TITLES = Path(__file__).with_name("titles.json")
+
+
+def load_titles(path: Path = TITLES) -> dict[int, list[str]]:
+    """随包附带的曲名表（musicId → 各语言的曲名，空的不要）。读不了（文件丢了、坏了）时是空表：只用谱面站的曲名。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return {int(mid): [t for t in titles if isinstance(t, str) and t] for mid, titles in data.items()}
+    except (OSError, ValueError, TypeError, AttributeError) as e:
+        logger.warning("读不了曲名表 %s（%s），只按谱面站的曲名认歌（译名不一样的歌靠封面）", path, e)
+        return {}
 
 
 def normalize(text: str) -> str:
@@ -27,14 +45,13 @@ class Song:
     titles: list[str]
     band: str = ""
     difficulties: dict[str, dict] = field(default_factory=dict)  # difficulty → 索引条目
-    jacket_url: str = ""  # 国际服封面缩略图（haneoka 的相对路径）
 
     @property
     def title(self) -> str:
         return self.titles[0] if self.titles else str(self.music_id)
 
     def display_title(self, lang_index: int = 3) -> str:
-        """lang_index：0 日文、1 英文、2 繁中、3 简中、4 韩文（按 haneoka 的顺序）。"""
+        """lang_index：0 日文、1 英文、2 繁中、3 简中、4 韩文（titles.json 里的顺序）。"""
         return self.titles[lang_index] if len(self.titles) > lang_index else self.title
 
     def level(self, difficulty: str) -> int | None:
@@ -62,15 +79,16 @@ class Catalog:
                 bands = entry.get("bands") or []
                 song = songs[mid] = Song(mid, [entry.get("title", "")], band=bands[0] if bands else "")
             song.difficulties[entry["difficulty"]] = entry
-        for mid, entry in client.intl_songs(refresh=refresh).items():
+        known = load_titles()
+        for mid, titles in known.items():
             song = songs.get(mid)
             if song is None:
-                continue  # 国际服有但谱面站还没有的曲目：无法演奏
-            titles = [t for t in entry.get("musicTitle") or [] if t]
-            # 保持 haneoka 的语言顺序（日/英/繁/简/韩）；bdon 的日文曲名作为首项兜底
+                continue  # 谱面站没有的曲目：无法演奏
+            # 保持表里的语言顺序（日/英/繁/简/韩）；谱面站的曲名接在后面兜底
             song.titles = titles + [t for t in song.titles if t not in titles]
-            song.jacket_url = entry.get("jacketThumbUrl") or ""
-        logger.debug("曲目目录：%d 首，%d 个曲名", len(songs), sum(len(s.titles) for s in songs.values()))
+        logger.debug(
+            "曲目目录：%d 首，%d 个曲名，曲名表里没有的 %d 首", len(songs), sum(len(s.titles) for s in songs.values()), len(songs.keys() - known.keys())
+        )
         return cls(songs)
 
     def match(

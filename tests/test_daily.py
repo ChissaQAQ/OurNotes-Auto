@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import logging
 import math
 import types
 from pathlib import Path
@@ -448,6 +449,27 @@ def test_pass_pt_popup_after_selecting(clock):
     assert any(s == "daily_pass_pt" for s, _ in game.taps)
 
 
+def test_open_page_after_date_change(clock):
+    """刚过每天 3:00 时点入口弹出「日期变更」：回标题画面重新登录后再开一次，不当成没有这个入口悄悄跳过。"""
+    game = DailyGame(claimable=["daily_gifts_empty"], routes={"date_change": [((639, 571), "home")]})
+    tap = game.tap
+    changed = []
+
+    def tap_once(x, y):
+        if game.state == "home" and not changed and math.dist((x, y), (1232, 150)) < 30:
+            changed.append((x, y))
+            game.state = "date_change"
+        else:
+            tap(x, y)
+
+    game.tap = tap_once
+    nav = daily_nav(game, clock)
+    assert nav.run_daily(["gifts"]) == []
+    assert len(changed) == 1
+    assert [s for s, _ in game.taps][:2] == ["date_change", "home"]
+    assert game.claimed == ["daily_gifts_empty"] and game.state == "home"
+
+
 def test_run_daily_selected_jobs(clock):
     game = DailyGame("song_select", {"daily_gifts_empty"})
     nav = daily_nav(game, clock)
@@ -667,7 +689,8 @@ def test_recruit_free_pull(clock, monkeypatch, tmp_path):
     assert game.state == "home"
     shots = list((tmp_path / "recruit").glob("*.jpg"))
     assert len(shots) == 1 and shots[0].stat().st_size > 0
-    assert images == shots
+    assert images == shots == nav.recruit_shots
+    assert "_" not in shots[0].stem[16:]  # 免费招募的截图：文件名只有时间，没有后缀
     assert [p for s, p in game.taps if s == "recruit_confirm"] == [(782, 634)]
     assert len([p for s, p in game.taps if s == "recruit_free" and math.dist(p, (918, 562)) < 30]) == 1
     assert [p for s, p in game.taps if s == "recruit_result"] == [(867, 659)]
@@ -759,3 +782,51 @@ def test_go_home_leaves_recruit_result(clock):
     assert game.state == "home"
     assert [s for s, _ in game.taps] == ["recruit_result", "recruit_used"]
     assert_no_paid_taps(game)
+
+
+def test_chores_recorded(clock, monkeypatch, tmp_path):
+    """领取任务奖励、免费招募做成了各在日常记录里记一行（招募的带截图的文件名）；别的日常不记；
+    没给记录的地方（如命令行的调试）时什么都不记。"""
+    from ournotes_auto.records import RecordStore
+
+    monkeypatch.setattr(daily, "RECRUIT_SHOT_DIR", tmp_path / "recruit")
+    monkeypatch.setattr(daily, "log_image", lambda path: None)
+    store = RecordStore(tmp_path / "data")
+    game = DailyGame("home", {"daily_studio", "daily_missions_regular"})
+    nav = daily_nav(game, clock)
+    nav._chore_store = store
+    assert nav.run_daily(["studio", "missions", "gifts"]) == []
+    assert [c.kind for c in store.chore_history(limit=None)] == ["missions"] and nav.chores == store.chore_history(limit=None)
+
+    game = recruit_game()
+    nav = daily_nav(game, clock)
+    nav._chore_store = store
+    assert nav.run_daily(["recruit"]) == []
+    got = store.chore_history(limit=None)
+    assert [c.kind for c in got] == ["missions", "recruit"] and got[1].shot == nav.recruit_shots[0].name
+    assert [c.kind for c in nav.chores] == ["recruit"]
+
+    game = recruit_game("home")  # 今天没有免费次数：没招募，不记
+    nav = daily_nav(game, clock)
+    nav._chore_store = store
+    assert nav.run_daily(["recruit"]) == [] and nav.chores == [] and len(store.chore_history(limit=None)) == 2
+
+    game = recruit_game()
+    nav = daily_nav(game, clock)
+    assert nav._chore_store is None
+    assert nav.run_daily(["recruit"]) == [] and nav.chores == [] and len(store.chore_history(limit=None)) == 2
+
+
+def test_chore_write_failure_is_only_a_warning(clock, tmp_path, caplog):
+    """日常记录写不了（磁盘满、文件被占用）：只记一行警告，领取照常算做成。"""
+    class Broken:
+        def append_chore(self, chore):
+            raise OSError("磁盘满了")
+
+    game = DailyGame("home", {"daily_missions_regular"})
+    nav = daily_nav(game, clock)
+    nav._chore_store = Broken()
+    with caplog.at_level(logging.WARNING, logger="ournotes_auto.nav.daily"):
+        assert nav.run_daily(["missions"]) == []
+    assert nav.chores == [] and game.claimed == ["daily_missions_regular"]
+    assert [r.getMessage() for r in caplog.records] == ["领取任务奖励：没记进统计（磁盘满了）"]

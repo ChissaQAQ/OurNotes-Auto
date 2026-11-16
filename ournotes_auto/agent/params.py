@@ -9,7 +9,7 @@ from typing import Any
 
 from ..config import JP_PACKAGE, parse_daily_time
 from ..device.mumu_ipc import find_dll
-from ..nav.screens import LB_MAX_COST
+from ..nav.screens import ARENA_BANDS, LB_MAX_COST
 from ..notify import CHANNELS as NOTIFY_CHANNELS
 from ..sources import ARENA_BAND_MODES, CHALLENGE_COSTS, CHALLENGE_SONG_MODES, DIFFICULTIES
 
@@ -18,6 +18,7 @@ TASKS = {
     "start": "启动游戏",
     "switch_account": "切换账号",
     "daily": "领取日常",
+    "ads": "看广告",
     "repeat": "重复刷歌",
     "clear_lb": "清体力",
     "idle": "挂机",
@@ -34,6 +35,9 @@ IDLE_TASKS = ("idle", "arena_idle")  # 挂机：LB 用完等恢复、定时领�
 # 领取日常的各项（与 ``daily --jobs`` 一致），界面上的开关是 attach 里的 ``daily_<项目>``
 DAILY_JOBS = ("studio", "story", "event", "missions", "pass", "limited", "beginner", "tgw", "recruit", "gifts")
 NEW_DAILY_JOBS = frozenset(("event", "recruit"))  # 后加的项目：资源是旧版、attach 里没有时不做
+AD_JOBS = ("recruit", "lb", "studio")  # 看广告的各项（与 ``ads --jobs`` 一致），界面上的开关是 attach 里的 ``ads_<项目>``
+# 录音室练习的 SKIP 用在哪个乐队（attach 的 ``ads_studio_band``，与 ``ads --studio-band`` 一致）：练习Lv 最高的，或者指定乐队
+AD_STUDIO_BANDS = ("highest", *ARENA_BANDS)
 LOOP_SONG_MODES = ("current", "random", "ap_first", "list")  # 重复刷歌 / 清体力 / 挂机可选的选曲方式
 # 重复刷歌 / 清体力 / 挂机的难度：优先高难度（high_first）在「优先没 AP 的歌」时从高到低依次补，其他选曲方式按 EXPERT
 LOOP_DIFFICULTIES = (*DIFFICULTIES, "high_first")
@@ -362,6 +366,13 @@ def _daily_jobs(attach: Mapping[str, Any]) -> str:
     return ",".join(jobs)
 
 
+def _ad_jobs(attach: Mapping[str, Any]) -> str:
+    jobs = [job for job in AD_JOBS if _bool(attach, f"ads_{job}")]
+    if not jobs:
+        raise ParamError("看广告至少要选一项")
+    return ",".join(jobs)
+
+
 def global_args(attach: Mapping[str, Any]) -> list[str]:
     """子进程的全局参数：日志按 JSON 行输出、从标准输入接收停止；「调试日志」开着时加 ``-v``。"""
     return ["--json-log", "--stdin-stop", *(["-v"] if flag(attach, "debug_log") else [])]
@@ -441,6 +452,9 @@ def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str])
     elif task == "daily":
         sets = {**device, "device.touch": _choice(attach, "touch", TOUCH_MODES)}
         tail = ["daily", "--jobs", _daily_jobs(attach)]
+    elif task == "ads":
+        sets = {**device, "device.touch": _choice(attach, "touch", TOUCH_MODES)}
+        tail = ["ads", "--jobs", _ad_jobs(attach), "--studio-band", _choice(attach, "ads_studio_band", AD_STUDIO_BANDS)]
     else:
         sets = {**device, **run_settings(task, attach)}
         tail = ["run", *(["--watch-combo"] if _bool(attach, "watch_combo") else [])]

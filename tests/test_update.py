@@ -176,32 +176,121 @@ def test_notice_only(tmp_path, caplog, setup, kwargs, reason):
 
 
 def test_quiet(tmp_path, caplog):
-    def fail():
-        raise ConnectionError("offline")
-
     with caplog.at_level(logging.DEBUG, LOGGER):
-        for lookup in (lambda: {"version": "v0.1.0", "manifest": None}, fail):  # 已是最新；查不到
-            check = UpdateCheck(_package(tmp_path), lookup=lookup, spawn=lambda: pytest.fail("不该启动"))
-            check.start()
-            check.report()
+        check = UpdateCheck(_package(tmp_path), lookup=lambda: {"version": "v0.1.0", "manifest": None}, spawn=lambda: pytest.fail("不该启动"))
+        check.start()  # 已是最新
+        check.report()
         calls = []
         check = UpdateCheck(_package(tmp_path), lookup=lambda: calls.append(1), spawn=lambda: None)
         check.start(check=False)  # 关掉「检查更新」不查
         check.report()
     assert not _infos(caplog) and not calls
-    assert any("offline" in r.getMessage() for r in caplog.records)
+
+
+def test_failure_reason():
+    resp = requests.Response()
+    resp.status_code = 503
+    assert update.failure_reason(requests.ConnectTimeout("x")) == update.failure_reason(requests.ReadTimeout("x")) == "连接 GitHub 超时"
+    assert update.failure_reason(requests.exceptions.ProxyError("x")) == "连不上 GitHub"
+    assert update.failure_reason(requests.HTTPError("x", response=resp)) == "GitHub 返回 HTTP 503"
+    assert update.failure_reason(ValueError("update.json 格式不对")) == "update.json 格式不对"
+    assert update.failure_reason(ValueError()) == "ValueError" and len(update.failure_reason(ValueError("x" * 200))) == 80
+
+
+def test_check_failure_hint(tmp_path, caplog):
+    """查不到（连不上 GitHub 等）：记下时间和原因给设置页的卡片，任务结束时提示，一天只提示一次；查到了就清掉。"""
+    root = _package(tmp_path)
+    saved = root / release.CHECK_ERROR_FILE
+
+    def fail():
+        raise requests.ConnectionError("HTTPSConnectionPool(host='github.com', port=443): Max retries exceeded")
+
+    def run(lookup):
+        check = UpdateCheck(root, lookup=lookup, spawn=lambda: pytest.fail("不该启动"))
+        check.start()
+        check.report()
+
+    with caplog.at_level(logging.DEBUG, LOGGER):
+        run(fail)
+        run(fail)  # MXU 每次开始任务都是新的 Agent：同一天不再提示
+        hints = _infos(caplog)
+        assert len(hints) == 1 and "检查更新没成功（连不上 GitHub）" in hints[0] and "网络代理" in hints[0]
+        assert any("Max retries" in r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG)  # 完整的原因在调试日志里
+        error = release.read_json(saved)
+        assert error["error"] == "连不上 GitHub" and 0 <= time.time() - error["time"] < 60
+        release.write_json(root / update.ANNOUNCED_FILE, {"check_failed": "2000-01-01"})  # 过了一天
+        run(fail)
+        assert len(_infos(caplog)) == 2
+        run(lambda: {"version": "v0.1.0", "manifest": None})
+    assert not saved.exists() and len(_infos(caplog)) == 2
+    # 开发环境不留文件
+    dev = _dev(tmp_path / "dev", "v0.1.0")
+    check = UpdateCheck(dev, lookup=fail, spawn=lambda: None)
+    check.start()
+    check.report()
+    assert not (dev / release.CHECK_ERROR_FILE).exists()
+
+
+def test_check_intervals(tmp_path):
+    """任务开始时：这个 Agent 进程里 CACHE_TTL_S 内查过就不查；任务一直在运行（挂机）时隔 RECHECK_S 才再查。"""
+    assert update.CACHE_TTL_S == release.CHECK_TTL_S == 600 < update.RECHECK_S
+    check, calls = _launch(_package(tmp_path, "v0.2.0"))
+    check.start()
+    check.report()
+    check._checked_at -= update.CACHE_TTL_S - 5
+    check.start()
+    check.report()
+    assert calls == ["lookup"]
+    check._checked_at -= 10
+    check.start()
+    check.report()
+    assert calls == ["lookup"] * 2
+    check._polled_at = -float("inf")
+    check._checked_at -= update.RECHECK_S - 5
+    assert not check.hot_ready()
+    check.report()
+    assert calls == ["lookup"] * 2
+    check._polled_at = -float("inf")
+    check._checked_at -= 10
+    assert not check.hot_ready()
+    check.report()
+    assert calls == ["lookup"] * 3
 
 
 def test_auto_off_flag(tmp_path):
     root = _package(tmp_path)
-    flag = root / update.AUTO_OFF_FILE
+    flag, off = root / update.AUTO_OFF_FILE, root / release.CHECK_OFF_FILE
     check, _ = _check(root, _manifest())
     check.start(auto=False)
-    assert flag.exists()  # 正在等待的更新器看到后退出
+    assert flag.exists() and not off.exists()  # 正在等待的更新器看到后退出
     check.start(check=False, auto=True)  # 自动更新要先开检查更新
-    assert flag.exists()
+    assert flag.exists() and off.exists()  # check_off：设置页的卡片上说明「检查更新」关着
     check.start()
-    assert not flag.exists()
+    assert not flag.exists() and not off.exists()
+
+
+def test_writes_card(tmp_path, monkeypatch):
+    """MXU 的发布包：Agent 启动、任务开始、检查完、任务结束时重写设置页的「版本状态」卡片；MFAA、开发环境不写。"""
+    root = _package(tmp_path / "mxu")
+    card = root / release.UPDATE_CARD
+    _get(monkeypatch, 200, _manifest())
+    check = UpdateCheck(root, spawn=lambda: None)
+    check.write_card()  # Agent 启动时
+    assert "当前版本" in card.read_text(encoding="utf-8") and "还没有检查过更新" in card.read_text(encoding="utf-8")
+    check.start()
+    check.report()
+    assert "发现新版本 v0.2.0。" in card.read_text(encoding="utf-8")
+    _status(root, "waiting", tier="restart")
+    check.report()
+    assert "v0.2.0 已下载，任务都结束" in card.read_text(encoding="utf-8")
+    check.start(check=False)
+    assert "「检查更新」关着" in card.read_text(encoding="utf-8")
+    for other in (_package(tmp_path / "mfaa", ui="mfaa"), _dev(tmp_path / "dev", "v0.1.0")):
+        check = UpdateCheck(other, spawn=lambda: None)
+        check.write_card()
+        check.start()
+        check.report()
+        assert not (other / release.UPDATE_CARD).exists()
 
 
 def _launch(root):

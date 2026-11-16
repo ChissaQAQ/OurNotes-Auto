@@ -50,9 +50,9 @@ Before use, make sure of the following:
 - MuMu Emulator 12, resolution **1280×720**, frame rate at least 60
 - International server, with the game language set to 简体中文, 繁體中文, English or 한국어 (for 한국어, set "Game Language" to 한국어 in the task settings); or the Japanese server (set "Game Language" to "日本語 (Japanese server)"; the client must be installed from Google Play)
 - In-game "Notes Speed" at **5.00** (be sure to keep it when "Random GREAT" is on; other speeds shift all presses and turn GREATs into GOODs); MV / background off, or switched to a dark, static background; turning down effect and performance levels is recommended
-- Internet access: charts are downloaded at runtime from the chart site `assets.bdon.moe`
+- Internet access: the package ships with every chart available at release time; songs added later are downloaded at runtime from the chart site `assets.bdon.moe`
 
-Tasks: Start Game, Switch Account (accounts in the International server's bilibili login history, no password needed), Repeat Play, Use Up LB, AFK Farming (waits for LB to recover after running out, then keeps playing), AP Completion, Challenge LIVE (during events), Arena (multiplayer matches; pick a band or take turns with each band, and each round's placement and rank points are recorded), AFK Farming (Arena), Claim Dailies, Open Stats Window (total run time, play stats and achievements; export your records from its window before switching packages and import them in the new one), Test Notification (checks the "Push Notifications" setting, which sends a message to your phone when playing finishes, on errors and when AFK Farming runs into server maintenance; ntfy, ServerChan, Bark and webhook are supported). For details on each task and option, see the [Usage Guide](docs/en/usage.md); for command-line usage, see [Command Line](docs/en/cli.md).
+Tasks: Start Game, Switch Account (accounts in the International server's bilibili login history, no password needed), Repeat Play, Use Up LB, AFK Farming (waits for LB to recover after running out, then keeps playing), AP Completion, Challenge LIVE (during events), Arena (multiplayer matches; pick a band or take turns with each band, and each round's placement and rank points are recorded), AFK Farming (Arena), Claim Dailies, Watch Ads (the CM gacha, LIVE BOOST recovery and the Studio Practice SKIP; the game must be able to show ads, and the tool only waits for an ad to finish and closes it with the Back key, never tapping inside it), Open Stats Window (total run time, play stats and achievements; export your records from its window before switching packages and import them in the new one), Test Notification (checks the "Push Notifications" setting, which sends a message to your phone when playing finishes, on errors and when AFK Farming runs into server maintenance; ntfy, ServerChan, Bark and webhook are supported). For details on each task and option, see the [Usage Guide](docs/en/usage.md); for command-line usage, see [Command Line](docs/en/cli.md).
 
 ## Measured Results and Known Limitations
 
@@ -97,6 +97,6 @@ The software icon (`docs/ui/icon.png`, `docs/ui/logo.ico`) is taken from the off
 ## Acknowledgements
 
 - [autodori](https://github.com/EvATive7/autodori): design reference (GPLv3). This project does not copy its code
-- [bdon.moe](https://bdon.moe/) chart site, [haneoka.org](https://haneoka.org/) International server song title data
+- [bdon.moe](https://bdon.moe/) chart site, [haneoka.org](https://haneoka.org/) International server song title data (the bundled title table was compiled from it; it isn't accessed at run time)
 - [MaaFramework](https://github.com/MaaXYZ/MaaFramework), [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) and [MaaCommonAssets](https://github.com/MaaXYZ/MaaCommonAssets) (OCR models)
 - GUI: [MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia), [MXU](https://github.com/MistEO/MXU)

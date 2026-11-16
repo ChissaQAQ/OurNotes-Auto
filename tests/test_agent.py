@@ -485,6 +485,36 @@ def test_worker_args_switch_account():
         worker_args("switch_account", {"touch": "mumu", "account": "  "}, {})
 
 
+def test_worker_args_ads():
+    from ournotes_auto.agent.params import AD_JOBS, AD_STUDIO_BANDS
+    from ournotes_auto.cli import build_parser
+    from ournotes_auto.nav import ads
+
+    assert AD_JOBS == tuple(ads.AD_JOBS) and AD_STUDIO_BANDS == ads.STUDIO_BAND_MODES
+    attach = {"touch": "mumu", "ads_recruit": True, "ads_lb": "Yes", "ads_studio": True, "ads_studio_band": "highest"}
+    args = worker_args("ads", attach, {"device.instance": "1"})
+    head = ["--set", "device.instance=1", "--set", "device.touch=mumu", "ads"]
+    assert args == [*head, "--jobs", "recruit,lb,studio", "--studio-band", "highest"]
+    parsed = build_parser().parse_args(args)
+    assert parsed.jobs == ["recruit", "lb", "studio"] and parsed.studio_band == "highest"
+    args = worker_args("ads", {**attach, "ads_recruit": "No", "ads_lb": False, "ads_studio_band": "mewtype"}, {})
+    assert args[-4:] == ["--jobs", "studio", "--studio-band", "mewtype"]
+    assert build_parser().parse_args(args).studio_band == "mewtype"
+    assert worker_args("ads", {**attach, "ads_recruit": "No", "ads_studio": "No"}, {})[-3] == "lb"
+    plain = build_parser().parse_args(["ads"])  # 命令行不写：全部项目，练习Lv 最高的乐队
+    assert plain.jobs is None and plain.studio_band == "highest"
+    with pytest.raises(ParamError, match="至少要选一项"):
+        worker_args("ads", {**attach, "ads_recruit": False, "ads_lb": False, "ads_studio": False}, {})
+    for missing in ("ads_lb", "ads_studio", "ads_studio_band"):
+        with pytest.raises(ParamError, match=missing):
+            worker_args("ads", {k: v for k, v in attach.items() if k != missing}, {})
+    with pytest.raises(ParamError, match="ads_studio_band"):
+        worker_args("ads", {**attach, "ads_studio_band": "roselia"}, {})
+    for bad in (["ads", "--jobs", "lb,story"], ["ads", "--studio-band", "roselia"]):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(bad)
+
+
 def test_worker_args_daily():
     from ournotes_auto.agent.params import DAILY_JOBS
     from ournotes_auto.cli import build_parser
@@ -759,6 +789,7 @@ def _load(rel):
 
 def test_interface_tasks_match_agent():
     """界面任务 → pipeline 入口 → agent 任务名 → 默认参数能生成命令行，选项只写 OurNotesParam 里已有的键。"""
+    from ournotes_auto import release
     from ournotes_auto.agent.params import PARAM_NODE, TASKS
 
     interface = _load("interface.json")
@@ -767,6 +798,10 @@ def test_interface_tasks_match_agent():
         part = _load(rel)
         tasks += part.get("task", [])
         options.update(part.get("option", {}))
+    # MXU 设置页的「版本状态」卡片：没有可选项、只显示说明，不写任何参数，也不在全局选项里（MFAA 不显示）
+    card = options.pop(release.UPDATE_OPTION)
+    assert card["cases"] == [] and "pipeline_override" not in card and release.UPDATE_OPTION not in interface["global_option"]
+    assert all(release.UPDATE_OPTION not in task.get("option", []) for task in tasks)
     pipeline = {}
     for path in sorted((ROOT / "resource" / "pipeline").glob("*.json")):
         pipeline.update(json.loads(path.read_text(encoding="utf-8")))

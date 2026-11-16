@@ -4,16 +4,25 @@
 - 清单：``charts/{musicId}_{difficulty}.json``，``files["score/NNNN_0X.notes.json"]`` 指向谱面文件：
   小文件为 ``{"asset": "assets/<sha256>.json"}``，大文件按顶层键拆分为
   ``{"parts": [[key, asset, size], ...], "size": 总大小}``；
-- 资源文件名即内容的 sha256，下载后校验。
+- 资源文件名即内容的 sha256，下载后校验；
+- 索引条目的 ``bytes`` 是清单里各文件大小的和：谱面站重新生成过一张谱面（改了谱面、换了封面……），它就变了。
+  缓存里的清单、随包附带的谱面是不是旧的都靠它看（:meth:`BdonClient._manifest_outdated`、:data:`SAME_CHART`）；
+- 封面：清单里的 ``livescene/textures/jkt_*.png``（同一首歌各难度是同一张），只用来认歌，见 :meth:`BdonClient.jacket`。
 
-国际服与日服谱面一致，国际服曲名（含简体中文）与封面缩略图从 haneoka.org 获取，仅用于识别曲目。
+随包附带的数据（发版前用 tools/fetch_bundle.py 更新）：封面 :data:`JACKETS` 在 app 层，每次更新都带；谱面和打包时的
+曲目列表 :data:`BUNDLE` 只在整包里。包里有的不用下载，之后才出的新歌、谱面站重新生成过的谱面照常从谱面站取。
 
-连不上时少等（#108）：某个主机下载失败后记在缓存目录里，到下次打开程序前过期的索引直接用旧缓存、缺的封面先不下载、
-还没下载过的国际服曲目表只试一次；谱面照常重试。每个进程对每个主机说明一次连不上的原因（错误归类、走的代理还是直连、解析到的 IP）。
+国际服与日服谱面一致。各语言的曲名随包附带（``titles.json``，见 catalog.py）。以前曲名和封面从 haneoka.org 取，
+2026-11 起它拒绝本程序的请求（#142），不再访问。
+
+连不上时少等（#108）：某个主机下载失败后记在缓存目录里，到下次打开程序前过期的索引直接用旧缓存、缺的封面先不下载；
+谱面照常重试。每个进程对每个主机说明一次连不上的原因（错误归类、走的代理还是直连、解析到的 IP）。
 """
 
 from __future__ import annotations
 
+import functools
+import gzip
 import hashlib
 import json
 import logging
@@ -21,9 +30,11 @@ import os
 import re
 import socket
 import time
+import zlib
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import getproxies_environment
 
 import requests
@@ -43,6 +54,15 @@ DOWN_DIR = ".down"  # 缓存目录下记下载失败的主机：文件名是主�
 LAUNCHED_ENV = "OURNOTES_LAUNCHED"  # 这次打开界面的时刻（Agent 设，演奏进程继承；和 agent/server.py 一致）
 _STARTED = time.time()  # 命令行运行时没有界面，「这次打开程序」从这个进程开始算
 PROXY_PASSWORD = re.compile(r"(?<=:)[^:@/]*(?=@)")  # 同 agent/server.py：代理地址 user:pass@host:port 里的密码不记
+REFUSED = (401, 403, 451)  # 网站自己回的拒绝（如 Cloudflare 按 IP、按程序标识拦下来回 403）：连得上，不是代理端口的问题
+JACKET_FILE = re.compile(r"(?:^|/)jkt_[^/]*\.png$")  # 清单里的封面，如 livescene/textures/jkt_001_100001-0785d933.png
+JACKETS = Path(__file__).with_name("jackets")  # 随包附带的封面（{musicId}.png，已缩小），在 app 层，每次更新都带
+# 随整包附带的谱面（{musicId}_{difficulty}.json.gz，谱面文件的原样内容）和打包时的曲目列表（charts.json）。只在整包里，
+# 自动更新不带、不动它（release.BUNDLE_DIR）：安装目录里可能没有（从旧版本自动更新上来的），也可能比谱面站旧
+BUNDLE = Path(__file__).with_name("bundle")
+BUNDLE_INDEX = "charts.json"
+# 曲目列表的条目里这几项和打包时一样，包里的谱面就还是谱面站现在的那一版（bytes 见模块说明）
+SAME_CHART = ("bytes", "notes", "fullComboCount", "durationMs")
 _explained: set[str] = set()  # 这个进程里已经说明过连不上原因的主机
 
 
@@ -54,6 +74,27 @@ class HostDown(ConnectionError):
     """主机这次打开程序后下载失败过，可有可无的文件（封面）先不下载。"""
 
 
+def bundled_index() -> dict[str, Any] | None:
+    """随整包附带的曲目列表（打包时的）；包里没带、读不了时为 None。"""
+    try:
+        data = json.loads((BUNDLE / BUNDLE_INDEX).read_bytes())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("charts"), list) else None
+
+
+def chart_entries(index: Any) -> dict[str, dict[str, Any]]:
+    """曲目列表 → 各张谱面的条目（``"{musicId}_{difficulty}"`` → 条目）。"""
+    charts = index.get("charts") if isinstance(index, Mapping) else None
+    return {f"{e.get('musicId')}_{e.get('difficulty')}": e for e in charts or [] if isinstance(e, dict)}
+
+
+def jacket_asset(manifest: Mapping[str, Any]) -> str | None:
+    """清单里封面的地址（``assets/<sha256>.png``），没有封面时为 None。"""
+    files = manifest.get("files", {})
+    return next((files[name].get("asset") for name in sorted(files) if JACKET_FILE.search(name)), None)
+
+
 class BdonClient:
     def __init__(self, cfg: ChartsConfig, session: requests.Session | None = None):
         self.cfg = cfg
@@ -61,6 +102,7 @@ class BdonClient:
         self.cache = Path(cfg.cache_dir)
         self.http = session or requests.Session()
         self.http.headers["User-Agent"] = USER_AGENT  # Session 自带 python-requests 的，setdefault 换不掉
+        self._noted_bundled_index = False  # 「先用随包附带的曲目列表」说过了
 
     # —— 底层 ——
 
@@ -83,7 +125,7 @@ class BdonClient:
             return r.content
         self._mark_down(url, True)
         explain_failure(url, last)
-        raise ConnectionError(f"无法下载 {url}：{last}")
+        raise ConnectionError(f"无法下载 {url}：{last}") from last
 
     def _down_path(self, url: str) -> Path:
         return self.cache / DOWN_DIR / (urlsplit(url).hostname or "unknown")
@@ -119,24 +161,24 @@ class BdonClient:
         max_age_s: float | None = None,
         asset: str | None = None,
         optional: bool = False,
-        soft: bool = False,
+        transform: Callable[[bytes], bytes] | None = None,
+        outdated: bool = False,
     ) -> bytes:
-        """``optional``：可有可无的文件，主机这次打开程序后下载失败过就先不下载（抛出 :class:`HostDown`）。
-        ``soft``：没有也能凑合的文件（国际服曲目表），还没有缓存、主机这次打开程序后下载失败过时只试一次。"""
+        """``optional``：可有可无的文件（封面），主机这次打开程序后下载失败过就先不下载（抛出 :class:`HostDown`）。
+        ``transform``：下载、校验之后，存进缓存之前对内容做的处理（把封面缩小）。
+        ``outdated``：缓存里的那份已知是旧的，和过期了一样办——只试一次，下载不了先用旧的。"""
         retries = 3
         path = self.cache / rel
         if path.exists():
-            if max_age_s is None or time.time() - path.stat().st_mtime < max_age_s:
+            if not outdated and (max_age_s is None or time.time() - path.stat().st_mtime < max_age_s):
                 return path.read_bytes()
-            if max_age_s:  # 过期了（不是强制刷新）：有旧的可用，只试一次；这次打开程序后主机失败过就先不下载
+            if outdated or max_age_s:  # 过期了（不是强制刷新）：有旧的可用，只试一次；这次打开程序后主机失败过就先不下载
                 if self._is_down(url):
                     logger.info("%s 这次打开程序后下载失败过，先用过期缓存 %s，下次打开程序再下载", urlsplit(url).hostname, path)
                     return path.read_bytes()
                 retries = 1
         elif optional and self._is_down(url):
             raise HostDown(f"{urlsplit(url).hostname} 这次打开程序后下载失败过，下次打开程序再下载 {url}")
-        elif soft and self._is_down(url):
-            retries = 1
         try:
             raw = self._get(url, retries)
         except (ConnectionError, ChartNotFound):
@@ -146,6 +188,8 @@ class BdonClient:
             raise
         if asset:
             self._verify(raw, asset)
+        if transform is not None:
+            raw = transform(raw)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_bytes(raw)
@@ -155,21 +199,75 @@ class BdonClient:
     # —— 索引 / 清单 / 谱面 ——
 
     def index(self, refresh: bool = False) -> list[dict[str, Any]]:
+        """曲目列表。下载不了、缓存里也没有时用随整包附带的那份（打包时的）：包里带的歌照常能打。"""
         ttl = 0.0 if refresh else self.cfg.index_ttl_hours * 3600
-        data = json.loads(self._cached("charts.json", self.base + "charts.json", max_age_s=ttl))
+        try:
+            # 有随包的那份可退：主机这次打开程序后下载失败过就不再等一遍
+            raw = self._cached("charts.json", self.base + "charts.json", max_age_s=ttl, optional=(BUNDLE / BUNDLE_INDEX).is_file())
+            data = json.loads(raw)
+        except (ConnectionError, ChartNotFound):
+            data = bundled_index()
+            if data is None:
+                raise
+            if not self._noted_bundled_index:
+                self._noted_bundled_index = True
+                logger.warning("下载不了曲目列表，先用随包附带的那份（打包时的）：包里带的歌照常能打，之后新出的歌要等连得上谱面站")
         if data.get("format") != 2:
             logger.warning("未知的索引格式 %r，尝试继续解析", data.get("format"))
         return data.get("charts", [])
 
-    def manifest(self, music_id: int, difficulty: str) -> dict[str, Any]:
+    def _known(self) -> tuple[dict[str, dict[str, Any]], float | None]:
+        """手头的曲目列表里各张谱面的条目（不为这个联网）和这份列表下载的时刻：缓存里的那份；缓存里没有时是随整包
+        附带的那份（时刻为 None）。"""
+        path = self.cache / "charts.json"
+        try:
+            when: float | None = path.stat().st_mtime
+            data = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            when, data = None, bundled_index()
+        return chart_entries(data), when
+
+    def manifest(self, music_id: int, difficulty: str, optional: bool = False) -> dict[str, Any]:
+        """``optional``：只是为了取封面，见 :meth:`_cached`。缓存里的清单旧了（:meth:`_manifest_outdated`）就重新下载，
+        下载不了先用旧的。"""
         key = f"{music_id}_{difficulty}"
-        rel = f"manifests/{key}.json"
-        return json.loads(self._cached(rel, self.base + f"charts/{key}.json"))
+        rel = self._manifest_rel(music_id, difficulty)
+        return json.loads(self._cached(rel, self.base + f"charts/{key}.json", optional=optional, outdated=self._manifest_outdated(key, rel)))
 
-    def _asset(self, asset: str) -> bytes:
-        return self._cached(asset, self.base + asset, asset=asset)
+    @staticmethod
+    def _manifest_rel(music_id: int, difficulty: str) -> str:
+        return f"manifests/{music_id}_{difficulty}.json"
 
-    def notes_raw(self, music_id: int, difficulty: str) -> dict[str, Any]:
+    def _manifest_outdated(self, key: str, rel: str) -> bool:
+        """缓存里的清单是不是旧的：比曲目列表下载得早，各文件大小的和又对不上列表里的 ``bytes``，就是谱面站在那之后
+        重新生成过这张谱面。以前清单下载一次就一直用，谱面站改过的谱面打的还是旧的（实测 360 张里 2 张，
+        其中一张音符时间差到 80 ms）。
+
+        重新下载的清单比列表新，不会再判成旧的：``bytes`` 的算法哪天变了，也只是每次更新列表后各多下载一次清单。"""
+        path = self.cache / rel
+        try:
+            cached_at = path.stat().st_mtime
+        except OSError:
+            return False  # 没有缓存：照常下载
+        entries, listed_at = self._known()
+        want = (entries.get(key) or {}).get("bytes")
+        if listed_at is None or cached_at >= listed_at or not isinstance(want, int):
+            return False
+        try:
+            files = json.loads(path.read_bytes()).get("files", {})
+            outdated = sum(f.get("size", 0) for f in files.values()) != want
+        except (OSError, ValueError, AttributeError, TypeError):
+            outdated = True  # 读不了的清单：重新下载
+        if outdated:
+            logger.info("谱面站重新生成过 %s，重新下载它的清单", key)
+        return outdated
+
+    def asset(self, name: str) -> bytes:
+        """按内容命名的资源文件（``assets/<sha256>.<扩展名>``），下载后校验，有缓存。"""
+        return self._cached(name, self.base + name, asset=name)
+
+    def notes_bytes(self, music_id: int, difficulty: str) -> bytes:
+        """谱面站上这张谱面的谱面文件（JSON 原样内容，有缓存）；拆成几部分的按清单拼起来。"""
         man = self.manifest(music_id, difficulty)
         files = man.get("files", {})
         keys = sorted(k for k in files if k.startswith("score/") and k.endswith(".notes.json"))
@@ -177,16 +275,44 @@ class BdonClient:
             raise ChartNotFound(f"{music_id}_{difficulty} 的清单中没有谱面文件")
         entry = files[keys[0]]
         if "asset" in entry:
-            return json.loads(self._asset(entry["asset"]))
+            return self.asset(entry["asset"])
         if "parts" in entry:
             chunks = []
             for part_key, asset, size in entry["parts"]:
-                raw = self._asset(asset)
+                raw = self.asset(asset)
                 if len(raw) != size:
                     raise ValueError(f"{asset} 大小 {len(raw)} 与清单 {size} 不符")
                 chunks.append(json.dumps(part_key).encode() + b":" + raw)
-            return json.loads(b"{" + b",".join(chunks) + b"}")
+            return b"{" + b",".join(chunks) + b"}"
         raise ValueError(f"无法识别的清单条目：{entry}")
+
+    @functools.cached_property
+    def _bundled(self) -> dict[str, dict[str, Any]]:
+        """随整包附带的谱面在打包时的曲目列表里的条目；包里没带时是空的。"""
+        return chart_entries(bundled_index())
+
+    def _bundled_notes(self, music_id: int, difficulty: str) -> dict[str, Any] | None:
+        """随整包附带的这张谱面。包里没带、读不了，或者它已经不是谱面站现在的那一版（手头的曲目列表里这张的条目和
+        打包时的对不上，见 :data:`SAME_CHART`）时为 None：照常从谱面站取，不比没带更糟。"""
+        key = f"{music_id}_{difficulty}"
+        path = BUNDLE / f"{key}.json.gz"
+        if not path.is_file():
+            return None
+        then, now = self._bundled.get(key), self._known()[0].get(key)
+        if then is None or now is None or any(then.get(f) != now.get(f) for f in SAME_CHART):
+            logger.debug("随包附带的谱面 %s 不是谱面站现在的那一版，从谱面站取", key)
+            return None
+        try:
+            data = json.loads(gzip.decompress(path.read_bytes()))
+        except (OSError, EOFError, ValueError, zlib.error) as e:
+            logger.warning("随包附带的谱面 %s 读不了（%s），从谱面站取", path, e)
+            return None
+        return data if isinstance(data, dict) else None
+
+    def notes_raw(self, music_id: int, difficulty: str) -> dict[str, Any]:
+        """谱面数据：随整包附带的那份还是谱面站现在的那一版就用它（不联网），否则从谱面站取（有缓存）。"""
+        data = self._bundled_notes(music_id, difficulty)
+        return data if data is not None else json.loads(self.notes_bytes(music_id, difficulty))
 
     def chart(self, music_id: int, difficulty: str, title: str = "") -> Chart:
         difficulty = difficulty.lower()
@@ -194,45 +320,34 @@ class BdonClient:
             raise ValueError(f"未知难度 {difficulty}")
         return parse_live_score(self.notes_raw(music_id, difficulty), music_id, difficulty, title)
 
-    # —— 国际服曲名 / 封面 ——
+    # —— 封面 ——
 
-    def intl_songs(self, refresh: bool = False) -> dict[int, dict[str, Any]]:
-        """haneoka 的国际服曲目表（musicId → 条目，含 musicTitle[日/英/繁/简/韩] 与 jacketThumbUrl）；
-        获取失败时返回空表（还没有缓存时，这次打开程序后失败过就每次只试一次）。"""
-        url = self.cfg.titles_url
-        if not url:
-            return {}
-        ttl = 0.0 if refresh else self.cfg.index_ttl_hours * 3600
-        try:
-            data = json.loads(self._cached("intl_songs.json", url, max_age_s=ttl, soft=True))
-        except (ConnectionError, ChartNotFound, ValueError) as e:
-            if (self.cache / "intl_songs.json").exists():
-                logger.warning("获取国际服曲目表失败：%s", e)
-            else:
-                # 404 时网站连得上，开代理没用
-                hint = (
-                    "可以开着代理软件（如 TUN 模式）打开一次程序，下载好之后连不上时会用这份缓存"
-                    if isinstance(e, ConnectionError)
-                    else "网站返回 404，曲目表的地址可能变了"
-                )
-                logger.warning(
-                    "获取国际服曲目表失败：%s。还没有下载过曲目表，只能按谱面站的日文曲名认歌（译名不一样的歌可能认不出），"
-                    "封面也认不出；%s",
-                    e,
-                    hint,
-                )
-            return {}
-        return {int(mid): song for mid, song in data.items()}
+    def jacket(self, music_id: int, difficulties: Iterable[str], shrink: Callable[[bytes], bytes] | None = None) -> bytes:
+        """封面（PNG）。随包附带的（:data:`JACKETS`）直接用——封面换了图，更新一下就跟着换；包里没有的（发版之后才出的
+        新歌）用缓存里的，缓存里也没有才下载。
 
-    def jacket(self, music_id: int, url: str) -> bytes:
-        """封面缩略图（PNG）；``url`` 为曲目表里的 jacketThumbUrl（相对 titles_url 所在站点）。
+        谱面站每张谱面的清单里带着封面（:data:`JACKET_FILE`，同一首歌各难度是同一张）：从 ``difficulties``
+        （这首歌有的难度）里已经有清单的那个取，都没有就下载排在最前面那个的清单。``shrink``：存进缓存前把图缩小
+        （原图 512x512、几百 KB，认歌用不着这么大）。
 
         封面只是帮着认歌（认不出还有曲名），主机这次打开程序后下载失败过就先不下载（抛出 :class:`HostDown`），
-        免得缺的每张都等一遍。"""
-        return self._cached(f"jackets/{music_id}.png", urljoin(self.cfg.titles_url, url), optional=True)
+        免得缺的每张都等一遍。清单里没有封面时抛出 :class:`ChartNotFound`。"""
+        rel = f"jackets/{music_id}.png"
+        for path in (JACKETS / f"{music_id}.png", self.cache / rel):
+            if path.exists():
+                return path.read_bytes()
+        # sorted 是稳定的：都没有清单时就是给的第一个
+        diffs = sorted(difficulties, key=lambda d: not (self.cache / self._manifest_rel(music_id, d)).exists())
+        if not diffs:
+            raise ChartNotFound(f"{music_id} 没有谱面，取不到封面")
+        asset = jacket_asset(self.manifest(music_id, diffs[0], optional=True))
+        if not asset:
+            raise ChartNotFound(f"{music_id}_{diffs[0]} 的清单里没有封面")
+        return self._cached(rel, self.base + asset, asset=asset, optional=True, transform=shrink)
 
     def jacket_cached(self, music_id: int) -> bool:
-        return (self.cache / f"jackets/{music_id}.png").exists()
+        """这首歌的封面不用下载：随包附带，或者缓存里有。"""
+        return (JACKETS / f"{music_id}.png").exists() or (self.cache / f"jackets/{music_id}.png").exists()
 
 
 # —— 连不上时的说明 ——
@@ -252,14 +367,28 @@ def explain_failure(url: str, err: Exception | None) -> None:
     if host in _explained:
         return
     _explained.add(host)
+    if refused(err):  # 连得上：不叫人去填代理端口（#142：照着试了一圈，都还是 403）
+        why = "网站连得上，是它拒绝了这次请求（按 IP 或程序标识拦的），不是代理端口没填对。换一条线路（开或关代理）再试一次，还是这样就是网站不让本程序下载"
+    else:
+        why = (
+            "浏览器能打开这个网站时，多半是浏览器走了代理插件、自动代理脚本、HTTP/3 或安全 DNS，"
+            "本程序用不了这些；开着代理软件的话，请在「网络代理」里填它的端口"
+        )
     logger.warning(
-        "下载不了 %s（%s），%s。浏览器能打开这个网站时，多半是浏览器走了代理插件、自动代理脚本、HTTP/3 或安全 DNS，"
-        "本程序用不了这些；开着代理软件的话，请在「网络代理」里填它的端口。下次打开程序前，过期的曲目列表先用旧缓存、"
-        "缺的封面先不下载、还没下载过的国际服曲目表只试一次",
+        "下载不了 %s（%s），%s。%s。下次打开程序前，过期的曲目列表先用旧缓存、缺的封面先不下载",
         host,
         failure_kind(err),
         route(url),
+        why,
     )
+
+
+def refused(err: BaseException | None) -> int | None:
+    """网站自己回了拒绝（:data:`REFUSED`）时的状态码，别的失败为 None。走代理时代理回的拒绝是另一种错
+    （``Tunnel connection failed``，见 :func:`failure_kind`），不算。"""
+    if isinstance(err, requests.exceptions.HTTPError) and err.response is not None and err.response.status_code in REFUSED:
+        return err.response.status_code
+    return None
 
 
 def failure_kind(err: Exception | None) -> str:

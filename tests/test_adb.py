@@ -25,6 +25,8 @@ def fake_adb(monkeypatch, installed=(), running=(), error=None, focus=None):
                 out = "4321\n" if cmd[1] in running else ""
             elif cmd == ("dumpsys", "window"):
                 out = f"  mCurrentFocus=Window{{f1250d0 u0 {focus}/{focus}.MainActivity}}\n" if focus else ""
+            elif cmd == ("input", "keyevent", "4"):
+                out = ""
             elif cmd[0] == "monkey":
                 if cmd[2] not in installed:
                     raise subprocess.CalledProcessError(adb.MONKEY_NO_APP, args)
@@ -201,3 +203,17 @@ def test_port_hog(monkeypatch):
 
     monkeypatch.setattr(adb.subprocess, "run", broken)
     assert adb._port_hog() == ""
+
+
+def test_front_window_and_back(monkeypatch):
+    """看广告用：读获得焦点的窗口（``包名/界面``，读不到为 None），按返回键。广告的界面也算游戏在前台（同一个包名）。"""
+    cfg = DeviceConfig(package=INTL_PLAY_PACKAGE)
+    calls = fake_adb(monkeypatch, focus=INTL_PLAY_PACKAGE)
+    assert adb.front_window(cfg) == f"{INTL_PLAY_PACKAGE}/{INTL_PLAY_PACKAGE}.MainActivity"
+    assert adb.app_in_front(cfg)
+    adb.press_back(cfg)
+    assert calls[-1] == ("input", "keyevent", "4")
+    fake_adb(monkeypatch, focus="com.android.vending")
+    assert adb.front_window(cfg).startswith("com.android.vending/") and not adb.app_in_front(cfg)
+    fake_adb(monkeypatch)
+    assert adb.front_window(cfg) is None and adb.app_in_front(cfg)

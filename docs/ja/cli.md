@@ -61,6 +61,9 @@ ournotes-auto daily
 ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # スタジオ練習、ミッション、パス、期間限定ミッション、ビギナーミッション、T.G.W CARD、無料ガチャ、プレゼントボックス
 ournotes-auto daily --jobs story   # 未読のバンド / アナザー / 絆ストーリーをスキップ（明示したときだけ実行）
 ournotes-auto daily --jobs event   # 期間限定イベントの未読のイベントストーリー / アナザーストーリーをスキップ（明示したときだけ実行）
+ournotes-auto ads                  # 広告を見て毎日の報酬を受け取る：CM ガチャ（3 回）、LIVE BOOST の回復（2 回）、スタジオ練習 SKIP（1 回）。ゲームで広告が再生できることが必要
+ournotes-auto ads --jobs lb        # 一部だけ実行：recruit は CM ガチャ、lb は LIVE BOOST の回復、studio はスタジオ練習 SKIP
+ournotes-auto ads --studio-band mygo  # スタジオ練習 SKIP を使うバンド：highest は練習 Lv が一番高いバンド（デフォルト）、mygo、avemujica、mewtype、millsage、dumbrock
 
 # ローカルの演奏記録をまとめる（総プレイ回数、AP した譜面、まだ AP していない譜面、直近の数回）、統計ページを更新（累計稼働時間・実績。完全なページは data/stats.html）
 ournotes-auto records [--recent 10]

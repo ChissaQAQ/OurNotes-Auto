@@ -50,9 +50,9 @@
 - MuMu 模拟器 12，分辨率 **1280×720**，帧率不低于 60
 - 国际服，游戏语言为简体中文、繁體中文、English 或 한국어（한국어要在任务设置里把「游戏语言」选成 한국어）；或日服（「游戏语言」选「日本語（日服）」，客户端要从 Google Play 安装）
 - 游戏内「节奏图示速度」**5.00**（开了「随机 GREAT」时务必保持，其他流速会让按键整体偏移、GREAT 变 GOOD）；MV / 背景关闭，或换成较暗、不动的背景；特效、演出等级建议调低
-- 能联网：谱面运行时从谱面站 `assets.bdon.moe` 下载
+- 能联网：包里带着发版时的全部谱面，之后新出的歌运行时从谱面站 `assets.bdon.moe` 下载
 
-任务：启动游戏、切换账号（国际服 B 站登录记录里的账号，不用密码）、重复刷歌、清体力、挂机（LB 用完后等恢复接着打）、AP补完、挑战演出（活动期间）、激奏舞台（多人对局，可指定乐队或轮流打每个乐队，每局的名次和段位分都有记录）、挂机（激奏舞台）、领取日常、打开统计窗口（累计运行时长、演奏数据和成就；换包前在窗口里导出记录，在新的包里导入）、推送测试（检查「推送到手机」的设置：打歌完成、出错和挂机遇到服务器维护时推送到手机，支持 ntfy、Server酱、Bark、webhook）。各任务和选项的细节见[使用说明](docs/使用说明.md)，命令行用法见[命令行](docs/命令行.md)。
+任务：启动游戏、切换账号（国际服 B 站登录记录里的账号，不用密码）、重复刷歌、清体力、挂机（LB 用完后等恢复接着打）、AP补完、挑战演出（活动期间）、激奏舞台（多人对局，可指定乐队或轮流打每个乐队，每局的名次和段位分都有记录）、挂机（激奏舞台）、领取日常、看广告（观看CM招募、恢复 LIVE BOOST、录音室练习 SKIP，要游戏里放得出广告；只等广告放完再按返回键关掉，不点广告里的东西）、打开统计窗口（累计运行时长、演奏数据和成就；换包前在窗口里导出记录，在新的包里导入）、推送测试（检查「推送到手机」的设置：打歌完成、出错和挂机遇到服务器维护时推送到手机，支持 ntfy、Server酱、Bark、webhook）。各任务和选项的细节见[使用说明](docs/使用说明.md)，命令行用法见[命令行](docs/命令行.md)。
 
 ## 实测效果与已知限制
 
@@ -97,6 +97,6 @@ Copyright (C) 2026 ChissaQAQ
 ## 致谢
 
 - [autodori](https://github.com/EvATive7/autodori)：设计参考（GPLv3）。本项目没有复制其代码
-- [bdon.moe](https://bdon.moe/) 谱面站，[haneoka.org](https://haneoka.org/) 国际服曲名数据
+- [bdon.moe](https://bdon.moe/) 谱面站，[haneoka.org](https://haneoka.org/) 国际服曲名数据（随包附带的曲名表整理自这里，运行时不访问）
 - [MaaFramework](https://github.com/MaaXYZ/MaaFramework)、[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 与 [MaaCommonAssets](https://github.com/MaaXYZ/MaaCommonAssets)（OCR 模型）
 - 图形界面：[MFAAvalonia](https://github.com/SweetSmellFox/MFAAvalonia)、[MXU](https://github.com/MistEO/MXU)
