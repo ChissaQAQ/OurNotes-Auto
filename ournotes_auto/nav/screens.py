@@ -80,6 +80,9 @@ class Screen(StrEnum):
     STORY_PLAYER = "故事播放"
     STORY_MENU = "故事播放菜单"  # 右边一列按钮：SKIP / AUTO / 快进 / 终止 ...
     STORY_SKIP = "要跳过故事吗"  # 左取消右跳过
+    # 全屏视频（乐队周年纪念视频等）点右上角「跳过」后的确认「要跳过这段视频吗？」：左取消右 OK，点 OK 才真的跳过。
+    # 点「取消」会回到视频、又去点「跳过」，一直绕到视频自己放完
+    VIDEO_SKIP = "要跳过视频吗"
     # 主界面上点到角色弹出的对话（背景虚化、角色站在前面，下面是名牌和一句台词），点对话框关掉。
     # 一直在动（Live2D），按停住的画面恢复不了；左侧一列没有入口的地方点下去就是这个
     HOME_TALK = "主界面角色对话"
@@ -157,6 +160,7 @@ _DIALOGS = {
     "要重试并从头开始": Screen.RETRY_CONFIRM,
     "演出已暂停": Screen.PAUSE,
     "要跳过故事吗": Screen.STORY_SKIP,
+    "要跳过这段视频": Screen.VIDEO_SKIP,
 }
 # 加载画面中间有随机小提示（如「玩家等级提升后，会恢复LIVE BOOST。」，小标题「玩家等级」），会被当成弹窗、RANK UP：
 # 加载中只认可能叠在上面的这几种，别的都算加载
@@ -181,6 +185,9 @@ BOND_UP_ROI: Rect = (440, 90, 400, 100)
 # 认不出的弹窗：「OK」在中下部，画面上没有这些字才点（确认框、花星钻、招募之类的一律不点）
 OK_POPUP_ROI: Rect = (340, 450, 600, 250)
 OK_POPUP_BLOCK = ("取消", "确定", "购买", "星钻", "恢复", "使用", "招募", "下载")
+# 认不出的画面上试着点空白处之前（导航的 _recover、招募演出里的展示画面）：画面上有这些字就不点
+# （可能点到购买、用星钻、消耗道具上）
+RECOVER_BLOCK = (*OK_POPUP_BLOCK, "兑换", "消耗", "跳过", "解锁", "升级")
 # 弹窗底部中央的「关闭」按钮
 CLOSE_ROI: Rect = (540, 620, 200, 70)
 POWER_TITLE_ROI: Rect = (440, 20, 400, 60)
@@ -292,6 +299,19 @@ def _compact(text: str) -> str:
     return re.sub(r"\s+", "", text)
 
 
+# 「演出打卡奖励」（每周第 5 天第一局后，#132 / #139）：「请从以下奖励中选择1个。」，一行一样奖励，右边是单选按钮，下面只有 OK。
+# 游戏默认选中星钻；列表能往下滚，靠后的（各乐队的棱晶）要滚动才看得全，这里只认一打开就看得全的四样。
+# game.checkin_reward 的取值 → 这一行在画面上的名字；default 不在这里（不改，游戏里选中哪个拿哪个）
+CHECKIN_REWARDS = {"gems": "星钻", "crystal": "奇迹水晶", "sp_ticket": "SP技能强化券", "prism": "希望棱晶"}
+CHECKIN_DEFAULT = "default"
+CHECKIN_REWARD_MODES = (CHECKIN_DEFAULT, *CHECKIN_REWARDS)
+CHECKIN_TITLE = "打卡奖励"
+CHECKIN_TITLE_ROI: Rect = (400, 0, 480, 80)
+CHECKIN_HINT = "选择1个"
+CHECKIN_LIST_ROI: Rect = (340, 140, 480, 400)  # 奖励名字所在的范围（最下面露出一半的那一行不算）
+CHECKIN_RADIO_X = 919  # 单选按钮的中心，和这一行的名字一样高
+
+
 def in_roi(item: OcrItem, roi: Rect) -> bool:
     x, y, w, h = roi
     cx, cy = item.x + item.w / 2, item.cy
@@ -309,6 +329,17 @@ def find(items: list[OcrItem], text: str, roi: Rect | None = None, exact: bool =
 
 def center(item: OcrItem) -> tuple[int, int]:
     return round(item.x + item.w / 2), round(item.cy)
+
+
+def checkin_reward_dialog(items: list[OcrItem]) -> bool:
+    """是「演出打卡奖励」（要从几样奖励里选 1 个的那个弹窗）。"""
+    return find(items, CHECKIN_TITLE, CHECKIN_TITLE_ROI) is not None and find(items, CHECKIN_HINT) is not None
+
+
+def checkin_reward_radio(items: list[OcrItem], name: str) -> tuple[int, int] | None:
+    """「演出打卡奖励」里名字是 ``name`` 的那一行的单选按钮中心；列表里没有（或者只露出一半）时为 None。"""
+    row = find(items, name, CHECKIN_LIST_ROI, exact=True) or find(items, name, CHECKIN_LIST_ROI)
+    return (CHECKIN_RADIO_X, round(row.cy)) if row is not None else None
 
 
 def story_title(items: list[OcrItem]) -> str | None:
@@ -826,6 +857,12 @@ def _cp_value(items: list[OcrItem], roi: Rect) -> int | None:
 def cp_held(items: list[OcrItem]) -> int | None:
     """挑战pt消耗设置弹窗上持有的 CP。"""
     return _cp_value(items, CP_HELD_ROI)
+
+
+def cp_auto_cost(held: int, top: int | None = None) -> int | None:
+    """自动选消耗（``game.challenge_auto``）：持有 ``held`` CP 时这一局消耗多少——够用的最大一档（最多 ``top``，
+    再大的选不中）；最少的一档都不够时为 None。"""
+    return max((c for c in CP_RADIO if c <= held and (top is None or c <= top)), default=None)
 
 
 def cp_bar_held(items: list[OcrItem]) -> int | None:

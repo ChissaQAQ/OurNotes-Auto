@@ -56,6 +56,7 @@ ournotes-auto run --arena --until-lb-empty --wait-lb --lb-cost 3   # 掛機（�
 
 # 啟動遊戲並進入主畫面；領取日常報酬（預設除看故事、活動故事外七項全領，--jobs 只做其中幾項）
 ournotes-auto start
+ournotes-auto quit   # 關閉遊戲（不關模擬器）；遊戲沒在執行時什麼都不做
 ournotes-auto switch-account user_123   # 登出目前帳號，從登入紀錄裡選帳號名稱包含 user_123 的帳號登入，然後進入主畫面
 ournotes-auto daily
 ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # 錄音室練習、任務、通行證、期間限定任務、新手任務、T.G.W CARD、免費轉蛋、禮物盒
@@ -114,7 +115,7 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 - `rotate`：只用於挑戰演出（`--challenge` / `loop.challenge`），每局結束後在挑戰演出的「選擇樂曲」頁選中下一首，最後一首之後回到第一首。挑戰演出只能用 `current`、`rotate` 和 `ap_first`。
 - 挑戰演出的 `ap_first`：挑戰演出的「選擇樂曲」頁沒有篩選和隨機選曲，改為從選中的歌往下逐首看右側面板有沒有 ALL PERFECT 標記，打第一首沒 AP 的（同一首打 `loop.ap_max_attempts` 次還沒 AP 就不再打）；`loop.ap_first_difficulties` 的用法同上，都補完了就依 `-d` 的難度輪流打每首歌。
 
-挑戰演出（`--challenge`）每局消耗 `game.challenge_cost`（`--challenge-cost`，200 / 400 / 800 / 1600，預設 200；null 為不改遊戲裡的設定）挑戰pt，不消耗 LB，打到 CP 不夠一局為止，所以不能和 `--until-lb-empty`、`--wait-lb`、`--lb-refill` 一起用。
+挑戰演出（`--challenge`）每局消耗 `game.challenge_cost`（`--challenge-cost`，200 / 400 / 800 / 1600，預設 200；null 為不改遊戲裡的設定）挑戰pt（`--challenge-auto` / `game.challenge_auto` 時每局依持有數選夠用的最大一檔，先 1600，不夠了依序 800、400、200），不消耗 LB，打到 CP 不夠一局為止，所以不能和 `--until-lb-empty`、`--wait-lb`、`--lb-refill` 一起用。
 
 激奏舞台（`--arena` / `loop.arena`）：轉盤決定歌曲，打 `game.difficulty`（`-d`，預設 EXPERT），不跳過，`play.touch.great_ratio` 至少按 0.01 算（多人對局不用 AP）；`--lb-cost`、`--lb-auto`、`--lb-refill`、`--until-lb-empty`、`--wait-lb` 的用法同自由演出，在激奏舞台首頁的「消耗LB」裡設定。`--arena-band`（`loop.arena_band`）選樂團：`current`（預設）不換；`mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` 每局前換到這個樂團；`rotate` 從目前的樂團開始依遊戲裡的順序每個樂團打 `--arena-games`（`loop.arena_games_per_band`，預設 1）局再換下一個。不能和 `--challenge` 一起用。每局的樂團、名次、段位分增減、加減後的段位分、消耗的 LB 和判定數記在 `data/arena.jsonl`。
 

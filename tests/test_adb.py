@@ -217,3 +217,39 @@ def test_front_window_and_back(monkeypatch):
     assert adb.front_window(cfg).startswith("com.android.vending/") and not adb.app_in_front(cfg)
     fake_adb(monkeypatch)
     assert adb.front_window(cfg) is None and adb.app_in_front(cfg)
+
+
+def fake_stop(monkeypatch, running, dies=True):
+    """假的 adb：``pidof`` 对 ``running`` 里的有输出，``am force-stop`` 之后（``dies`` 时）不再有。返回执行过的 shell 命令。"""
+    calls, alive = [], set(running)
+
+    def runner(cfg, timeout_s):
+        def run(*args, check=True):
+            cmd = args[3:]
+            calls.append(cmd)
+            if cmd[:2] == ("am", "force-stop") and dies:
+                alive.discard(cmd[2])
+            out = "4321\n" if cmd[0] == "pidof" and cmd[1] in alive else ""
+            return subprocess.CompletedProcess(args, 0, stdout=out.encode(), stderr=b"")
+
+        return "127.0.0.1:16416", run
+
+    monkeypatch.setattr(adb, "_runner", runner)
+    return calls
+
+
+def test_stop_app(monkeypatch):
+    """#144 退出游戏：在运行就 force-stop 这个包（只动游戏，不关模拟器），没在运行时什么都不做。"""
+    cfg = DeviceConfig(package=INTL_PLAY_PACKAGE)
+    calls = fake_stop(monkeypatch, running=(INTL_PLAY_PACKAGE,))
+    assert adb.stop_app(cfg) is True
+    assert calls == [("pidof", INTL_PLAY_PACKAGE), ("am", "force-stop", INTL_PLAY_PACKAGE), ("pidof", INTL_PLAY_PACKAGE)]
+    calls = fake_stop(monkeypatch, running=(JP_PACKAGE,))  # 在运行的是别的包：不动它
+    assert adb.stop_app(cfg) is False and calls == [("pidof", INTL_PLAY_PACKAGE)]
+
+
+def test_stop_app_still_running(monkeypatch):
+    """结束之后游戏还在：说清楚，不当作已经退出。"""
+    fake_stop(monkeypatch, running=(INTL_PACKAGE,), dies=False)
+    with pytest.raises(adb.AdbError, match="还在运行"):
+        adb.stop_app(DeviceConfig(package=INTL_PACKAGE))

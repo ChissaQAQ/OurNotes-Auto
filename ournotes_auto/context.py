@@ -208,6 +208,8 @@ def open_context(
             app_running=lambda: adb.app_running(cfg.device),
             store=store,
             app_in_front=lambda: adb.app_in_front(cfg.device),
+            front_window=lambda: adb.front_window(cfg.device),
+            press_back=lambda: adb.press_back(cfg.device),
         )
         # 演奏界面连击数小图 → 数字（结束后在日志里列出断连处附近的音符，调试漏判用）
         reader = combo_reader(ocr.read_text) if watch_combo else None

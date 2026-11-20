@@ -26,6 +26,7 @@ TASKS = {
     "challenge": "挑战演出",
     "arena": "激奏舞台",
     "arena_idle": "挂机（激奏舞台）",
+    "quit": "退出游戏",
     "records": "打开统计窗口",
     "notify_test": "推送测试",
 }
@@ -233,14 +234,17 @@ def _difficulty(attach: Mapping[str, Any]) -> tuple[str, bool]:
     return (DIFFICULTIES[-1] if high_first else difficulty), high_first
 
 
-def _challenge_cost(attach: Mapping[str, Any]) -> str:
-    """``challenge_cost``：``keep``（不改游戏里的设置）或 200/400/800/1600。"""
-    if str(_get(attach, "challenge_cost")).strip().lower() == "keep":
-        return "null"
+def _challenge_cost(attach: Mapping[str, Any]) -> dict[str, str]:
+    """``challenge_cost``：``auto``（每局按持有数自动选）、``keep``（不改游戏里的设置）或 200/400/800/1600。"""
+    raw = str(_get(attach, "challenge_cost")).strip().lower()
+    if raw == "auto":
+        return {"game.challenge_cost": "null", "game.challenge_auto": "true"}
+    if raw == "keep":
+        return {"game.challenge_cost": "null", "game.challenge_auto": "false"}
     cost = _int(attach, "challenge_cost", 0)
     if cost not in CHALLENGE_COSTS:
-        raise ParamError(f"参数 challenge_cost 应为 keep/{'/'.join(map(str, CHALLENGE_COSTS))}：{cost}")
-    return str(cost)
+        raise ParamError(f"参数 challenge_cost 应为 auto/keep/{'/'.join(map(str, CHALLENGE_COSTS))}：{cost}")
+    return {"game.challenge_cost": str(cost), "game.challenge_auto": "false"}
 
 
 def _challenge_settings(attach: Mapping[str, Any]) -> dict[str, str]:
@@ -249,7 +253,7 @@ def _challenge_settings(attach: Mapping[str, Any]) -> dict[str, str]:
     sets = {
         "loop.song_mode": (mode := _choice(attach, "challenge_song_mode", CHALLENGE_SONG_MODES)),
         "game.difficulty": difficulty,
-        "game.challenge_cost": _challenge_cost(attach),
+        **_challenge_cost(attach),
         "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
@@ -300,11 +304,19 @@ def _daily_hours(attach: Mapping[str, Any]) -> str:
     return str(_int(attach, "daily_hours", 0, 24)) if "daily_hours" in attach else "0"
 
 
+CHECKIN_REWARDS = ("default", "gems", "crystal", "sp_ticket", "prism")  # 与 nav.screens.CHECKIN_REWARD_MODES 一致
+
+
+def _checkin_reward(attach: Mapping[str, Any]) -> str:
+    """``checkin_reward``：每周第 5 天的「演出打卡奖励」拿哪个；资源是旧版、没有这一项时不改（拿游戏里选中的）。"""
+    return _choice(attach, "checkin_reward", CHECKIN_REWARDS) if "checkin_reward" in attach else "default"
+
+
 def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
     """任务名 + 界面选项 → ``--set`` 配置项。
 
     共用 attach 键：``max_plays`` ``touch`` ``restart_low_fps``（关掉时不因游戏变卡重启，旧资源没有这项时开）、
-    ``daily_hours``（每日演奏上限）和拟人化的 ``human_great`` ``human_great_max`` ``human_timing`` ``human_position`` ``human_behavior``。
+    ``daily_hours``（每日演奏上限）、``checkin_reward``（演出打卡奖励拿哪个）和拟人化的 ``human_great`` ``human_great_max`` ``human_timing`` ``human_position`` ``human_behavior``。
     重复刷歌 / 清体力 / 挂机另有 ``song_mode`` ``difficulty``（四个难度或 ``high_first``；``song_mode`` 为 list 时还有
     ``song_list``）；重复刷歌另有 ``lb_cost``（``keep``、``auto`` 或 0~5），
     清体力 / 挂机另有 ``clear_lb_cost``（``auto`` 或清体力 1~5、挂机 0~5：0 时不等 LB，有就消耗、用完消耗 0 一直打）
@@ -328,6 +340,7 @@ def run_settings(task: str, attach: Mapping[str, Any]) -> dict[str, str]:
         "loop.studio_claim_hours": _studio_claim(attach) if idle else "0",
         "loop.daily_claim_time": _daily_claim(attach) if idle else "",
         "loop.daily_hours": _daily_hours(attach),
+        "game.checkin_reward": _checkin_reward(attach),
         **_humanize(attach),
     }
     if not flag(attach, "restart_low_fps", True):
@@ -441,6 +454,9 @@ def worker_args(task: str, attach: Mapping[str, Any], device: Mapping[str, str])
     if task == "start":
         sets = {**device, "device.touch": _choice(attach, "touch", TOUCH_MODES)}
         tail = ["start"]
+    elif task == "quit":
+        sets = dict(device)
+        tail = ["quit"]
     elif task == "switch_account":
         if "device.package" in language:
             raise ParamError("日服不能切换账号（只有国际服的 B 站账号能切换）")

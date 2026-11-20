@@ -313,3 +313,33 @@ def test_chore_history(tmp_path):
     assert [c.kind for c in store.chore_history(limit=1)] == ["ad_lb"]
     assert parse_chore(json.dumps(asdict(got[1]), ensure_ascii=False)) == got[1]
     assert set(CHORE_ADS) | set(CHORE_RECRUITS) <= set(CHORE_KINDS) and all(n >= 1 for _, n in CHORE_KINDS.values())
+
+
+def test_ads_pending(tmp_path):
+    """没要到广告的「看广告」项目：按服和账号记，只在记下的那个游戏日有效；格式不对的当作没有。"""
+    store = RecordStore(tmp_path)
+    assert store.ads_pending("pkg", "2026-11-19") is None
+    store.set_ads_pending("pkg", "2026-11-19", None)  # 没有可删的：不写文件
+    assert not store.state_path.exists()
+    entry = {"jobs": ["recruit", "lb"], "studio_band": "highest", "tries": 1, "next": 1795000000.0}
+    store.set_ads_pending("pkg", "2026-11-19", entry)
+    assert RecordStore(tmp_path).ads_pending("pkg", "2026-11-19") == entry
+    assert store.ads_pending("pkg", "2026-11-20") is None and store.ads_pending("other", "2026-11-19") is None
+    store.set_account("pkg", "second")  # 换了账号：各记各的
+    assert store.ads_pending("pkg", "2026-11-19") is None
+    store.set_ads_pending("pkg", "2026-11-19", {**entry, "jobs": ["studio"]})
+    store.set_account("pkg", "")
+    assert store.ads_pending("pkg", "2026-11-19") == entry
+    store.set_ads_pending("pkg", "2026-11-19", None)
+    assert store.ads_pending("pkg", "2026-11-19") is None
+    store.set_account("pkg", "second")
+    assert store.ads_pending("pkg", "2026-11-19")["jobs"] == ["studio"]
+    for bad in ({"jobs": []}, {"jobs": "lb"}, {"jobs": [1]}, {"jobs": ["lb"], "tries": "x"}, {"jobs": ["lb"], "next": None}):
+        store.set_ads_pending("pkg", "2026-11-19", bad)
+        assert store.ads_pending("pkg", "2026-11-19") is None, bad
+    state = json.loads(store.state_path.read_text(encoding="utf-8"))
+    state["ads_pending"] = ["oops"]
+    store.state_path.write_text(json.dumps(state), encoding="utf-8")
+    assert store.ads_pending("pkg", "2026-11-19") is None
+    store.set_ads_pending("pkg", "2026-11-19", entry)
+    assert store.ads_pending("pkg", "2026-11-19") == entry

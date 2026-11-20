@@ -164,3 +164,43 @@ def test_rebind_when_display_changes():
     t.flush()
     assert calls == ["stop", ("spawn", "/dev/input/event12")]
     assert fresh.sent == ["d 0 149 897 50\nc\n"]
+
+
+def test_close_survives_dead_adb(caplog):
+    """退出时模拟器、adb 没反应（2026-11-17：pkill 等了 15 秒超时）：只记警告，不能变成「意外错误」。"""
+    import subprocess
+
+    t = make_touch()
+    t._proc = object()
+    stopped = []
+    t._stop_proc = lambda: stopped.append(True)
+
+    def hung():
+        raise subprocess.TimeoutExpired(["adb", "shell", "pkill"], 15)
+
+    t._kill_server = hung
+    t.down(1, 100, 100)
+    t.flush()
+    with caplog.at_level("WARNING", logger="ournotes_auto.device.minitouch"):
+        t.close()
+    assert stopped == [True] and t._stdin is None
+    assert "没能结束模拟器里的 minitouch" in caplog.text
+
+
+def test_close_survives_broken_pipe(caplog):
+    """退出时松不开触点（管道断了，重开 minitouch 也不成）：照样把后面的清理做完。"""
+    t = make_touch()
+    t._stdin = BrokenStdin()
+    t._proc = object()
+    calls = []
+    t._stop_proc = lambda: calls.append("stop")
+
+    def spawn():
+        raise RuntimeError("minitouch 握手失败")
+
+    t._spawn = spawn
+    t._kill_server = lambda: calls.append("kill")
+    t.down(1, 100, 100)
+    with caplog.at_level("WARNING", logger="ournotes_auto.device.minitouch"):
+        t.close()
+    assert calls == ["stop", "stop", "kill"] and "没能松开触点" in caplog.text

@@ -1,6 +1,15 @@
 {
     "task": [
         {
+            "name": "退出游戏",
+            "label": "$task.Quit",
+            "entry": "OurNotes_Quit",
+            "group": [
+                "tools"
+            ],
+            "description": "$task.Quit.desc"
+        },
+        {
             "name": "记录汇总",
             "label": "$task.Records",
             "entry": "OurNotes_Records",

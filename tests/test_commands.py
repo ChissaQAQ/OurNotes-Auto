@@ -97,6 +97,11 @@ def test_run_passes_update_event(monkeypatch):
     gate = SongGate(threading.Event())
     fake_run(monkeypatch, launched=False, update=update, gate=gate)
     assert len(runner.Runner.args) == 11 and runner.Runner.args[8] is update and runner.Runner.args[10] is gate
+    # 导航也知道「收到了停止请求、正等这首打完」：这时游戏不在了就不重启、不干等
+    nav = runner.Runner.args[1]
+    assert nav.stop_pending() is False
+    gate.request()
+    assert nav.stop_pending() is True
     assert not hasattr(build_parser().parse_args(["run"]), "update")
     fake_run(monkeypatch, launched=False)
     assert len(runner.Runner.args) == 11 and runner.Runner.args[8] is None and runner.Runner.args[10] is None
@@ -157,3 +162,50 @@ def test_switch_account_intl_packages(monkeypatch, caplog):
     assert commands.cmd_switch_account(cfg, args) == 2
     assert launched == list(INTL_PACKAGES) and "只有国际服能切换账号" in caplog.text
 
+
+def test_run_challenge_auto_arg(monkeypatch):
+    """--challenge-auto：挑战演出每局按持有的挑战pt 自动选消耗；不加时照 game.challenge_cost。"""
+    assert build_parser().parse_args(["run", "--challenge", "--challenge-auto"]).challenge_auto is True
+    fake_run(monkeypatch, launched=False, challenge=True, challenge_auto=True, song_mode="rotate")
+    cfg = runner.Runner.args[0]
+    assert cfg.loop.challenge and cfg.game.challenge_auto is True
+    fake_run(monkeypatch, launched=False, challenge=True, song_mode="rotate")
+    assert runner.Runner.args[0].game.challenge_auto is False
+
+
+def quit_game(monkeypatch, stop_app):
+    """运行 ``quit`` 命令；``stop_app`` 代替 adb.stop_app。返回 (退出码, 用到的包名)。"""
+    from ournotes_auto.config import INTL_PACKAGE, INTL_PLAY_PACKAGE
+    from ournotes_auto.device import adb
+
+    monkeypatch.setattr(adb, "resolve_package", lambda device: setattr(device, "package", INTL_PLAY_PACKAGE))
+    seen = []
+
+    def stop(device):
+        seen.append(device.package)
+        return stop_app()
+
+    monkeypatch.setattr(adb, "stop_app", stop)
+    cfg = Config()
+    cfg.device.package = INTL_PACKAGE
+    args = build_parser().parse_args(["quit"])
+    args.stop = threading.Event()
+    return args.func(cfg, args), seen
+
+
+def test_quit_command(monkeypatch, caplog):
+    """#144 退出游戏：结束模拟器里装的那个版本的游戏；没在运行也算成功；adb 出错时报错、退出码 1（不是意外错误）。"""
+    import subprocess
+
+    from ournotes_auto.config import INTL_PLAY_PACKAGE
+
+    with caplog.at_level("INFO", logger="ournotes_auto"):
+        assert quit_game(monkeypatch, lambda: True) == (0, [INTL_PLAY_PACKAGE])
+        assert quit_game(monkeypatch, lambda: False) == (0, [INTL_PLAY_PACKAGE])
+    assert f"已退出游戏（{INTL_PLAY_PACKAGE}）" in caplog.text and f"游戏没有在运行（{INTL_PLAY_PACKAGE}）" in caplog.text
+
+    def hung():
+        raise subprocess.TimeoutExpired(["adb", "shell", "am", "force-stop"], 30)
+
+    assert quit_game(monkeypatch, hung)[0] == 1
+    assert "退出游戏失败" in caplog.text

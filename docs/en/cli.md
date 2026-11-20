@@ -56,6 +56,7 @@ ournotes-auto run --arena --until-lb-empty --wait-lb --lb-cost 3   # AFK Farming
 
 # Start the game and enter the Home screen; claim daily rewards (by default, all seven items except stories and event stories; --jobs to do only some of them)
 ournotes-auto start
+ournotes-auto quit   # close the game (the emulator stays open); does nothing if the game isn't running
 ournotes-auto switch-account user_123   # log out of the current account, log in to the account whose name contains user_123 from the login history, then enter the Home screen
 ournotes-auto daily
 ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # Studio Practice, Missions, Mission Pass, Limited-Time Missions, Beginner Missions, T.G.W CARD, free gacha pull, Gift Box
@@ -114,7 +115,7 @@ Song selection modes for `run` (`loop.song_mode`):
 - `rotate`: only for Challenge LIVE (`--challenge` / `loop.challenge`); after each round, selects the next song on the Challenge LIVE song selection screen, going back to the first after the last. Challenge LIVE can only use `current`, `rotate` and `ap_first`.
 - `ap_first` in Challenge LIVE: the Challenge LIVE song selection screen has no filter or random selection, so instead it checks song by song, downward from the selected one, whether the right-side panel has the ALL PERFECT mark, and plays the first song that isn't AP (a song that still isn't AP after `loop.ap_max_attempts` plays is no longer played); `loop.ap_first_difficulties` works as above, and once all are done it rotates through the songs at the `-d` difficulty.
 
-Challenge LIVE (`--challenge`) spends `game.challenge_cost` (`--challenge-cost`, 200 / 400 / 800 / 1600, default 200; null keeps the in-game setting) Challenge Pts per round, uses no LB, and plays until CP isn't enough for another round, so it can't be combined with `--until-lb-empty`, `--wait-lb` or `--lb-refill`.
+Challenge LIVE (`--challenge`) spends `game.challenge_cost` (`--challenge-cost`, 200 / 400 / 800 / 1600, default 200; null keeps the in-game setting) Challenge Pts per round (with `--challenge-auto` / `game.challenge_auto`, each round picks the largest cost the Challenge Pts held can cover: 1600 first, then 800, 400, 200), uses no LB, and plays until CP isn't enough for another round, so it can't be combined with `--until-lb-empty`, `--wait-lb` or `--lb-refill`.
 
 Arena (`--arena` / `loop.arena`): the roulette picks the song, it plays `game.difficulty` (`-d`, EXPERT by default), never skips, and `play.touch.great_ratio` is treated as at least 0.01 (multiplayer doesn't need AP). `--lb-cost`, `--lb-auto`, `--lb-refill`, `--until-lb-empty` and `--wait-lb` work as in Free LIVE, through 「消耗LB」 on the Arena top page. `--arena-band` (`loop.arena_band`) picks the band: `current` (default) keeps it; `mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` switches to that band before each round; `rotate` starts from the current band and moves on to the next one in the game's order after `--arena-games` (`loop.arena_games_per_band`, default 1) rounds. Can't be combined with `--challenge`. Each round's band, placement, rank point change, rank points after the change, LB spent and judgment counts are recorded in `data/arena.jsonl`.
 

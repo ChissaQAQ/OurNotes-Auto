@@ -1,3 +1,18 @@
+# What's New in v0.2.8
+
+- New task "Quit Game" (#144): closes the game without closing the emulator. Put it at the end of the task list and the game is closed once the tasks before it have finished
+- New global option "LIVE Stamp Reward" (#139): for the LIVE Stamp reward dialog on the first live of the 5th day each week you can choose Stars, Miracle Crystal, SP Skill Enhancement Ticket or Hope Prism; by default nothing is changed (the game preselects Stars). If the row cannot be selected or the dialog is not recognized, it takes whatever the game has selected and does not get stuck. The dialog only appears once a week and has so far only been checked against screenshots of the Simplified Chinese game
+- Fixed the first live of the 5th day each week showing more popups over the result screen than the tool would close, which ended in an error and left that live out of the stats (#132)
+- Challenge LIVE: "Challenge Pts per Round" adds "Auto (by CP held)": each round uses the largest amount you can afford (1600 first, then 800, 400, 200) until even 200 is not enough
+- Watch Ads: when the game says the ad could not be loaded (the daily count is not used up), that item is set aside, the rest carries on, and it is tried again 1 and 2 minutes after the others are done; if it still fails, a later "AFK Farming" run on the same day retries it after a while (30 minutes, then 1, 2 and 4 hours)
+- When the live screen is not right (the first note still never shows up after a pause-and-retry), the game is restarted and playing carries on; if it happens again before a single live has been completed, the task stops instead of wasting LB
+- "Finish Current Song on Stop": when the current song can no longer be completed (retries used up, the live screen is not right, or the game is no longer running), it stops right away instead of waiting
+- When Skip on a full-screen video (such as a band anniversary video) brings up a confirmation asking whether to skip the video, OK is tapped; previously the confirmation was not recognized, so the tool had to wait for the video to end and restarted the game along the way. For now it is only recognized with the game in Simplified Chinese
+- When a gacha pull stops on the showcase of a newly pulled member (a full-screen illustration with no buttons), the upper part of the screen is tapped after a few seconds to move on; previously the tool waited until it timed out and ended up restarting the game. Not yet verified on a real device; if the tap does not get past it, it behaves as before
+- An unresponsive emulator or adb when a task exits is no longer reported as an "unexpected error"
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.8
+
 # What's New in v0.2.7
 
 - New task "Watch Ads" (#140): watches the in-game ads for the daily rewards — the CM gacha (3 pulls a day), LIVE BOOST recovery (twice a day) and the Studio Practice SKIP (once a day); each can be turned off individually. The game has to be able to show ads (the Google Play version), and for now only Simplified Chinese is recognized. It only taps the watch-ad buttons, never taps anything inside an ad, and never touches Stars or items

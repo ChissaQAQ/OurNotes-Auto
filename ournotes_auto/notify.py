@@ -31,8 +31,8 @@ BARK_SERVER = "https://api.day.app"
 TARGET_NAMES = {"ntfy": "ntfy 的主题", "serverchan": "Server酱的 SendKey", "bark": "Bark 的 key", "webhook": "webhook 的网址"}
 SERVERCHAN_TITLE_MAX = 32  # Server酱的标题最长 32 个字
 # 会推送的命令 → 命令行运行时消息里的任务名（从界面运行时用界面上的任务名）
-COMMANDS = {"run": "连续演奏", "daily": "领取日常", "start": "启动游戏", "switch-account": "切换账号"}
-DONE_COMMANDS = ("run", "daily")  # 完成时也推送（启动游戏、切换账号只是准备步骤，出错时才推送）
+COMMANDS = {"run": "连续演奏", "daily": "领取日常", "start": "启动游戏", "switch-account": "切换账号", "quit": "退出游戏"}
+DONE_COMMANDS = ("run", "daily")  # 完成时也推送（启动游戏、切换账号、退出游戏只是前后的步骤，出错时才推送）
 LOG_HINT = "详细日志见 data/ournotes.log"
 
 

@@ -13,7 +13,7 @@ from ournotes_auto.config import Config
 from ournotes_auto.player.executor import ExecStats
 from ournotes_auto.player.guard import LifeDepleted, PlayInterrupted
 from ournotes_auto.player.session import PlayOutcome, SyncFailed
-from ournotes_auto.player.sync import SyncResult
+from ournotes_auto.player.sync import NoFirstNote, SyncResult
 from ournotes_auto.records import RecordStore
 from ournotes_auto.result_reader import ResultCounts
 from ournotes_auto.runner import (
@@ -111,10 +111,12 @@ class FakeSession:
         fps=(),
         interrupts=0,
         rough=False,
+        timeouts=0,
     ):
         """``fail``：同步总是失败；``fails``：前几次同步失败，之后成功；``life_zeros``：前几次演奏中生命值归零；
         ``interrupt``：演奏总是被打断；``interrupts``：前几次被打断；``fps``：依次每次同步测到的出帧率（用完了是 60）；
-        ``rough``：同步失败都只是残差偏大（``SyncResult.rough``）。"""
+        ``rough``：同步失败都只是残差偏大（``SyncResult.rough``）；``timeouts``：前几次到时限连首音符都没看到。"""
+        self.timeouts = timeouts
         self.fail, self.max_late, self.interrupt, self.rough = fail, max_late, interrupt, rough
         self.interrupts = interrupts
         self.fps = list(fps)
@@ -127,6 +129,10 @@ class FakeSession:
 
     def play(self, chart, stop=None, retry=False, rough_ok=False):
         self.retries.append(retry)
+        self.timeouts -= 1
+        if self.timeouts >= 0:
+            self.last_fps = None
+            raise NoFirstNote("40.0s 内未检测到首音符（已处理 1968 帧）")
         failed = self.fail or self.fails > 0
         self.fails -= 1
         self.last_fps = self.fps.pop(0) if self.fps else 60.0
@@ -1892,3 +1898,250 @@ def test_song_gate_race():
         assert not stop.is_set()  # 开始了这首就打完再停
     gate.thread.join()
     assert stop.is_set() and not gate.in_song
+
+
+# ---------------------------------------------------------------- 演奏画面不对劲：重启游戏
+
+
+def test_no_first_note_once_retries(tmp_path):
+    """到时限没看到首音符，第一次：照常暂停重试，不重启游戏。"""
+    runner, nav, store = make(tmp_path, timeouts=1)
+    runner.cfg.loop.max_plays = 1
+    stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 0 and runner.session.retries == [False, True]
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "result", "leave"]
+
+
+def test_no_first_note_twice_restarts_game(tmp_path, caplog):
+    """重试过还是连首音符都看不到：演奏画面不对劲，不再试、不等歌放完，重启游戏；这局算失败，下一局照常打。"""
+    runner, nav, store = make(tmp_path, timeouts=2)
+    runner.cfg.loop.max_plays = 1
+    with caplog.at_level("WARNING", logger="ournotes_auto.runner"):
+        stats = runner.run()
+    assert stats.plays == 1 and stats.failures == 1 and runner.session.retries == [False, True, False]
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "restart", "ensure:expert", "start:zero", "result", "leave"]
+    assert "演奏画面不对劲，重启游戏" in caplog.text and "已重启游戏" in caplog.text
+    assert len(store.history()) == 1 and "截图" not in caplog.text  # 假导航存不了截图：不影响流程
+
+
+def test_abnormal_restart_keeps_screenshot(tmp_path, caplog):
+    """重启游戏前把当时的画面留一张（事后好看是哪里不对劲），路径写进日志。"""
+    runner, nav, store = make(tmp_path, timeouts=2)
+    runner.cfg.loop.max_plays = 1
+    shots = []
+    nav.debug_shot = lambda name: shots.append(name) or "debug/nav/x_no_first_note.png"
+    with caplog.at_level("WARNING", logger="ournotes_auto.runner"):
+        runner.run()
+    assert shots == ["no_first_note"] and "（截图 debug/nav/x_no_first_note.png）" in caplog.text
+
+
+def test_abnormal_again_after_restart_stops(tmp_path, caplog):
+    """重启游戏后下一局还是这样：再打只是白白消耗 LB，任务停下（只重启一次）。"""
+    runner, nav, store = make(tmp_path, timeouts=99)
+    runner.cfg.loop.max_plays = 0
+    with caplog.at_level("ERROR", logger="ournotes_auto.runner"):
+        stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 2 and nav.calls.count("restart") == 1
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "restart", "ensure:expert", "start:zero", "retry"]
+    assert "重启游戏后还是这样" in caplog.text and store.history() == []
+
+
+def test_abnormal_restart_counts_anew_after_good_round(tmp_path):
+    """重启后打成过一局，之后再遇到就重新算：还是先重启游戏，不直接停下。"""
+    runner, nav, store = make(tmp_path, timeouts=2)
+    runner.cfg.loop.max_plays = 2
+    leave = nav.leave_result
+
+    def again():
+        leave()
+        if nav.calls.count("leave") == 1:
+            runner.session.timeouts = 2
+
+    nav.leave_result = again
+    stats = runner.run()
+    assert stats.plays == 2 and stats.failures == 2 and nav.calls.count("restart") == 2
+
+
+def test_no_first_note_without_restart_waits_out_song(tmp_path):
+    """没法重启游戏：不再试第三次，这局放弃、等歌曲放完，和原来一样接着打。"""
+    runner, nav, store = make(tmp_path, timeouts=2)
+    runner.cfg.loop.max_plays = 0
+    runner.cfg.loop.max_failures = 1
+    nav.restart_game = lambda: nav.calls.append("restart") or False
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 1
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "restart", "result", "leave"]
+
+
+def test_no_first_note_in_arena_never_restarts(tmp_path):
+    """激奏舞台的对局退不出去：看不到首音符也不重启游戏，等这局结束。"""
+    runner, nav, store = make_arena(tmp_path, max_plays=0, timeouts=99)
+    runner.cfg.loop.max_failures = 2
+    stats = runner.run()
+    assert stats.failures == 2 and "restart" not in nav.calls and "retry" not in nav.calls
+    assert nav.calls.count("arena_result") == 2
+
+
+# ---------------------------------------------------------------- 「停止时打完当前这首」：这首打不成了就不再等
+
+
+def test_song_gate_give_up():
+    """这首歌打不成了：收到过停止请求就立即停止；还没收到的，之后一来也立即生效（不再算「正在打歌」）。"""
+    from ournotes_auto.songgate import SongGate
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    with gate.song():
+        assert gate.request() is True and not stop.is_set()
+        assert gate.give_up() is True and stop.is_set() and not gate.in_song
+        assert gate.give_up() is False  # 已经停了
+
+    stop = threading.Event()
+    gate = SongGate(stop)
+    with gate.song():
+        assert gate.give_up() is False and not stop.is_set() and not gate.in_song
+        assert gate.request() is False and stop.is_set()
+
+
+def _request_at_start(nav, gate):
+    start = nav.start_live
+
+    def requested(lb_short="zero"):
+        assert gate.request() is True
+        return start(lb_short)
+
+    nav.start_live = requested
+
+
+def test_stop_after_song_abandoned_stops_at_once(tmp_path, caplog):
+    """等这首打完时重试次数用完了、这局放弃：不等歌曲放完（最长 5 分钟），立即停止；不算失败。"""
+    runner, nav, store = make(tmp_path, fail=True)
+    runner, gate = with_gate(runner)
+    _request_at_start(nav, gate)
+    with caplog.at_level("WARNING", logger="ournotes_auto.runner"):
+        stats = runner.run()
+    assert runner.stop.is_set() and not gate.in_song and stats.plays == 0 and stats.failures == 0
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "retry"]
+    assert "这首歌打不成了" in caplog.text and "立即停止" in caplog.text
+
+
+def test_stop_after_song_abnormal_stops_without_restart(tmp_path):
+    """等这首打完时演奏画面不对劲（重试过还是看不到首音符）：不重启游戏，立即停止（2026-11-17 停不下来的情况）。"""
+    runner, nav, store = make(tmp_path, timeouts=99)
+    runner, gate = with_gate(runner)
+    _request_at_start(nav, gate)
+    stats = runner.run()
+    assert runner.stop.is_set() and stats.plays == 0 and stats.failures == 0
+    assert nav.calls == ["ensure:expert", "start:zero", "retry"]
+
+
+def test_stop_after_song_failed_retry_stops_at_once(tmp_path):
+    """等这首打完时重试不成（不在演奏画面上）：这首打不成了，立即停止，不等结算。"""
+    runner, nav, store = make(tmp_path, fails=1)
+    runner, gate = with_gate(runner)
+    _request_at_start(nav, gate)
+
+    def broken():
+        nav.calls.append("retry")
+        raise NavigationError("没有在演奏画面上（看不到右上角的暂停按钮），不重试")
+
+    nav.retry_live = broken
+    stats = runner.run()
+    assert runner.stop.is_set() and stats.plays == 0 and stats.failures == 0
+    assert nav.calls == ["ensure:expert", "start:zero", "retry"]
+
+
+def test_stop_request_after_abandon_is_immediate(tmp_path):
+    """这局已经放弃、在等歌曲放完时才点停止：没有成绩可等，立即停止。"""
+    runner, nav, store = make(tmp_path, fail=True)
+    runner, gate = with_gate(runner)
+    read = nav.read_result
+
+    def requested(expected_total=None):
+        assert gate.request() is False and runner.stop.is_set()
+        return read(expected_total)
+
+    nav.read_result = requested
+    stats = runner.run()
+    assert stats.plays == 0 and stats.failures == 0 and "leave" not in nav.calls
+    assert nav.calls == ["ensure:expert", "start:zero", "retry", "retry"]
+
+
+def test_stop_after_song_arena_waits_even_when_not_playing(tmp_path):
+    """激奏舞台的对局退不出去：同步失败、这局不打了，也等对局结束、记下名次再停止。"""
+    runner, nav, store = make_arena(tmp_path, fail=True)
+    runner, gate = with_gate(runner)
+    ready = nav.arena_ready
+
+    def requested():
+        assert gate.request() is True and not runner.stop.is_set()
+        ready()
+
+    nav.arena_ready = requested
+    stats = runner.run()
+    assert runner.stop.is_set() and nav.calls == ["ensure:expert", "arena:zero", "ready", "arena_result", "leave"]
+    assert stats.plays == 0 and len(store.arena_history()) == 1
+
+
+def test_idle_retries_unavailable_ads_while_waiting_lb(tmp_path):
+    """挂机等 LB 时，到了再试广告的时间（今天的「看广告」没要到广告）也醒来去试，试完回乐队确认页接着等；没到时间不去。"""
+    runner, nav, starts, statuses = idle(tmp_path, [(0, 1000), (3, None), (3, None)])
+    start = at(3, 22, 25)
+    runner.wall_clock = lambda: start + runner.stop.now
+    due = [start + 300]
+
+    def retry_ads(now):
+        nav.calls.append("ads")
+        due[0] = None  # 都要到了
+        return []
+
+    nav.ads_next = lambda now: due[0]
+    nav.retry_ads = retry_ads
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 0
+    assert runner.stop.waits == [300]  # 本该睡到 LB 恢复（1005s），先醒来再试广告
+    waiting = ["ensure:expert", "lb", "ads", "ensure:expert", "lb", "lb_check"]
+    expected = ["ensure:expert", "start", "next:random", "ensure:expert", "start", *waiting]
+    calls = [c for c in nav.calls if c not in ("result", "leave", "clear_status")]
+    assert calls[: len(expected)] == expected and nav.calls.count("ads") == 1
+
+
+def test_idle_ad_retry_error_does_not_stop_idle(tmp_path):
+    """再试广告时导航出错：记下来接着挂机；画面卡住照常停止。"""
+    from ournotes_auto.runner import NavigationError, ScreenFrozen
+
+    runner, nav, starts, statuses = idle(tmp_path, [(0, 1000), (3, None), (3, None)])
+    start = at(3, 22, 25)
+    runner.wall_clock = lambda: start + runner.stop.now
+    due = [start]
+
+    def broken(now):
+        due[0] = None
+        raise NavigationError("60s 内没能回到主界面")
+
+    nav.ads_next = lambda now: due[0]
+    nav.retry_ads = broken
+    stats = runner.run()
+    assert stats.plays == 3 and stats.failures == 0
+
+    runner, nav, starts, statuses = idle(tmp_path / "frozen", [(0, 1000), (3, None), (3, None)])
+    runner.wall_clock = lambda: start + runner.stop.now
+
+    def frozen(now):
+        raise ScreenFrozen("画面卡住了")
+
+    nav.ads_next = lambda now: start
+    nav.retry_ads = frozen
+    stats = runner.run()
+    assert stats.failures == 1 and stats.plays < 3
+
+
+def test_non_idle_tasks_never_retry_ads(tmp_path):
+    """不是挂机的任务（清体力、重复刷歌等）不看广告：存档里记着没要到的也不管。"""
+    runner, nav, store = make(tmp_path, mode="random")
+    runner.cfg.loop.max_plays = 2
+    asked = []
+    nav.ads_next = lambda now: asked.append(now) or 0.0
+    nav.retry_ads = lambda now: asked.append("retry") or []
+    stats = runner.run()
+    assert stats.plays == 2 and asked == []

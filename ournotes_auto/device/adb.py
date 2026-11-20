@@ -176,6 +176,19 @@ def start_app(cfg: DeviceConfig, timeout_s: float = 30.0) -> bool:
     return True
 
 
+def stop_app(cfg: DeviceConfig, timeout_s: float = 30.0) -> bool:
+    """游戏在运行时结束它（``am force-stop``，不关模拟器），返回是否结束了；没在运行时什么都不做。
+    结束之后还在运行（没结束掉）时抛 :class:`AdbError`。"""
+    serial, run = _runner(cfg, timeout_s)
+    if not _running(run, serial, cfg.package):
+        return False
+    logger.info("经 adb（%s）结束 %s", serial, cfg.package)
+    run("-s", serial, "shell", "am", "force-stop", cfg.package)
+    if _running(run, serial, cfg.package):
+        raise AdbError(f"{cfg.package} 结束之后还在运行")
+    return True
+
+
 def resolve_package(cfg: DeviceConfig, timeout_s: float = 15.0) -> None:
     """国际服有两个包名（官网 / B 站版、Google Play 版），配置的是其中一个时按模拟器里装的改 ``cfg.package``：
     配置的没装、另一个装了，或者两个都装了、只有另一个在运行，就改用另一个。adb 出错时不改。"""

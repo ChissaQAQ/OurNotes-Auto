@@ -30,6 +30,7 @@
             "human_behavior": false,
             "human_great_max": 0,
             "daily_hours": 0,
+            "checkin_reward": "default",
             "ap_expert": true,
             "ap_hard": true,
             "ap_normal": true,
@@ -68,6 +69,17 @@
                 "custom_action": "OurNotesRun",
                 "custom_action_param": {
                     "task": "start"
+                }
+            }
+        }
+    },
+    "OurNotes_Quit": {
+        "action": {
+            "type": "Custom",
+            "param": {
+                "custom_action": "OurNotesRun",
+                "custom_action_param": {
+                    "task": "quit"
                 }
             }
         }

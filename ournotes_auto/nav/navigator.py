@@ -63,6 +63,8 @@ from .jacket import JacketMatcher, crop_jacket
 from .ocr import MaaOcr
 from .screens import (
     BOTTOM_LEFT_ROI,
+    CHECKIN_REWARD_MODES,
+    CHECKIN_REWARDS,
     CLOSE_ROI,
     CP_RADIO,
     LB_ALL_CHECK,
@@ -74,8 +76,8 @@ from .screens import (
     LEVEL_ROI,
     NEXT_ROI,
     NOTIFY_LOGO_Y,
-    OK_POPUP_BLOCK,
     OK_POPUP_ROI,
+    RECOVER_BLOCK,
     RELOGIN_SCREENS,
     RESULT_COMBO_ROI,
     RESULT_SCORE_ROI,
@@ -91,6 +93,8 @@ from .screens import (
     arena_guess,
     band_confirm_song,
     center,
+    checkin_reward_dialog,
+    checkin_reward_radio,
     classify,
     find,
     lb_all_left,
@@ -199,6 +203,9 @@ TAP_LOGIN_BONUS = (640, 650)  # 登录奖励演出：点下方空白处继续
 BTN_REWARD_OK = (640, 659)  # 获得奖励 / GRADE UP 弹窗底部的 OK
 BTN_UNLOCK_CLOSE = (640, 570)  # 乐曲解锁 / 故事解锁：关闭
 TAP_NEW_SONG = (640, 627)  # 追加乐曲演出：TAP TO NEXT
+# 全屏视频点「跳过」后的确认「要跳过这段视频吗？」：左取消右 OK
+BTN_VIDEO_SKIP_OK = (782, 570)
+VIDEO_SKIP_OK_ROI: Rect = (640, 535, 300, 70)
 # 主界面角色对话：点下面的对话框关掉（关掉后这里是主界面底部「招募」「商店」之间的空隙）
 TAP_HOME_TALK = (640, 600)
 TITLE_TAP_GAP_S = 3.0
@@ -221,11 +228,15 @@ FROZEN_DIFF = 4
 FROZEN_TAPS = 3
 # 认不出的画面停住了先试着点一下恢复：每停住 RECOVER_S 点一次，最多 RECOVER_TAPS 次，还不行到 FROZEN_S 照常重启游戏。
 # 先找 RECOVER_BUTTONS 里的按钮（文字完全相等）；没有时点「下一步」、再没有点下方空白处 TAP_RECOVER，这两种只在画面上
-# 没有 RECOVER_BLOCK 里的字时点（可能点到购买、用星钻、消耗道具上）。要能确认游戏在前台才点（不点到模拟器桌面上）
+# 没有 RECOVER_BLOCK（见 screens.py）里的字时点（可能点到购买、用星钻、消耗道具上）。要能确认游戏在前台才点（不点到模拟器桌面上）
 RECOVER_S = 8.0
 RECOVER_TAPS = 3
+# 读结算页之前最多点掉这么多次弹窗。每周第 5 天的第一局最多：达成奖励列表、「已完成演出打卡！」、
+# 「演出打卡奖励」（选 1 个，点 OK 拿默认选中的）、又一次「已完成演出打卡！」，有的要点两下才关掉（#132）
+RESULT_POPUP_TAPS = 12
+CHECKIN_TAPS = 3  # 「演出打卡奖励」里点这么多次还没选中想要的那一项，就照旧拿游戏里选中的
+CHECKIN_FORGET_S = 60.0  # 离上次看到「演出打卡奖励」这么久之后再看到，算新的一次（一周才弹一次）
 RECOVER_BUTTONS = ("关闭", "取消")
-RECOVER_BLOCK = (*OK_POPUP_BLOCK, "兑换", "消耗", "跳过", "解锁", "升级")
 TAP_RECOVER = (640, 600)
 # 保底：认不出的画面一直在动（循环播放的演出等，不算上面的停住）这么久，也当成卡住了。卡住时重启游戏
 # （回到主界面之前最多 MAX_RESTARTS 次，重启次数用完才报错停下）
@@ -332,6 +343,8 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
         self.restart_app = restart_app
         self.app_running = app_running
         self.app_in_front = app_in_front  # 游戏的界面在前台（认不出的画面上试着点一下恢复之前查）
+        # 收到了停止请求、正等这首歌打完（「停止时打完当前这首」，见 songgate.py）：这时游戏不在了就不重启、不干等
+        self.stop_pending: Callable[[], bool] = lambda: False
         # 看广告（ads.py）：获得焦点的窗口（``包名/界面``）、按返回键
         self.front_window = front_window
         self.press_back = press_back
@@ -380,7 +393,16 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
         cp = config.game.challenge_cost
         if cp is not None and cp not in CP_RADIO:
             raise ValueError(f"game.challenge_cost 应为 {'/'.join(map(str, CP_RADIO))} 或 null，而不是 {cp!r}")
+        if config.game.checkin_reward not in CHECKIN_REWARD_MODES:
+            raise ValueError(
+                f"game.checkin_reward 应为 {' / '.join(CHECKIN_REWARD_MODES)}，而不是 {config.game.checkin_reward!r}"
+            )
+        self._reward_pick_taps = 0  # 这一次「演出打卡奖励」里点了几次单选按钮
+        self._reward_pick_at = -math.inf  # 上次处理「演出打卡奖励」的时刻
+        self._reward_pick_said = False  # 这一次的结果（选了哪个 / 没能选）记过日志了
+        self._reward_pick_point: tuple[int, int] | None = None  # 这一次点过的单选按钮（选中后那一行的字读不出来时按它核对）
         self._cp_cost: int | None = None  # 本次运行在游戏里核对过的挑战pt消耗
+        self._cp_top: int | None = None  # 自动选消耗（game.challenge_auto）时发现最大能选到这一档（再大的选不中）
         self._challenge_missing = 0  # 连续几次在演出首页没认出「挑战演出」
         self._challenge_taps = 0  # 点了几次「挑战演出」还没进去
         self._lb_empty_at: float | None = None  # 上次因 LB 用完改为消耗 0 的时刻
@@ -394,6 +416,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
         self._restarts = 0
         self._connect_errors = 0  # 进到游戏之前连续遇到「连接失败」的次数
         self._unknown_since: float | None = None  # 连续认不出画面的起点（每检查一次游戏进程重新计）
+        self._app_check_errors = 0  # 认不出画面期间连着几次查不了游戏进程（adb 没反应）
         self._still = None  # (起点, 缩略图)：画面从什么时候起没变过
         self._still_taps = 0  # 那之后点了几次
         self._stuck_since: float | None = None  # 从什么时候起一直认不出画面（不论在不在动）
@@ -476,6 +499,7 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
             self._check_app()
         else:
             self._unknown_since = None
+            self._app_check_errors = 0
         self._check_frozen(screen, still_ok)
         self._check_stuck(screen, items, still_ok)
         return screen, items
@@ -513,10 +537,17 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
             running = self.app_running()
         except (OSError, subprocess.SubprocessError) as e:
             logger.warning("检查游戏进程失败：%s", e)
+            self._app_check_errors += 1
+            # 正等着停止：连着两次都查不了（不是一时的）就不再干等；只有一次时照常接着等
+            if self.stop_pending() and self._app_check_errors >= 2:
+                raise self._fail("认不出画面，也确认不了游戏还在运行（模拟器没反应？）") from e
             return
+        self._app_check_errors = 0
         if running:
             self._heal_display_id()
             return
+        if self.stop_pending():  # 正等着停止：游戏都不在了，不用再把它启动起来
+            raise self._fail("游戏没有在运行")
         if self.restart_app is None or self._restarts >= MAX_RESTARTS:
             raise self._fail("游戏没有在运行（可能闪退了）")
         logger.warning("游戏没有在运行（可能闪退了），重新启动")
@@ -623,6 +654,15 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
             return None
         path.write_bytes(buf.tobytes())
         return path
+
+    def debug_shot(self, name: str) -> Path | None:
+        """截一张现在的画面存到 debug/nav（出问题时留个底）；截图或保存失败时为 None，不影响流程。"""
+        try:
+            frame, _ = self.source.grab()
+            return self.save_debug(name, frame)
+        except Exception as e:  # 只是留底用的：模拟器没反应、磁盘写不了都不该让任务出错
+            logger.debug("留底的截图没存成：%s", e)
+            return None
 
     def _fail(self, message: str, error: type[NavigationError] = NavigationError) -> NavigationError:
         path = self.save_debug(self.last_screen.name.lower())
@@ -742,10 +782,15 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
         elif screen is Screen.LOGIN_BONUS:
             self.tap(TAP_LOGIN_BONUS, "登录奖励")
         elif screen in (Screen.REWARD, Screen.GRADE_UP, Screen.BOND_UP):
+            if screen is Screen.REWARD and checkin_reward_dialog(items) and self._pick_checkin_reward(items):
+                return True  # 点了单选按钮：下一帧核对选中了再点 OK
             self.tap(self._button(items, "OK", BTN_REWARD_OK, CLOSE_ROI), "OK")
         elif screen is Screen.SKIPPABLE:
             logger.info("跳过演出：%s", " / ".join(it.text.strip() for it in items))
             self.tap(center(skip_button(items)), "跳过")
+        elif screen is Screen.VIDEO_SKIP:
+            # 上面点「跳过」弹出的确认（乐队周年纪念视频等）：点 OK 才真的跳过，不消耗东西
+            self.tap(self._button(items, "OK", BTN_VIDEO_SKIP_OK, VIDEO_SKIP_OK_ROI), "OK（跳过视频）")
         elif screen is Screen.STORY_PLAYER:
             # 菜单展开要一点时间，点了没反应隔一会儿再点（展开到一半再点会收起来）
             now = time.monotonic()
@@ -770,6 +815,41 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
         else:
             return False
         return True
+
+    def _pick_checkin_reward(self, items: list[OcrItem]) -> bool:
+        """每周第 5 天第一局后的「演出打卡奖励」（从几样奖励里选 1 个，游戏默认选中星钻，#139）：按 ``game.checkin_reward``
+        点选那一行的单选按钮。点了返回 True（下一帧核对选中了再点 OK）；该点 OK 了返回 False：不改、已经选中，
+        或者选不了（列表里没找到这一行、点了 CHECKIN_TAPS 次还没选中、没有画面可看）。
+        选不了时照旧点 OK 拿游戏里选中的那个，不卡住。"""
+        want = CHECKIN_REWARDS.get(self.cfg.game.checkin_reward)
+        if want is None:  # default：不改
+            return False
+        now = time.monotonic()
+        if now - self._reward_pick_at > CHECKIN_FORGET_S:
+            self._reward_pick_taps, self._reward_pick_said, self._reward_pick_point = 0, False, None
+        self._reward_pick_at = now
+        radio = checkin_reward_radio(items, want) or self._reward_pick_point
+        if radio is None:
+            why = "列表里没找到这一项"
+        elif not isinstance(self._frame, np.ndarray):
+            why = "看不了画面"
+        elif self._lit(radio):
+            if not self._reward_pick_said:
+                self._reward_pick_said = True
+                logger.info("演出打卡奖励：选「%s」（截图 %s）", want, self.save_debug("checkin_reward"))
+            return False
+        elif self._reward_pick_taps >= CHECKIN_TAPS:
+            why = f"点了 {CHECKIN_TAPS} 次还没选中"
+        else:
+            self._reward_pick_taps += 1
+            self._reward_pick_point = radio
+            self.tap(radio, f"选 {want}")
+            return True
+        if not self._reward_pick_said:
+            self._reward_pick_said = True
+            shot = self.save_debug("checkin_reward")
+            logger.warning("演出打卡奖励：没能选「%s」（%s），照旧拿游戏里选中的那个（截图 %s）", want, why, shot)
+        return False
 
     def _recover(self, items: list[OcrItem]) -> bool:
         """认不出的画面停住了：点一下试试能不能恢复（见 RECOVER_S），点了返回 True。"""
@@ -1275,11 +1355,16 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
         """演奏中暂停 → 重试 → 确认重试，这首歌从头开始（同步失败、演奏明显对不上时，不用干等歌曲放完）；
         点完立即返回，首音符同步要尽早开始看画面。
 
-        先确认还在演奏画面（右上角的暂停按钮）或暂停菜单上（演奏中被暂停了），都不在就什么都不点。
+        先确认还在演奏画面（右上角的暂停按钮）或暂停菜单上（演奏中被暂停了），都不在就什么都不点；
+        演出前选项设置还开着（开始时的「演出」没点上，演出根本没开始）就再点一次「演出」。
         还在开场（认不出的画面）时最多等 INTRO_WAIT_S 让演奏画面出来，还在加载时等得更久（见 _wait_intro）。
         重试没生效时点「继续」接着放完这首歌（「终止」拿不到演出奖励），抛出 NavigationError。
         """
         screen, items = self.look()
+        if screen is Screen.LIVE_OPTIONS:  # 演出前选项设置还开着（开始时的「演出」没点上）：再点一次
+            self._check_speed(items)
+            self.tap(self._button(items, "演出", BTN_OPTIONS_START), "演出")
+            return
         if screen is not Screen.PAUSE:
             if screen is Screen.UNKNOWN and not self._in_play(self._frame):
                 self._wait_intro(items)
@@ -1699,8 +1784,9 @@ class GameNavigator(SongSelectMixin, DailyMixin, AdsMixin, StoryMixin, Challenge
         return None
 
     def _result_items(self) -> list[OcrItem]:
-        """重新识别结算页。首次达成连击/评级奖励、最高分评级提升等会在结算页出现约 1s 后弹窗，先关掉。"""
-        for _ in range(5):
+        """重新识别结算页。首次达成连击/评级奖励、最高分评级提升、演出打卡等会在结算页出现约 1s 后弹窗，先关掉
+        （最多点 RESULT_POPUP_TAPS 次）。"""
+        for _ in range(RESULT_POPUP_TAPS):
             screen, items = self.look()
             if screen not in RESULT_POPUPS:
                 return items

@@ -80,6 +80,10 @@ class SyncTimeout(TimeoutError):
     pass
 
 
+class NoFirstNote(SyncTimeout):
+    """到时限连首音符都没看到（不是看到了但样本不够）。"""
+
+
 @dataclass
 class SyncResult:
     arrival: float  # 首音符前沿到达判定线的主机时刻（perf_counter 秒）
@@ -585,7 +589,7 @@ class NoteTracker:
             result = self.feed(frame, t)
             if result is not None:
                 return result
-        raise SyncTimeout(f"{self.p.timeout_s}s 内未检测到首音符（已处理 {self._frames} 帧）")
+        raise NoFirstNote(f"{self.p.timeout_s}s 内未检测到首音符（已处理 {self._frames} 帧）")
 
 
 def replay_dump(path: str | Path, geometry: Geometry, params: SyncParams) -> SyncResult | None:

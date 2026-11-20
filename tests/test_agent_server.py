@@ -196,7 +196,7 @@ assert server.IDLE_TASKS == params.IDLE_TASKS and set(server.NO_RERUN) <= set(pa
 now = [1000.0]
 h = server.RunHistory(clock=lambda: now[0])
 attach = {"song_mode": "random"}
-for task in ("start", "records", "clear_lb", "notify_test", "arena_idle"):
+for task in ("start", "records", "clear_lb", "notify_test", "quit", "arena_idle"):  # 退出游戏（#144）也不重跑
     h.begin(task, attach)
     now[0] += 30
     h.end(stopped=False)

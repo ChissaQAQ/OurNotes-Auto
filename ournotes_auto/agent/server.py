@@ -38,7 +38,8 @@ RERUN_KEY = "rerun_daily"  # 「每天重跑前面的任务」开关（attach �
 RUN_TASKS = ("repeat", "clear_lb", "idle", "ap", "challenge", "arena", "arena_idle")  # 连续演奏的任务（和 params.RUN_TASKS 一致）
 FINISH_KEY = "finish_song_on_stop"  # 「停止时打完当前这首」开关（attach 里的键）：只对连续演奏的任务生效
 FINISH_SONG_MAX_S = 600.0  # 打完这首最多等这么久，还没结束就立即停止
-NO_RERUN = frozenset((*IDLE_TASKS, "records", "notify_test"))  # 不重跑的任务：挂机本身、不打歌的（打开统计窗口会弹出窗口）
+# 不重跑的任务：挂机本身、不打歌的（打开统计窗口会弹出窗口；退出游戏之后还得再启动）
+NO_RERUN = frozenset((*IDLE_TASKS, "quit", "records", "notify_test"))
 # MFAA 的 Agent 常驻：上一个任务结束这么久以后才开始的任务算新的一次运行（界面上又点了一次开始）；MXU 每次开始都启动新的 Agent
 RUN_GAP_S = 60.0
 LAUNCHED_ENV = "OURNOTES_LAUNCHED"  # 这次打开界面的时刻，演奏进程继承（和 charts/bdon.py 一致）
@@ -111,7 +112,7 @@ def _reruns(task: str, attach: Mapping[str, Any]) -> bool:
 
 
 class OurNotesRun(CustomAction):
-    """``custom_action_param`` 为 ``{"task": "start" | "switch_account" | "repeat" | "clear_lb" | "idle" | "ap" | "challenge" | "arena" | "arena_idle" | "records" | "notify_test"}``，
+    """``custom_action_param`` 为 ``{"task": "start" | "switch_account" | "repeat" | "clear_lb" | "idle" | "ap" | "challenge" | "arena" | "arena_idle" | "quit" | "records" | "notify_test"}``，
     选项在 ``OurNotesParam`` 节点的 attach 里。"""
 
     def run(self, context: Context, argv: CustomAction.RunArg) -> bool:

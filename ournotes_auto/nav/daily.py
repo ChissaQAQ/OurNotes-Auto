@@ -18,6 +18,7 @@
   - 主界面「招募」入口上有「免费招募」角标才进去；招募页上只认文字是「免费」、下一行只有「1次」（没有价格）的按钮。
   - 「确认招募」弹窗写着「消耗0个星钻」才点 OK，写的不是 0 个就点取消、报错。
   - 抽卡演出只点右上角的「SKIP」，招募结算存一张截图（data/recruit/）后只点「招募TOP」，绝不点「再次招募」。
+  - 招募到新成员时的展示画面（整屏立绘，没有按钮）认不出：停了一阵后点一下画面上方继续（见 RECRUIT_SHOW_S）。
   - 招募前后核对星钻数（免费和付费）没变。
 - 不碰付费招募、礼包、交换所、通行证高级档和 pt 旁的「+」，不用星钻。
 - 看广告领的奖励（观看 CM 招募、恢复 LIVE BOOST、录音室练习的 SKIP）是另一个任务，在 ads.py。
@@ -42,7 +43,19 @@ from ..records import CHORE_KINDS, Chore
 from ..result_reader import OcrItem
 from ..runner import NavigationError, ServerMaintenance
 from .jacket import crop_jacket
-from .screens import RELOGIN_SCREENS, TITLE_ROI, Rect, Screen, center, find, in_roi, skip_button, story_title
+from .screens import (
+    RECOVER_BLOCK,
+    RELOGIN_SCREENS,
+    TITLE_ROI,
+    Rect,
+    Screen,
+    center,
+    find,
+    in_roi,
+    loading,
+    skip_button,
+    story_title,
+)
 from .song_select import filter_open
 
 logger = logging.getLogger(__name__)
@@ -189,6 +202,14 @@ RECRUIT_TIMEOUT_S = 90.0  # 点了 OK 之后这么久没回到招募页就报错
 RECRUIT_SKIP_RETAP_S = 3.0
 RECRUIT_TOP_RETAP_S = 5.0
 RECRUIT_SHOT_DELAY_S = 1.5  # 招募结算出现后等成员卡片都翻出来再截图
+# 招募到新成员时（实测是观看 CM 招募抽到 SSR）的展示画面：整屏立绘，没有按钮也没有 SKIP，点一下才继续，画面一直在动。
+# 招募演出里认不出、也没有东西可点的画面（见 recruit_show）持续 RECRUIT_SHOW_S 后点一下画面上方（下面可能有
+# 「再次招募」），之后每隔 RECRUIT_SHOW_RETAP_S 再点，一次招募最多 RECRUIT_SHOW_TAPS 次。要能确认游戏自己的界面
+# 在前台（不是广告）才点；不满足时照旧什么都不点，等到超时
+RECRUIT_SHOW_S = 6.0
+RECRUIT_SHOW_RETAP_S = 3.0
+RECRUIT_SHOW_TAPS = 8
+TAP_RECRUIT_SHOW = (640, 200)
 RECRUIT_SHOT_DIR = Path("data/recruit")  # 招募结果的截图（相对于程序目录，界面日志按这个路径显示；统计页的「招募记录」也读这里）
 RECRUIT_SHOT_CM = "cm"  # 观看 CM 招募的截图，文件名以 _cm 结尾（免费招募的没有后缀）
 # 录音室练习里某个乐队详情页的 SKIP 弹窗（看广告 / 用道具立刻拿练习奖励，见 ads.py）：左「关闭」、中「道具」、右「广告」
@@ -209,7 +230,7 @@ HOME_BUTTON_SCREENS = frozenset(
         Screen.SETTINGS,
     )
 )
-# 领取后可能弹出、只需要关掉的弹窗（底部中央是「关闭」或「OK」，或者右上角有「跳过」的演出）
+# 领取后可能弹出、只需要关掉的弹窗（底部中央是「关闭」或「OK」，或者右上角有「跳过」的演出和它的确认框）
 KNOWN_POPUPS = frozenset(
     (
         Screen.REWARD,
@@ -221,6 +242,7 @@ KNOWN_POPUPS = frozenset(
         Screen.NEW_SONG,
         Screen.OK_POPUP,
         Screen.SKIPPABLE,
+        Screen.VIDEO_SKIP,
     )
 )
 
@@ -374,6 +396,16 @@ def recruit_gift_ok(items: list[OcrItem]) -> OcrItem | None:
     return find(items, "OK", REWARD_OK_ROI, exact=True)
 
 
+def recruit_show(screen: Screen, items: list[OcrItem]) -> bool:
+    """招募演出里认不出、也没有东西可点的画面（可能是新成员的展示画面，见 RECRUIT_SHOW_S）：不在加载，没有 SKIP、
+    页面标题、「OK」「确定」「关闭」，也没有 RECOVER_BLOCK 里的字（确认框、花星钻、招募结算之类的都不算）。"""
+    if screen is not Screen.UNKNOWN or loading(items) or skip_button(items) is not None or page_title(items) is not None:
+        return False
+    if any(find(items, text, exact=True) for text in ("OK", "确定", "关闭")):
+        return False
+    return not any(find(items, text) for text in RECOVER_BLOCK)
+
+
 def cm_recruit_dialog(items: list[OcrItem]) -> bool:
     """观看 CM 招募的「确认招募」弹窗（比花星钻的那个矮，标题、按钮的位置不一样）。"""
     return find(items, "确认招募", CM_DIALOG_TITLE_ROI, exact=True) is not None
@@ -465,8 +497,9 @@ class DailyMixin:
         """
         return self._run_jobs(DAILY_JOBS, jobs, "_daily_", "日常")
 
-    def _run_jobs(self, names: dict[str, str], jobs, prefix: str, kind: str) -> list[str]:
-        """按 ``names``（项目 → 名称）的顺序做 ``jobs`` 里的项目（方法名是 ``prefix`` + 项目），见 :meth:`run_daily`。"""
+    def _run_jobs(self, names: dict[str, str], jobs, prefix: str, kind: str, defer=None) -> list[str]:
+        """按 ``names``（项目 → 名称）的顺序做 ``jobs`` 里的项目（方法名是 ``prefix`` + 项目），见 :meth:`run_daily`。
+        ``defer(项目, 出的错)`` 返回 True 的不算出错、也不记日志（调用方自己处理，见 ads.py）。"""
         unknown = set(jobs) - set(names)
         if unknown:
             raise ValueError(f"未知的{kind}项目：{', '.join(sorted(unknown))}")
@@ -482,6 +515,8 @@ class DailyMixin:
             except NavigationError as e:
                 if self.stop.is_set():
                     raise
+                if defer is not None and defer(job, e):
+                    continue
                 logger.error("%s：%s", name, e)
                 failed.append(name)
         self.go_home()
@@ -667,15 +702,22 @@ class DailyMixin:
         ``stay_s``（观看 CM 招募，见 ads.py）：这么久一直停在招募页、没有演出也没有结算，就是没有招募，报错。
         ``tag``：截图文件名的后缀（哪一种招募，见 RECRUIT_SHOT_CM）。
 
-        这里不按通用流程处理画面（招募演出会被认成登录奖励等），认不出的画面什么都不点。
+        这里不按通用流程处理画面（招募演出会被认成登录奖励等）。认不出的画面一般什么都不点；一直认不出、也没有东西可点
+        （招募到新成员时的展示画面，点一下才继续）时点一下画面上方，见 RECRUIT_SHOW_S。
         """
         start = time.monotonic()
         skipped_at = top_at = None
         shot = None
+        show_since = show_at = None  # 认不出、没有东西可点的画面是从什么时候开始的；上次要点它的时刻
+        show_taps = 0
         while time.monotonic() - start < timeout_s:
             self._sleep(0.8)
-            _, items = self.look(still_ok=True)
+            screen, items = self.look(still_ok=True)
             now = time.monotonic()
+            if not recruit_show(screen, items):
+                show_since = None
+            elif show_since is None:
+                show_since = now
             top = recruit_top(items)
             if top is not None:
                 if top_at is None:
@@ -702,7 +744,30 @@ class DailyMixin:
             if skip is not None and top_at is None and (skipped_at is None or now - skipped_at > RECRUIT_SKIP_RETAP_S):
                 self.tap(center(skip), "SKIP")
                 skipped_at = now
+            if (
+                show_since is not None
+                and top_at is None
+                and now - show_since >= RECRUIT_SHOW_S
+                and show_taps < RECRUIT_SHOW_TAPS
+                and (show_at is None or now - show_at >= RECRUIT_SHOW_RETAP_S)
+            ):
+                show_at = now  # 这次点不了（前台不是游戏自己的界面）也隔一阵再查
+                if self._game_ui_front():
+                    if not show_taps:
+                        logger.info(
+                            "%s：演出停在认不出的画面上 %.0fs（招募到新成员时的展示？），点一下画面上方继续（截图 %s）",
+                            what,
+                            now - show_since,
+                            self.save_debug("recruit_show"),
+                        )
+                    show_taps += 1
+                    self.tap(TAP_RECRUIT_SHOW, "招募演出（认不出的画面）")
         raise self._fail(f"{what}后 {timeout_s:.0f}s 没有回到招募页")
+
+    def _game_ui_front(self) -> bool:
+        """游戏自己的界面在前台（不是广告、广告弹出的页面、模拟器桌面）；没接上 adb、读不到时为 False。
+        用的是 :class:`~ournotes_auto.nav.ads.AdsMixin` 的 ``_front`` ``_is_game``。"""
+        return self.front_window is not None and self._is_game(self._front())
 
     def _save_recruit_shot(self, tag: str = "") -> Path | None:
         """把最近一帧（招募结算）存成 JPEG（``时间[_tag].jpg``），存不了返回 None（不影响招募）。"""

@@ -8,7 +8,7 @@
     乐队确认 -[CP 设置]-> 挑战pt消耗设置（每局 200/400/800/1600，奖励 ×1/×2/×4/×8）-[选中 → OK]-> 乐队确认
 
 - 每局消耗多少由 ``game.challenge_cost`` 决定（默认最少的 200，能多打几局），只在核对过选中的单选按钮后点 OK；
-  不改设置时只点「取消」。
+  不改设置时只点「取消」。``game.challenge_auto`` 时每局按持有数选够用的最大一档（:func:`~.screens.cp_auto_cost`）。
 - CP 不够每局消耗时停下（:class:`~ournotes_auto.runner.CpExhausted`）。持有数不够所选的消耗时游戏不让点 OK
   （提示「挑战pt不足。」），这时点「取消」再停下。
 - 乐队确认页的「跳过 还剩n次」（扫荡券）绝不点。
@@ -31,6 +31,7 @@ from .screens import (
     center,
     challenge_rows,
     challenge_selected,
+    cp_auto_cost,
     cp_bar_held,
     cp_held,
     find,
@@ -63,6 +64,7 @@ class ChallengeMixin:
 
     challenge: bool
     _cp_cost: int | None
+    _cp_top: int | None
     _challenge_missing: int
     _challenge_taps: int
 
@@ -85,10 +87,13 @@ class ChallengeMixin:
         lit = [c for c, p in CP_RADIO.items() if self._lit(p)]
         return lit[0] if len(lit) == 1 else None
 
-    def set_cp_cost(self, cost: int | None, timeout_s: float = 15.0) -> int | None:
+    def set_cp_cost(self, cost: int | None, timeout_s: float = 15.0, auto: bool = False) -> int | None:
         """挑战演出乐队确认页 → CP 设置 → 选中 ``cost``、按像素核对 → OK，回到乐队确认页（游戏会记住设置）。
         ``cost`` 为 None 时不改，只读出当前选中的消耗后点「取消」。返回弹窗上读到的 CP 持有数。
-        持有数不够 ``cost`` 时点「取消」，回到乐队确认页后抛 :class:`CpExhausted`。"""
+        持有数不够 ``cost`` 时点「取消」，回到乐队确认页后抛 :class:`CpExhausted`。
+
+        ``auto``（``game.challenge_auto``）时不看 ``cost``，按弹窗上的持有数选够用的最大一档：某一档点了几次都选不中
+        （没解锁？）就退一档，这次运行不再选它；持有数读不到就不改设置；最少的一档也不够时同样取消后抛 :class:`CpExhausted`。"""
         self.tap(BTN_CP_COST, "CP 设置")
         opened = time.monotonic()
         deadline = opened + timeout_s
@@ -103,7 +108,8 @@ class ChallengeMixin:
                 if closed_at is not None:
                     if short:
                         self._cp_cost = None  # 取消了，游戏里还是原来的设置
-                        raise CpExhausted(f"挑战pt 不够了（持有 {'?' if held is None else held}，每局消耗 {cost}）")
+                        need = f"每局{'最少' if auto and cost == min(CP_RADIO) else ''}消耗 {cost}"
+                        raise CpExhausted(f"挑战pt 不够了（持有 {'?' if held is None else held}，{need}）")
                     self._cp_cost = selected
                     return held
                 if time.monotonic() - opened > 3:  # 点击没生效
@@ -113,13 +119,22 @@ class ChallengeMixin:
                 if closed_at is not None and time.monotonic() - closed_at < 2:
                     continue  # 弹窗正在关闭
                 selected = self._cp_selected()
-                if cost is not None and selected != cost:
+                held = cp_held(items)
+                if auto:
+                    cost = None if held is None else cp_auto_cost(held, self._cp_top)
+                    if held is not None and cost is None:  # 最少的一档也不够
+                        cost, short = min(CP_RADIO), True
+                if cost is not None and not short and selected != cost:
                     if radio_taps >= 3:
-                        raise self._fail(f"挑战pt消耗选不中 {cost}（当前 {selected}）")
+                        lower = max((c for c in CP_RADIO if c < cost), default=None)
+                        if not auto or lower is None:
+                            raise self._fail(f"挑战pt消耗选不中 {cost}（当前 {selected}）")
+                        logger.warning("挑战pt消耗选不中 %d（没解锁？），这次运行最多选 %d", cost, lower)
+                        self._cp_top, radio_taps = lower, 0
+                        continue
                     self.tap(CP_RADIO[cost], f"每局 {cost} CP")
                     radio_taps += 1
                     continue
-                held = cp_held(items)
                 logger.debug("挑战pt消耗为 %s（持有 %s）", selected or "?", "?" if held is None else held)
                 if cost is not None and (
                     (held is not None and held < cost) or find(items, "挑战pt不足", CP_SHORT_ROI)
@@ -137,6 +152,8 @@ class ChallengeMixin:
     def _check_cp(self) -> None:
         """挑战演出乐队确认页：按配置设好每局消耗，CP 不够一局时抛 :class:`CpExhausted`（留在乐队确认页）。
         顶栏的数字够就不打开弹窗；不够或没读到时用弹窗里的持有数核对。"""
+        if self.cfg.game.challenge_auto:
+            return self._check_cp_auto()
         want = self.cfg.game.challenge_cost
         screen, items = self.look()
         held = cp_bar_held(items) if screen is Screen.CHALLENGE_BAND_CONFIRM else None
@@ -147,6 +164,22 @@ class ChallengeMixin:
         logger.debug("CP 持有 %s，每局消耗 %s", held, need)
         if held is not None and need is not None and held < need:
             raise CpExhausted(f"挑战pt 不够了（持有 {held}，每局消耗 {need}）")
+
+    def _check_cp_auto(self) -> None:
+        """``game.challenge_auto``：每局按持有的挑战pt 选够用的最大一档（先 1600，不够了依次 800、400、200），
+        最少的一档也不够时抛 :class:`CpExhausted`。顶栏读到的持有数算出来和现在的设置一样就不打开弹窗；不一样、
+        没读到或还没核对过设置时打开弹窗，按弹窗上的持有数选（见 :meth:`set_cp_cost`）。"""
+        screen, items = self.look()
+        held = cp_bar_held(items) if screen is Screen.CHALLENGE_BAND_CONFIRM else None
+        if held is None or self._cp_cost is None or cp_auto_cost(held, self._cp_top) != self._cp_cost:
+            held = self.set_cp_cost(None, auto=True)
+        cost = self._cp_cost
+        if cost is None:
+            logger.warning("没读到挑战pt 的持有数和消耗设置，照游戏里现在的设置打")
+            return
+        logger.info(
+            "挑战pt 持有 %s：每局消耗 %d（奖励 ×%d）", "?" if held is None else held, cost, cost // min(CP_RADIO)
+        )
 
     def ensure_challenge_song_select(self, timeout_s: float = 60.0) -> list[OcrItem]:
         """回到挑战演出的乐曲选择页，返回这一帧的识别结果。"""
