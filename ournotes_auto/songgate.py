@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class SongGate:
     """``song()`` 包住一首歌（从点 LIVE START 到离开结算页）。:meth:`request` 收到停止请求时：
     没在打歌就立即置位 ``stop``；正在打歌就等这首结束（出错也算）再置位，之后不再开始新的一首。
-    直接置位 ``stop``（立即停止）照旧，这里不拦。"""
+    这首打不成了（:meth:`give_up`）也不再等。直接置位 ``stop``（立即停止）照旧，这里不拦。"""
 
     def __init__(self, stop: threading.Event):
         self.stop = stop
@@ -48,6 +48,16 @@ class SongGate:
         if self._leave():
             logger.info("这首歌打完了，停止")
             self.stop.set()
+
+    def give_up(self) -> bool:
+        """这首歌打不成了（同步一直失败、画面不对劲，不会再有成绩）：不用等它放完。收到过停止请求就立即置位 ``stop``
+        并返回 True；之后才来的停止请求也立即生效。"""
+        with self._lock:
+            self.in_song = False
+            if self.pending and not self.stop.is_set():
+                self.stop.set()
+                return True
+            return False
 
     def _leave(self) -> bool:
         """离开一首歌；返回是否该停止了（收到过停止请求、还没停止）。"""

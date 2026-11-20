@@ -1,5 +1,6 @@
 """看广告：用画面 OCR 夹具模拟主界面、恢复LIVE BOOST、招募页、录音室练习，广告用「前台窗口 + 顶部提示条」模拟。"""
 
+import calendar
 import dataclasses
 import json
 import math
@@ -40,6 +41,7 @@ from ournotes_auto.nav.daily import (
     cm_recruit_dialog,
     cm_recruit_ok,
     free_recruit_ok,
+    recruit_show,
     recruit_top,
     studio_skip_close,
     studio_skip_dialog,
@@ -48,6 +50,7 @@ from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.navigator import GameNavigator
 from ournotes_auto.nav.screens import ARENA_BANDS as STUDIO_BANDS
 from ournotes_auto.nav.screens import Screen, center, classify
+from ournotes_auto.records import RecordStore, game_day
 from ournotes_auto.result_reader import OcrItem
 
 SCREENS = Path(__file__).parent / "fixtures" / "screens"
@@ -75,6 +78,9 @@ CLOSING = [
     OcrItem(762, 424, 50, 27, "继续"),
 ]
 BTN_RESUME = (787, 438)
+BTN_FAILED_OK = (640, 570)  # 「广告获取失败。请稍后再试。」的 OK
+WALL = float(calendar.timegm((2026, 11, 19, 14, 0, 0)))  # 假时钟为 0 时的时刻（北京时间 22:00）
+FAIL = "fail"  # 广告的样子：游戏说「广告获取失败」
 BTN_CLOSE_AD = (692, 438)
 
 BTN_LB_ADD = (517, 44)
@@ -128,19 +134,26 @@ SIMPLE = [Seg(14, "count"), Seg(math.inf, "granted", True)]
 
 class AdGame:
     """同时充当截图源、触控、OCR、前台窗口和返回键。``lb`` ``cm`` ``studio`` 是今天还剩的次数，``plan`` 是接下来每次广告的样子
-    （用完了就是 SIMPLE；None 是广告放不出来）。``levels`` 是各乐队的练习Lv。"""
+    （用完了就是 SIMPLE；None 是广告放不出来、什么都不弹，FAIL 是约 1 秒后弹出「广告获取失败」）。``levels`` 是各乐队的练习Lv。
+    ``show``：观看 CM 招募到新成员，招募结算之前先停在展示画面上（整屏立绘，没有按钮），要点这么多下才继续。"""
 
     size = (1280, 720)
 
-    def __init__(self, clock, state="home", lb=2, cm=3, plan=(), studio=1, levels=LEVELS):
+    def __init__(self, clock, state="home", lb=2, cm=3, plan=(), studio=1, levels=LEVELS, show=0):
         self.clock = clock
         self.state = state
         self.lb = lb
         self.cm = cm
+        self.show = show
+        self.show_next = "recruit_cm_result_last"  # 展示画面点完之后的画面
+        self.show_at = clock[0]  # 展示画面出现的时刻
+        self.show_times: list[float] = []  # 每次点展示画面的时刻
         self.plan = list(plan)
         self.ad: list[Seg] | None = None
         self.ad_at = 0.0
         self.dialog = False
+        self.failed_at: float | None = None  # 「广告获取失败」弹出来的时刻（弹着时不是 None）
+        self.failed_for: list[float] = []  # 每次「广告获取失败」弹了多久才被点掉
         self.after = ("", "")  # 广告关掉之后的画面：（奖励到手, 没到手）
         self.taps: list[tuple[str, tuple[int, int]]] = []
         self.backs: list[str] = []  # 每次按返回键时的前台窗口
@@ -177,6 +190,9 @@ class AdGame:
         plan = self.plan.pop(0) if self.plan else SIMPLE
         if plan is None:  # 广告放不出来：停在原来的画面
             return
+        if plan == FAIL:  # 没要到广告：过 1 秒弹出「广告获取失败」，原来的弹窗还在下面
+            self.failed_at = self.clock[0] + 1.0
+            return
         self.ad, self.ad_at, self.dialog = [dataclasses.replace(s) for s in plan], self.clock[0], False
         self.after = (rewarded, lost)
 
@@ -192,6 +208,8 @@ class AdGame:
             else:
                 self.cm -= 1
                 self.state = "recruit_cm_result" if self.cm else "recruit_cm_result_last"
+                if self.show:
+                    self.show_next, self.state, self.show_at = self.state, "recruit_new_card", self.clock[0]
 
     def front_window(self) -> str:
         self._advance()
@@ -214,8 +232,13 @@ class AdGame:
             self.dialog = True
 
     # ---- 截图、OCR
+    def _failed(self) -> bool:
+        return self.failed_at is not None and self.clock[0] >= self.failed_at
+
     def _lit(self) -> tuple[int, int] | None:
         """现在的画面上亮着的看广告按钮（在文字左边取样的位置）。"""
+        if self._failed():
+            return None
         if self.state == "lb_recover_ad" and self.lb:
             return BTN_WATCH[0] - 75, BTN_WATCH[1]
         if self.state == "recruit_cm" and self.cm:
@@ -244,6 +267,8 @@ class AdGame:
         self._advance()
         if self.ad is not None:
             return [*BARS[self.ad[0].bar], *AD_CONTENT, *(CLOSING if self.dialog else [])]
+        if self._failed():
+            return load_items("ad_failed")
         name = self.state
         if name == "studio_detail" and not self.studio:
             name = "studio_detail_used"
@@ -266,6 +291,12 @@ class AdGame:
                 self._end_ad(False)
             else:
                 self.ad_taps.append(p)
+            return
+        if self._failed():  # 弹着「广告获取失败」：只有 OK 点得到
+            self.taps.append(("ad_failed", p))
+            if math.dist(p, BTN_FAILED_OK) < 30:
+                self.failed_for.append(self.clock[0] - self.failed_at)
+                self.failed_at = None
             return
         self.taps.append((self.state, p))
         near = lambda q: math.dist(p, q) < 30  # noqa: E731
@@ -324,6 +355,11 @@ class AdGame:
                 self._start_ad("recruit_cm_result", "recruit_cm")
             elif near(BTN_CM_CANCEL):
                 self.state = "recruit_cm"
+        elif s == "recruit_new_card":  # 点哪里都算一下
+            self.show_times.append(self.clock[0])
+            self.show -= 1
+            if self.show <= 0:
+                self.state = self.show_next
         elif s == "recruit_cm_result":
             if near(BTN_TOP):
                 self.state = "recruit_cm"
@@ -371,6 +407,7 @@ def ad_nav(game, clock, **kw):
 
     nav._sleep = sleep
     nav.save_debug = lambda *a, **k: None
+    nav.wall_clock = lambda: WALL + clock[0]
     return nav
 
 
@@ -550,23 +587,27 @@ def test_ad_without_bar_is_closed_blind(clock):
 
 
 def test_ad_not_shown_is_an_error(clock):
-    """点了「观看」广告没放出来（Google 不给广告）：这一项记为出错，不按返回键，最后回到主界面。"""
+    """点了「观看」广告没放出来（Google 不给广告、什么都没弹）：这一项记为出错（没要到广告），不按返回键，
+    恢复LIVE BOOST 弹窗关掉，最后回到主界面。"""
     game = AdGame(clock, plan=[None])
     nav = ad_nav(game, clock)
-    assert nav.run_ads(["lb"]) == [AD_JOBS["lb"]]
+    assert nav.run_ads(["lb"], waits=()) == [AD_JOBS["lb"]]
     assert (game.state, game.lb, game.backs, game.watched) == ("home", 2, [], 0)
+    assert nav.ads_unavailable == ("lb",)
+    assert [p for s, p in game.taps if s == "lb_recover_ad"][-1] == BTN_LB_CANCEL
 
 
 def test_no_ads_anywhere_does_not_block(clock):
-    """哪里的广告都放不出来（不是 Google Play 版等）：三项各等 AD_START_S 后记为出错，不按返回键、不重启游戏，
-    几分钟内结束，最后停在主界面（后面的任务照常开始）。"""
-    game = AdGame(clock, plan=[None, None, None])
+    """哪里的广告都放不出来（不是 Google Play 版等）：三项各等 AD_START_S、隔一阵再试两遍后记为出错，不按返回键、
+    不重启游戏，十几分钟内结束，最后停在主界面（后面的任务照常开始）。"""
+    game = AdGame(clock, plan=[None] * 9)
     restarts = []
     nav = ad_nav(game, clock, restart_app=lambda: restarts.append(clock[0]))
     assert nav.run_ads(list(AD_JOBS)) == list(AD_JOBS.values())
     assert (game.state, game.lb, game.cm, game.studio, game.watched) == ("home", 2, 3, 1, 0)
-    assert game.backs == [] and restarts == [] and game.ad_taps == []
-    assert 3 * ads.AD_START_S < clock[0] < 300
+    assert game.backs == [] and restarts == [] and game.ad_taps == [] and game.plan == []
+    assert nav.ads_unavailable == tuple(AD_JOBS)
+    assert 9 * ads.AD_START_S + sum(ads.AD_RETRY_WAITS_S) < clock[0] < 900
     assert_clean(game)
 
 
@@ -767,7 +808,7 @@ def test_studio_ad_not_shown_is_an_error(clock):
     """点了「广告」广告没放出来：关掉 SKIP 弹窗，这一项记为出错。"""
     game = AdGame(clock, plan=[None])
     nav = ad_nav(game, clock)
-    assert nav.run_ads(["studio"], studio_band="dumbrock") == [AD_JOBS["studio"]]
+    assert nav.run_ads(["studio"], studio_band="dumbrock", waits=()) == [AD_JOBS["studio"]]
     assert [p for s, p in game.taps if s == "studio_skip"] == [BTN_SKIP_AD, BTN_SKIP_CLOSE]
     assert (game.state, game.studio, game.backs, game.watched) == ("home", 1, [], 0)
 
@@ -889,6 +930,104 @@ def test_cm_recruit_without_reward_is_an_error(clock):
     assert (game.state, game.cm, game.watched, game.backs) == ("home", 3, 0, [AD])
 
 
+def test_recruit_show_helper():
+    """招募演出里「认不出、也没有东西可点」的画面：新成员的展示画面算；有按钮、确认框、花星钻之类的字，在加载，
+    或者是招募的各个页面、弹窗时都不算。"""
+    items = load_items("recruit_new_card")
+    assert classify(items) is Screen.UNKNOWN and recruit_show(Screen.UNKNOWN, items)
+    # 背景上滚动的大字每一帧读出来都不一样，有时只剩右下角的卡名、成员名；演出转场时可能什么字都没有
+    assert recruit_show(Screen.UNKNOWN, [OcrItem(985, 565, 177, 31, "朝着流星呐喊"), OcrItem(992, 603, 173, 61, "高松灯")])
+    assert recruit_show(Screen.UNKNOWN, [])
+    assert not recruit_show(Screen.LOGIN_BONUS, items)  # 认成了别的画面
+    for text in ("OK", "确定", "关闭", "取消", "将消耗200个星钻", "再次招募", "购买", "NOW LOADING"):
+        assert not recruit_show(Screen.UNKNOWN, [*items, OcrItem(600, 400, 160, 30, text)]), text
+    assert not recruit_show(Screen.UNKNOWN, [*items, OcrItem(1180, 25, 60, 30, "SKIP")])  # 有 SKIP 就点 SKIP
+    for name in (
+        "recruit_cm_result",
+        "recruit_cm_result_last",
+        "recruit_result",
+        "recruit_cm",
+        "recruit_cm_list",
+        "recruit_cm_confirm",
+        "recruit_confirm",
+        "recruit_gift",
+        "recruit_used",
+        "recruit_free",
+        "recruit_ticket",
+        "ad_failed",
+        "video_skip_confirm",
+    ):
+        items = load_items(name)
+        assert not recruit_show(classify(items), items), name
+
+
+def test_cm_recruit_new_member_show_is_tapped_through(clock, caplog):
+    """招募到新成员时的展示画面（整屏立绘，没有按钮，点一下才继续）：认不出一阵子后点画面上方，隔一阵再点，
+    过去之后照常截图、点「招募TOP」。以前在这里干等到超时，最后要重启游戏。"""
+    game = AdGame(clock, cm=1, show=2)
+    nav = ad_nav(game, clock)
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.daily"):
+        assert nav.run_ads(["recruit"]) == []
+    assert (game.state, game.cm, game.watched) == ("home", 0, 1)
+    assert [p for s, p in game.taps if s == "recruit_new_card"] == [daily.TAP_RECRUIT_SHOW] * 2
+    first, second = game.show_times
+    assert daily.RECRUIT_SHOW_S <= first - game.show_at < daily.RECRUIT_SHOW_S + 6  # 广告关掉后还要过一会儿才开始看画面
+    assert daily.RECRUIT_SHOW_RETAP_S <= second - first < daily.RECRUIT_SHOW_RETAP_S + 3
+    assert caplog.text.count("演出停在认不出的画面上") == 1
+    assert [p for s, p in game.taps if s == "recruit_cm_result_last"] == [BTN_TOP_LAST]
+    assert len(nav.recruit_shots) == 1
+    assert_clean(game)
+
+
+@pytest.mark.parametrize("window", [AD, STORE, None, "missing"])
+def test_recruit_show_is_not_tapped_unless_game_ui_is_in_front(clock, window):
+    """认不出的画面上，前台不是游戏自己的界面（广告又弹出来了、广告弹出的商店页）、读不到前台窗口、没接上 adb 时
+    什么都不点，照旧等到超时报错。"""
+    game = AdGame(clock, state="recruit_new_card", show=1)
+    nav = ad_nav(game, clock)
+    nav.front_window = None if window == "missing" else lambda: window
+    with pytest.raises(daily.NavigationError, match="90s 没有回到招募页"):
+        nav._settle_recruit(what="观看CM招募")
+    assert game.taps == [] and game.state == "recruit_new_card"
+
+
+def test_recruit_show_front_window_error_is_not_tapped(clock):
+    """查前台窗口时 adb 出错：当成查不了，不点。"""
+    game = AdGame(clock, state="recruit_new_card", show=1)
+    nav = ad_nav(game, clock)
+
+    def broken():
+        raise subprocess.TimeoutExpired("adb", 15)
+
+    nav.front_window = broken
+    with pytest.raises(daily.NavigationError, match="没有回到招募页"):
+        nav._settle_recruit(what="观看CM招募")
+    assert game.taps == []
+
+
+def test_recruit_show_taps_are_limited(clock):
+    """点了也过不去：每隔 RECRUIT_SHOW_RETAP_S 点一次，最多 RECRUIT_SHOW_TAPS 次，之后照旧等到超时报错。"""
+    game = AdGame(clock, state="recruit_new_card", show=99)
+    nav = ad_nav(game, clock)
+    with pytest.raises(daily.NavigationError, match="没有回到招募页"):
+        nav._settle_recruit(what="观看CM招募", timeout_s=300)
+    assert game.taps == [("recruit_new_card", daily.TAP_RECRUIT_SHOW)] * daily.RECRUIT_SHOW_TAPS
+    gaps = [b - a for a, b in zip(game.show_times, game.show_times[1:])]
+    assert all(daily.RECRUIT_SHOW_RETAP_S <= gap < daily.RECRUIT_SHOW_RETAP_S + 3 for gap in gaps)
+
+
+@pytest.mark.parametrize("extra", ["OK", "取消", "消耗星钻", "购买", "NOW LOADING"])
+def test_recruit_show_with_buttons_or_risky_text_is_not_tapped(clock, extra):
+    """认不出的画面上有按钮、确认框、花星钻之类的字，或者在加载：不点，照旧等到超时报错。"""
+    game = AdGame(clock, state="recruit_new_card", show=1)
+    read = game.read
+    game.read = lambda frame, roi=None: [*read(frame), OcrItem(600, 400, 160, 30, extra)]
+    nav = ad_nav(game, clock)
+    with pytest.raises(daily.NavigationError, match="没有回到招募页"):
+        nav._settle_recruit(what="观看CM招募")
+    assert game.taps == []
+
+
 def test_go_home_from_cm_dialogs(clock):
     """上次停在了观看 CM 招募的确认招募 / 最后一次的招募结算：回主界面时只点「取消」/「招募TOP」。"""
     game = AdGame(clock, state="recruit_cm_confirm")
@@ -933,5 +1072,192 @@ def test_chores_recorded(clock, tmp_path):
     assert nav.run_ads(list(AD_JOBS)) == [] and nav.chores == []
     game = AdGame(clock, plan=[None, None, None])
     nav = ad_nav(game, clock, chores=store)
-    assert nav.run_ads(list(AD_JOBS)) == list(AD_JOBS.values()) and nav.chores == []
+    assert nav.run_ads(list(AD_JOBS), waits=()) == list(AD_JOBS.values()) and nav.chores == []
     assert len(store.chore_history(limit=None)) == 5
+
+
+# ------------------------------------------------------------ 没要到广告（「广告获取失败。请稍后再试。」）
+
+
+def pending(store, clock):
+    return store.ads_pending(PACKAGE, game_day(WALL + clock[0]))
+
+
+def test_ad_failed_popup_fixture():
+    items = load_items("ad_failed")
+    assert classify(items) is Screen.OK_POPUP
+    assert ads.find(items, ads.AD_FAILED_TEXT) is not None
+    # 别的画面上没有这几个字
+    for name in ("lb_recover_ad", "lb_recovered", "recruit_cm_confirm", "studio_skip", "home"):
+        assert ads.find(load_items(name), ads.AD_FAILED_TEXT) is None, name
+
+
+def test_ad_failed_popup_is_dismissed_and_retried(clock, tmp_path):
+    """游戏说「广告获取失败」：马上点掉 OK（不干等 AD_START_S）、关掉恢复LIVE BOOST，隔一阵再做；这次放出来了就照常看完，
+    不算出错、存档里也不留。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[FAIL])
+    nav = ad_nav(game, clock, chores=store)
+    assert nav.run_ads(["lb"], waits=(60.0,)) == []
+    assert (game.state, game.lb, game.watched, nav.ads_unavailable) == ("home", 0, 2, ())
+    assert len(game.failed_for) == 1 and game.failed_for[0] < 5
+    assert [p for s, p in game.taps if s == "ad_failed"] == [BTN_FAILED_OK]
+    assert pending(store, clock) is None and len(store.chore_history(limit=None)) == 2
+    assert_clean(game)
+
+
+def test_ad_unavailable_after_retries_is_saved_for_later(clock, tmp_path):
+    """隔一阵再试了两遍还是「广告获取失败」：记为出错，记进存档（挂机过一阵再试），没有用掉次数。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[FAIL] * 3)
+    nav = ad_nav(game, clock, chores=store)
+    assert nav.run_ads(["lb"]) == [AD_JOBS["lb"]]
+    assert (game.state, game.lb, game.watched, game.plan, nav.ads_unavailable) == ("home", 2, 0, [], ("lb",))
+    assert len(game.failed_for) == 3 and max(game.failed_for) < 5
+    assert sum(ads.AD_RETRY_WAITS_S) < clock[0] < sum(ads.AD_RETRY_WAITS_S) + 120
+    got = pending(store, clock)
+    assert (got["jobs"], got["studio_band"], got["tries"]) == (["lb"], "highest", 0)
+    assert got["next"] == pytest.approx(WALL + clock[0] + ads.AD_LATER_GAPS_S[0])
+    assert store.chore_history(limit=None) == []
+    assert_clean(game)
+
+
+def test_ad_failed_does_not_block_other_jobs(clock, tmp_path):
+    """招募没要到广告：先做完恢复 LB、录音室 SKIP，再回头做招募。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[FAIL])
+    nav = ad_nav(game, clock, chores=store)
+    assert nav.run_ads(list(AD_JOBS), waits=(60.0,)) == []
+    assert (game.state, game.lb, game.cm, game.studio, game.watched) == ("home", 0, 0, 0, 6)
+    kinds = [c.kind for c in store.chore_history(limit=None)]
+    assert kinds == ["ad_lb", "ad_lb", "ad_studio", "ad_recruit", "ad_recruit", "ad_recruit"]
+    assert pending(store, clock) is None
+    assert_clean(game)
+
+
+def test_cm_ad_failed_cancels_confirm(clock):
+    """观看CM招募没要到广告：点掉「广告获取失败」的 OK 后，下面的「确认招募」点取消（没有招募、星钻没动）。"""
+    game = AdGame(clock, plan=[FAIL])
+    nav = ad_nav(game, clock)
+    assert nav.run_ads(["recruit"], waits=()) == [AD_JOBS["recruit"]]
+    assert (game.state, game.cm, game.watched, game.gems, nav.ads_unavailable) == ("home", 3, 0, "51,715", ("recruit",))
+    assert [p for s, p in game.taps if s == "recruit_cm_confirm"] == [BTN_CM_OK, BTN_CM_CANCEL]
+    assert_clean(game)
+
+
+def test_studio_ad_failed_closes_skip(clock):
+    """录音室练习 SKIP 没要到广告：点掉 OK 后关掉 SKIP 弹窗，「道具」不碰。"""
+    game = AdGame(clock, plan=[FAIL])
+    nav = ad_nav(game, clock)
+    assert nav.run_ads(["studio"], studio_band="dumbrock", waits=()) == [AD_JOBS["studio"]]
+    assert [p for s, p in game.taps if s == "studio_skip"] == [BTN_SKIP_AD, BTN_SKIP_CLOSE]
+    assert (game.state, game.studio, game.watched, nav.ads_unavailable) == ("home", 1, 0, ("studio",))
+    assert_clean(game)
+
+
+def test_ad_failed_while_stopping(clock):
+    """隔一阵再试之前被停掉：照常抛出，不接着做。"""
+    game = AdGame(clock, plan=[FAIL])
+    nav = ad_nav(game, clock)
+    sleep = nav._sleep
+
+    def stopping(s):
+        if s >= 60:
+            nav.stop.set()
+            raise daily.NavigationError("已停止")
+        sleep(s)
+
+    nav._sleep = stopping
+    with pytest.raises(daily.NavigationError, match="已停止"):
+        nav.run_ads(["lb"])
+    assert game.watched == 0 and game.plan == []
+
+
+def test_retry_ads_later(clock, tmp_path):
+    """挂机用的再试：没到时间什么都不做；到了时间只做存档里记着的项目，还是没要到就把下次再试的时间往后推，
+    要到了就从存档里去掉。换了一个导航器（另一个任务的进程）也读得到。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[FAIL])
+    nav = ad_nav(game, clock, chores=store)
+    assert nav.run_ads(["lb", "studio"], waits=()) == [AD_JOBS["lb"]]  # 录音室 SKIP 照常做成了
+    assert (game.lb, game.studio, game.watched) == (2, 0, 1)
+    first = pending(store, clock)["next"]
+
+    nav = ad_nav(game, clock, chores=store)  # 之后的挂机
+    now = WALL + clock[0]
+    taps = len(game.taps)
+    assert nav.ads_next(now) == first and nav.ads_due(now) == [] and nav.retry_ads(now) == []
+    assert len(game.taps) == taps
+
+    clock[0] += ads.AD_LATER_GAPS_S[0] + 1
+    now = WALL + clock[0]
+    assert nav.ads_due(now) == ["lb"]
+    game.plan = [FAIL]
+    assert nav.retry_ads(now) == [AD_JOBS["lb"]]
+    got = pending(store, clock)
+    assert (got["jobs"], got["tries"]) == (["lb"], 1) and got["next"] == pytest.approx(now + ads.AD_LATER_GAPS_S[1])
+    assert (game.state, game.lb, game.watched, len(game.failed_for)) == ("home", 2, 1, 2)
+    assert nav.ads_due(WALL + clock[0]) == []  # 刚试过，不马上又试
+
+    clock[0] += ads.AD_LATER_GAPS_S[1] + 1
+    now = WALL + clock[0]
+    assert nav.retry_ads(now) == []
+    assert (game.state, game.lb, game.studio, game.watched) == ("home", 0, 0, 3)
+    assert pending(store, clock) is None and nav.ads_next(WALL + clock[0]) is None
+    assert_clean(game)
+
+
+def test_retry_ads_gaps_grow_and_expire_with_game_day(clock, tmp_path):
+    """一直要不到：间隔越来越长（到最后一档不再变长）；过了游戏的日期变更就不再试（新的一天由「看广告」任务重新做）。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[FAIL] * 20)
+    nav = ad_nav(game, clock, chores=store)
+    clock[0] = 6 * 3600.0  # 北京时间 4:00，游戏的一天刚开始
+    nav.run_ads(["lb"], waits=())
+    gaps = []
+    for _ in range(len(ads.AD_LATER_GAPS_S) + 1):
+        clock[0] = pending(store, clock)["next"] - WALL + 1
+        now = WALL + clock[0]
+        assert nav.retry_ads(now) == [AD_JOBS["lb"]]
+        gaps.append(round(pending(store, clock)["next"] - now))
+    assert gaps == [3600, 7200, 14400, 14400, 14400] and game.watched == 0
+    tomorrow = WALL + 30 * 3600.0  # 第二天 4:00
+    assert nav.ads_next(tomorrow) is None and nav.ads_due(tomorrow) == [] and nav.retry_ads(tomorrow) == []
+    assert store.ads_pending(PACKAGE, game_day(WALL + clock[0])) is not None  # 旧的留在存档里，只是不再用
+
+
+def test_pending_ads_keep_jobs_not_run_this_time(clock, tmp_path):
+    """存档里记着招募、恢复 LB 没要到广告；之后只运行了恢复 LB（做成了）：招募照旧留着。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[FAIL, FAIL])
+    nav = ad_nav(game, clock, chores=store)
+    assert nav.run_ads(["recruit", "lb"], waits=()) == [AD_JOBS["recruit"], AD_JOBS["lb"]]
+    assert pending(store, clock)["jobs"] == ["recruit", "lb"]
+    assert nav.run_ads(["lb"], waits=()) == []
+    assert pending(store, clock)["jobs"] == ["recruit"] and game.lb == 0
+
+
+def test_ads_later_needs_adb_and_store(clock, tmp_path):
+    """没有接上读前台窗口 / 返回键、没有存档的导航器：不再试，也不报错。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[FAIL])
+    ad_nav(game, clock, chores=store).run_ads(["lb"], waits=())
+    later = WALL + clock[0] + ads.AD_LATER_GAPS_S[0] + 1
+    bare = GameNavigator(Config(), game, game, game, settle_s=0, chores=store)
+    assert bare.ads_next(later) is None and bare.ads_due(later) == [] and bare.retry_ads(later) == []
+    nav = ad_nav(game, clock)  # 没有存档
+    assert nav.ads_next(later) is None and nav.retry_ads(later) == []
+    game = AdGame(clock, plan=[FAIL])
+    assert ad_nav(game, clock).run_ads(["lb"], waits=()) == [AD_JOBS["lb"]]
+
+
+def test_ad_failed_text_inside_an_ad_is_not_tapped(clock):
+    """截图上有「广告获取失败」几个字、可前台已经是广告了（截图之后广告才弹出来）：不点。"""
+    game = AdGame(clock, plan=[FAIL])
+    nav = ad_nav(game, clock)
+    game.failed_at = 0.0
+    fronts = iter([AD])
+    nav._front = lambda: next(fronts)
+    assert nav._ad_failed(GAME) is False and game.taps == []
+    nav._front = lambda: GAME
+    assert nav._ad_failed(GAME) is True and game.taps == [("ad_failed", BTN_FAILED_OK)]

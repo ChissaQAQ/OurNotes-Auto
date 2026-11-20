@@ -234,6 +234,12 @@ class GameConfig:
     # 挑战演出（loop.challenge）每局消耗的挑战pt：200 / 400 / 800 / 1600（越多奖励越多，200 能打的局数最多）；
     # null 表示不改游戏里的设置。CP 不够一局时结束
     challenge_cost: int | None = 200
+    # 自动选消耗（开了就不看 challenge_cost）：每局按持有的挑战pt 选够用的最大一档（先 1600，不够了依次 800、400、200），
+    # 打到最少的一档也不够为止；某一档选不中（没解锁？）就退一档
+    challenge_auto: bool = False
+    # 每周第 5 天第一局后的「演出打卡奖励」（从几样奖励里选 1 个）拿哪个：default（不改，游戏里选中哪个拿哪个，一般是星钻）、
+    # gems（星钻）、crystal（奇迹水晶）、sp_ticket（SP技能强化券）、prism（希望棱晶）。选不中、认不出弹窗时照旧拿游戏里选中的
+    checkin_reward: str = "default"
 
     @property
     def lb_spends(self) -> bool:
@@ -288,7 +294,8 @@ class LoopConfig:
     # 挂机补领重跑期间错过的日常）
     continues: bool = False
     max_failures: int = 5  # 连续失败次数上限
-    # 首音符同步失败、演奏中生命值归零时暂停、点「重试」让这首歌从头开始的次数（每局）；用完了就等歌曲放完。0 为不重试
+    # 首音符同步失败、演奏中生命值归零时暂停、点「重试」让这首歌从头开始的次数（每局）；用完了就等歌曲放完。0 为不重试。
+    # 重试过还是连首音符都看不到（演奏画面不对劲）就重启游戏，见 Runner._restart_abnormal
     sync_retries: int = 2
     # 最近几局同步时测到的游戏出帧率（中位数）低于这个值就重启游戏：游戏连续运行十几个小时后会越来越卡
     # （正常 60fps），容易同步失败、整首对不上，重启就恢复了。0 为不检查

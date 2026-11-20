@@ -56,6 +56,7 @@ ournotes-auto run --arena --until-lb-empty --wait-lb --lb-cost 3   # 방치 플�
 
 # 게임을 실행하고 홈 화면으로 진입. 데일리 보상 수령(기본은 스토리 보기·이벤트 스토리를 뺀 7개 항목 모두, --jobs로 일부만 지정)
 ournotes-auto start
+ournotes-auto quit   # 게임 종료(에뮬레이터는 닫지 않음). 게임이 실행 중이 아니면 아무것도 하지 않음
 ournotes-auto switch-account user_123   # 현재 계정에서 로그아웃하고, 로그인 기록에서 계정 이름에 user_123이 들어간 계정으로 로그인한 뒤 홈 화면으로 진입
 ournotes-auto daily
 ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # 스튜디오 연습, 미션, 패스, 기간 한정 미션, 초보자 미션, T.G.W CARD, 무료 뽑기, 선물함
@@ -114,7 +115,7 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 - `rotate`: 챌린지 라이브(`--challenge` / `loop.challenge`) 전용입니다. 매 판이 끝나면 챌린지 라이브의 곡 선택 화면에서 다음 곡을 선택하고, 마지막 곡 다음에는 첫 곡으로 돌아갑니다. 챌린지 라이브에서는 `current`, `rotate`, `ap_first`만 쓸 수 있습니다.
 - 챌린지 라이브의 `ap_first`: 챌린지 라이브의 곡 선택 화면에는 필터와 랜덤 선곡이 없으므로, 선택된 곡부터 아래로 한 곡씩 오른쪽 패널에 ALL PERFECT 표시가 있는지 보고 처음 나오는 AP를 못 한 곡을 플레이합니다(같은 곡을 `loop.ap_max_attempts`번 쳐도 AP가 안 되면 더 치지 않습니다). `loop.ap_first_difficulties`의 사용법은 위와 같으며, 다 채우면 `-d`의 난이도로 곡을 순환하며 플레이합니다.
 
-챌린지 라이브(`--challenge`)는 판마다 `game.challenge_cost`(`--challenge-cost`, 200 / 400 / 800 / 1600, 기본 200, null은 게임 설정을 바꾸지 않음)만큼 챌린지 pt를 소모하고 LB는 소모하지 않으며, CP가 한 판에 모자랄 때까지 플레이합니다. 그래서 `--until-lb-empty`, `--wait-lb`, `--lb-refill`과 함께 쓸 수 없습니다.
+챌린지 라이브(`--challenge`)는 판마다 `game.challenge_cost`(`--challenge-cost`, 200 / 400 / 800 / 1600, 기본 200, null은 게임 설정을 바꾸지 않음)만큼 챌린지 pt를 소모하고(`--challenge-auto` / `game.challenge_auto`이면 매 판 보유량으로 감당할 수 있는 가장 큰 소모량을 고릅니다. 먼저 1600, 모자라면 800, 400, 200 순) LB는 소모하지 않으며, CP가 한 판에 모자랄 때까지 플레이합니다. 그래서 `--until-lb-empty`, `--wait-lb`, `--lb-refill`과 함께 쓸 수 없습니다.
 
 격주 스테이지(`--arena` / `loop.arena`): 룰렛으로 곡이 정해지며 `game.difficulty`(`-d`, 기본 EXPERT)를 치고 스킵하지 않고, `play.touch.great_ratio`는 최소 0.01로 칩니다(멀티 대전은 AP가 필요 없으므로). `--lb-cost`, `--lb-auto`, `--lb-refill`, `--until-lb-empty`, `--wait-lb`는 프리 라이브와 같으며, 격주 스테이지 첫 화면의 「LB 소모」에서 설정합니다. `--arena-band`(`loop.arena_band`)로 밴드를 고릅니다: `current`(기본)는 바꾸지 않고, `mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock`는 매 판 전에 그 밴드로 바꾸며, `rotate`는 지금 밴드부터 시작해 게임 안의 순서대로 밴드마다 `--arena-games`(`loop.arena_games_per_band`, 기본 1)판을 치면 다음 밴드로 바꿉니다. `--challenge`와 함께 쓸 수 없습니다. 판마다 밴드, 순위, 랭크 포인트 증감, 증감 후 랭크 포인트, 소모한 LB, 판정 수를 `data/arena.jsonl`에 기록합니다.
 

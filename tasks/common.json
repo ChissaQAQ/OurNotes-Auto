@@ -293,6 +293,39 @@
             ],
             "default_case": "No"
         },
+        "CheckinReward": {
+            "type": "select",
+            "label": "$opt.CheckinReward",
+            "description": "$opt.CheckinReward.desc",
+            "cases": [
+                {
+                    "name": "default",
+                    "label": "$opt.CheckinReward.default",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "checkin_reward": "default" } } }
+                },
+                {
+                    "name": "gems",
+                    "label": "$opt.CheckinReward.gems",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "checkin_reward": "gems" } } }
+                },
+                {
+                    "name": "crystal",
+                    "label": "$opt.CheckinReward.crystal",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "checkin_reward": "crystal" } } }
+                },
+                {
+                    "name": "sp_ticket",
+                    "label": "$opt.CheckinReward.sp_ticket",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "checkin_reward": "sp_ticket" } } }
+                },
+                {
+                    "name": "prism",
+                    "label": "$opt.CheckinReward.prism",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "checkin_reward": "prism" } } }
+                }
+            ],
+            "default_case": "default"
+        },
         "GameLanguage": {
             "type": "select",
             "label": "$opt.GameLanguage",

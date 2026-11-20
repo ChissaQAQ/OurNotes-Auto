@@ -1,7 +1,13 @@
 """看广告领每日奖励：观看 CM 招募（每天 3 次）、看广告恢复 LIVE BOOST（每天 2 次，每次 10 点）、
 录音室练习的 SKIP（每天 1 次，立刻拿 360 分钟的练习奖励）。坐标均为 1280x720 设计尺寸。
 
-- 要游戏里放得出广告（Google Play 版；网络、模拟器得让 Google 肯给广告）。放不出来时这一项记为出错，别的照常做。
+- 要游戏里放得出广告（Google Play 版；网络、模拟器得让 Google 肯给广告）。
+- 没要到广告：游戏点了「观看」才去要广告，Google 这次不给（AdMob 回「没有可填充的广告」，实测时有时无）就在约 1 秒后弹出
+  「广告获取失败。请稍后再试。」（标题「错误」，只有 OK），次数不会用掉。这不是程序能避免的，只能过一阵再要：
+  - 认出这个弹窗就点掉 OK、关掉还开着的弹窗，这一项先放下（:class:`AdUnavailable`），别的项目照常做。
+    点了之后 AD_START_S 一直没放出来的也一样算没要到。
+  - 别的项目做完后隔一阵把没要到的再做一遍（AD_RETRY_WAITS_S）。还是没要到的记为出错，并记进存档
+    （``state.json`` 的 ``ads_pending``，只在当天有效）：之后的挂机隔一阵再试（AD_LATER_GAPS_S，见 :meth:`AdsMixin.retry_ads`）。
 - 广告是另一个界面（AdMob 的 AdActivity），画面认不出，只看两样：经 adb 读到的获得焦点的窗口，和画面顶部提示条的文字
   （文字随模拟器的系统语言，只实测过简体中文）。
   - 提示条：「N 秒后可得奖励」（连播时前面还有「第 2 个广告，共 3 个 ·」）→「奖励已发放」；连播时倒计时走完可能只剩一个 ✕。
@@ -40,8 +46,9 @@ import numpy as np
 
 from ..logfile import log_image
 from ..player.guard import load_template
-from ..records import CHORE_KINDS
+from ..records import CHORE_KINDS, game_day
 from ..result_reader import OcrItem
+from ..runner import NavigationError
 from .daily import (
     BTN_BACK,
     RECRUIT_DIALOG_BAD_FRAMES,
@@ -58,7 +65,7 @@ from .daily import (
     studio_skip_dialog,
 )
 from .jacket import crop_jacket
-from .screens import ARENA_BANDS, LB_TABS_ROI, Rect, Screen, center, find, in_roi
+from .screens import ARENA_BANDS, LB_TABS_ROI, OK_POPUP_ROI, Rect, Screen, center, find, in_roi
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +76,12 @@ AD_JOBS_MAX = {"recruit": CHORE_KINDS["ad_recruit"][1], "lb": CHORE_KINDS["ad_lb
 # ---- 广告播放画面
 AD_POLL_S = 2.0
 AD_START_S = 25.0  # 点了「观看」这么久广告还没出现，就算没放出来
+# 游戏的提示「广告获取失败。请稍后再试。」（标题「错误」，只有 OK）：这次没要到广告，点掉 OK 后原来的弹窗还在
+AD_FAILED_TEXT = "广告获取失败"
+BTN_AD_FAILED_OK = (640, 570)
+AD_RETRY_WAITS_S = (60.0, 120.0)  # 有项目没要到广告时，别的项目做完后隔这么久把它们再做一遍（一个数一遍）
+# 还是没要到的留给挂机：第 n 次再试之前隔这么久（再往后都按最后一个）；只在当天（游戏日）有效
+AD_LATER_GAPS_S = (1800.0, 3600.0, 7200.0, 14400.0)
 AD_TIMEOUT_S = 240.0  # 广告出现后这么久还没关掉就放弃（连播 3 个约 1 分钟）
 AD_BAR_ROI: Rect = (0, 0, 1280, 70)  # 顶部的提示条（文字在 y≈34，✕ 在左上角或右上角）
 _AD_COUNTDOWN = re.compile(r"(\d+)秒后可得奖励")
@@ -154,6 +167,10 @@ STUDIO_OPEN_S = 10.0  # 点了标志 / SKIP / 返回之后等画面出来最多�
 STUDIO_RETAP_S = 4.0
 STUDIO_DONE_S = 30.0  # 广告关掉后这么久没看到「录音室练习奖励」就报错
 STUDIO_BACK_S = 8.0  # 广告关掉后回到了 SKIP 弹窗 / 详情页、过了这么久还没有奖励：奖励没到手
+
+
+class AdUnavailable(NavigationError):
+    """这次没要到广告（游戏说「广告获取失败」，或者点了之后一直没放出来）：次数没用掉，过一阵可以再试。"""
 
 
 @dataclass
@@ -337,14 +354,113 @@ class AdsMixin:
 
     _ad_studio_band = STUDIO_HIGHEST
     _studio_templates: dict[str, np.ndarray] | None = None  # 详情页左上角的乐队标志（第一次用时加载）
+    ads_unavailable: tuple[str, ...] = ()  # 上一次 run_ads 里到最后都没要到广告的项目（AD_JOBS 的键）
+    wall_clock = staticmethod(time.time)  # 现在的时刻（Unix 秒）：算哪个游戏日、下次什么时候再试
 
-    def run_ads(self, jobs, studio_band: str = STUDIO_HIGHEST) -> list[str]:
+    def run_ads(self, jobs, studio_band: str = STUDIO_HIGHEST, waits=AD_RETRY_WAITS_S, now: float | None = None) -> list[str]:
         """按 :data:`AD_JOBS` 的顺序做 ``jobs`` 里的项目，返回出错的项目名，最后停在主界面。
-        ``studio_band``：录音室练习的 SKIP 用在哪个乐队（:data:`STUDIO_BAND_MODES` 之一）。"""
+        ``studio_band``：录音室练习的 SKIP 用在哪个乐队（:data:`STUDIO_BAND_MODES` 之一）。
+
+        没要到广告的项目（:class:`AdUnavailable`，次数没用掉）等别的项目做完后隔 ``waits`` 里的秒数再做一遍（一个数一遍）；
+        还是没要到的也算出错，键留在 ``ads_unavailable`` 里并记进存档，之后的挂机隔一阵再试（:meth:`retry_ads`）。
+        ``now``：现在的时刻（Unix 秒），算下次再试的时间用。
+        """
         if studio_band not in STUDIO_BAND_MODES:
             raise ValueError(f"未知的乐队：{studio_band}")
         self._ad_studio_band = studio_band
-        return self._run_jobs(AD_JOBS, jobs, "_ad_", "看广告")
+        self.ads_unavailable = ()
+        later: list[str] = []
+
+        def unavailable(job: str, error: NavigationError) -> bool:
+            if not isinstance(error, AdUnavailable):
+                return False
+            logger.warning("%s", error)
+            later.append(job)
+            return True
+
+        failed = self._run_jobs(AD_JOBS, jobs, "_ad_", "看广告", defer=unavailable)
+        for wait in waits:
+            if not later:
+                break
+            again, later[:] = list(later), []
+            logger.warning("%s：没要到广告，%.0f 秒后再试", "、".join(AD_JOBS[j] for j in again), wait)
+            self._sleep(wait)
+            self.leave_ad()  # 刚才没放出来的广告这时才弹出来的话先关掉
+            failed += self._run_jobs(AD_JOBS, again, "_ad_", "看广告", defer=unavailable)
+        self.ads_unavailable = tuple(j for j in AD_JOBS if j in later)
+        failed += [AD_JOBS[j] for j in self.ads_unavailable]
+        self._save_ads_later(jobs, studio_band, self.wall_clock() if now is None else now)
+        return failed
+
+    # ------------------------------------------------------------ 没要到广告的留到以后再试
+
+    def _save_ads_later(self, jobs, studio_band: str, now: float) -> None:
+        """把今天还没要到广告的项目记进存档（挂机到时间再试）；之前记着、这次没做的照旧留着，都没有了就清掉。
+        记不了只警告，不影响正在做的事。"""
+        store = self._chore_store
+        if store is None:
+            return
+        package, day = self.cfg.device.package, game_day(now)
+        try:
+            old = store.ads_pending(package, day)
+            was = old["jobs"] if old is not None else ()
+            keep = [j for j in AD_JOBS if j in self.ads_unavailable or (j in was and j not in jobs)]
+            if keep:
+                first = now + AD_LATER_GAPS_S[0]
+                tries, due = (old["tries"], max(old["next"], first)) if old is not None else (0, first)
+                store.set_ads_pending(package, day, {"jobs": keep, "studio_band": studio_band, "tries": tries, "next": due})
+            elif old is not None:
+                store.set_ads_pending(package, day, None)
+        except OSError as e:
+            logger.warning("没要到广告的项目没记下来（%s），之后不会自己再试", e)
+
+    def _ads_later(self, now: float) -> dict | None:
+        """今天还等着再试的项目（:meth:`RecordStore.ads_pending`，``jobs`` 只留认得的）；没有、看不了广告时为 None。"""
+        store = self._chore_store
+        if store is None or self.front_window is None or self.press_back is None:
+            return None
+        entry = store.ads_pending(self.cfg.device.package, game_day(now))
+        if entry is None:
+            return None
+        entry["jobs"] = [j for j in AD_JOBS if j in entry["jobs"]]
+        return entry if entry["jobs"] else None
+
+    def ads_next(self, now: float) -> float | None:
+        """今天没要到广告的项目下次再试的时刻（Unix 秒）；没有要再试的为 None。"""
+        entry = self._ads_later(now)
+        return entry["next"] if entry is not None else None
+
+    def ads_due(self, now: float) -> list[str]:
+        """今天没要到广告、到了再试时间的项目（AD_JOBS 的键）；没有为空。``now`` 是现在的时刻（Unix 秒）。"""
+        entry = self._ads_later(now)
+        return entry["jobs"] if entry is not None and now >= entry["next"] else []
+
+    def retry_ads(self, now: float) -> list[str]:
+        """挂机用：把今天「看广告」里没要到广告、到了再试时间（:meth:`ads_due`）的项目再做一遍，返回出错的项目名。
+        先把下次再试的时间往后推（AD_LATER_GAPS_S），中途出错、被停掉也不会马上又试；这里不在原地等着重试。"""
+        entry = self._ads_later(now)
+        if entry is None or now < entry["next"]:
+            return []
+        jobs, tries = entry["jobs"], entry["tries"] + 1
+        gap = AD_LATER_GAPS_S[min(tries, len(AD_LATER_GAPS_S) - 1)]
+        band = entry["studio_band"] if entry["studio_band"] in STUDIO_BAND_MODES else STUDIO_HIGHEST
+        names = "、".join(AD_JOBS[j] for j in jobs)
+        try:
+            self._chore_store.set_ads_pending(
+                self.cfg.device.package, game_day(now), {**entry, "tries": tries, "next": now + gap}
+            )
+        except OSError as e:  # 记不了就不试：不然每次都会马上又试
+            logger.warning("看广告：再试的时间没记下来（%s），这次不试", e)
+            return []
+        logger.info("看广告：之前没要到广告的项目再试一遍（%s）", names)
+        self.leave_ad()
+        failed = self.run_ads(jobs, studio_band=band, waits=(), now=now)
+        if self.ads_unavailable:
+            left = "、".join(AD_JOBS[j] for j in self.ads_unavailable)
+            logger.warning("看广告：%s 还是没要到广告，%.0f 分钟后再试", left, gap / 60)
+        elif not failed:
+            logger.info("看广告：之前没要到广告的项目都做完了")
+        return failed
 
     # ------------------------------------------------------------ 窗口、返回键
 
@@ -403,10 +519,34 @@ class AdsMixin:
 
     # ------------------------------------------------------------ 看广告
 
+    def _ad_failed(self, game: str) -> bool:
+        """点了「观看」之后还在游戏里：弹出了「广告获取失败。请稍后再试。」就点掉 OK、返回 True。"""
+        items = self._ad_items()
+        if find(items, AD_FAILED_TEXT) is None:
+            return False
+        if self._front() != game:  # 截图之后广告正好弹出来了：广告里的东西不点
+            return False
+        self.tap(self._button(items, "OK", BTN_AD_FAILED_OK, OK_POPUP_ROI), "OK（广告获取失败）")
+        self._sleep(1.0)
+        return True
+
+    def _watch_or_fail(self, game: str, name: str, tapped: str, close) -> None:
+        """点了 ``tapped`` 之后看广告（:meth:`_watch_ad`）。没要到广告时先 ``close()`` 关掉还开着的弹窗，
+        再抛 :class:`AdUnavailable`。"""
+        try:
+            if self._watch_ad(game, name):
+                return
+            error = self._fail(f"{name}：点了{tapped}{AD_START_S:.0f}s 广告没有放出来", AdUnavailable)
+        except AdUnavailable as e:
+            error = e
+        close()
+        raise error
+
     def _watch_ad(self, game: str, what: str) -> bool:
         """点了「观看」/ OK 之后：等广告出现、放到奖励到手，按返回键关掉，回到游戏（``game`` 是看之前的游戏界面）。
 
-        广告 AD_START_S 内没出现返回 False（什么都没按）。AD_TIMEOUT_S 还没关掉时放弃这次奖励、想办法回到游戏再报错。
+        广告 AD_START_S 内没出现返回 False（什么都没按）；游戏说「广告获取失败」时点掉 OK、抛 :class:`AdUnavailable`。
+        AD_TIMEOUT_S 还没关掉时放弃这次奖励、想办法回到游戏再报错。
         """
         package = game.split("/")[0]
         start = time.monotonic()
@@ -418,6 +558,8 @@ class AdsMixin:
                 if ad is not None:
                     logger.info("%s：广告关掉了（放了 %.0f 秒）", what, now - ad.since)
                     return True
+                if self._ad_failed(game):
+                    raise AdUnavailable(f"{what}：广告获取失败（游戏说请稍后再试，次数没用掉）")
                 if now - start > AD_START_S:
                     return False
             elif window is None:  # 读不到前台窗口：接着等，一直读不到就放弃
@@ -528,13 +670,19 @@ class AdsMixin:
                 return
             logger.info("%s：%s", name, f"还剩 {left} 次" if left is not None else "开始")
             self.tap(center(watch), "观看")
-            if not self._watch_ad(game, name):
-                raise self._fail(f"{name}：点了「观看」{AD_START_S:.0f}s 广告没有放出来")
+            self._watch_or_fail(game, name, "「观看」", self._lb_cancel)
             self._lb_ad_done(name)
             self._chore("ad_lb")
             self.go_home()
             after = home_lb(self._items)
             logger.info("%s：已恢复%s", name, f"（LB {held} → {after}）" if None not in (held, after) else "")
+
+    def _lb_cancel(self) -> None:
+        """恢复LIVE BOOST 弹窗还开着的话点「取消」。"""
+        screen, items = self.look()
+        if screen is Screen.LB_RECOVER:
+            self.tap(self._button(items, "取消", BTN_LB_AD_CANCEL, LB_AD_CANCEL_ROI), "取消")
+            self._sleep(1.0)
 
     def _open_lb_recover(self) -> list[OcrItem]:
         """在主界面点 LB 旁的「+」，等恢复LIVE BOOST 弹窗稳定（连续两帧），返回它的识别结果。"""
@@ -613,9 +761,7 @@ class AdsMixin:
             logger.info("%s：今天的次数用完了", name)
             return
         self.tap(center(button), "广告（SKIP）")
-        if not self._watch_ad(game, name):
-            self._studio_close_skip()
-            raise self._fail(f"{name}：点了「广告」{AD_START_S:.0f}s 广告没有放出来")
+        self._watch_or_fail(game, name, "「广告」", self._studio_close_skip)
         self._studio_done(name)
         self._chore("ad_studio")
         logger.info("%s：已领取练习奖励", name)
@@ -827,8 +973,7 @@ class AdsMixin:
             if ok is None:
                 raise self._fail(f"{name}：点了「{AD_RECRUIT_TEXT}」没有弹出确认招募")
             self.tap(center(ok), "OK（观看CM招募）")
-            if not self._watch_ad(game, name):
-                raise self._fail(f"{name}：点了 OK {AD_START_S:.0f}s 广告没有放出来")
+            self._watch_or_fail(game, name, " OK ", self._cm_cancel)
             shot = self._settle_recruit(what=name, stay_s=CM_STAY_S, tag=RECRUIT_SHOT_CM)
             self._chore("ad_recruit", shot)
             if shot is not None:
@@ -839,6 +984,14 @@ class AdsMixin:
             if after[0] != gems[0] or paid_changed:
                 raise self._fail(f"{name}后星钻数变了（{_gems_text(gems)} → {_gems_text(after)}）")
             logger.info("%s：已招募", name)
+
+    def _cm_cancel(self) -> None:
+        """「确认招募」还开着的话点「取消」（没有招募）。"""
+        _, items = self.look()
+        cancel = cm_recruit_cancel(items) if cm_recruit_dialog(items) else None
+        if cancel is not None:
+            self.tap(center(cancel), "取消")
+            self._sleep(1.0)
 
     def _cm_page(self) -> tuple[OcrItem | None, tuple[int, int | None]]:
         """在招募页选中左侧的「观看CM招募」（没看到时往上拖列表找），返回「观看广告免费」按钮（找不到为 None）和（星钻, 付费星钻）。"""

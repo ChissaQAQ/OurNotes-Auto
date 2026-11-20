@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import subprocess
 import time
 from pathlib import Path
 
@@ -333,6 +334,8 @@ def cmd_run(cfg: Config, args) -> int:
         cfg.loop.challenge = True
     if args.challenge_cost is not None:
         cfg.game.challenge_cost = args.challenge_cost
+    if args.challenge_auto:
+        cfg.game.challenge_auto = True
     if args.arena:
         cfg.loop.arena = True
     if args.arena_band:
@@ -366,6 +369,8 @@ def cmd_run(cfg: Config, args) -> int:
         )
         update = getattr(args, "update", None)
         gate = getattr(args, "gate", None)
+        if gate is not None:
+            ctx.nav.stop_pending = lambda: gate.pending
         runner = Runner(cfg, ctx.nav, ctx.session, ctx.client, ctx.catalog, ctx.store, stop, source, update, tracker, gate)
         try:
             stats = runner.run()
@@ -432,6 +437,20 @@ def cmd_start(cfg: Config, args) -> int:
             logger.error("%s", e)
             return 1
     logger.info("已进入游戏（%s）", screen)
+    return 0
+
+
+def cmd_quit(cfg: Config, args) -> int:
+    """退出游戏：结束游戏进程，不关模拟器（#144）；游戏没在运行时什么都不做。只用 adb，不截图、不点画面。"""
+    from .device import adb
+
+    try:
+        adb.resolve_package(cfg.device)
+        stopped = adb.stop_app(cfg.device)
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.error("退出游戏失败：%s", e)
+        return 1
+    logger.info("已退出游戏（%s）" if stopped else "游戏没有在运行（%s）", cfg.device.package)
     return 0
 
 
@@ -552,6 +571,9 @@ def cmd_ads(cfg: Config, args) -> int:
         finally:
             if nav.recruit_shots or nav.chores:
                 _refresh_stats(cfg)
+    if nav.ads_unavailable:
+        names = "、".join(AD_JOBS[j] for j in nav.ads_unavailable)
+        logger.warning("%s 没要到广告（次数没用掉）：今天之后的挂机会隔一阵再试，也可以过一会儿再运行「看广告」", names)
     if failed:
         logger.error("看广告有项目出错：%s", "、".join(failed))
         return 1
@@ -608,6 +630,9 @@ def register(sub) -> None:
     sp = sub.add_parser("start", help="启动游戏并等到进入游戏")
     sp.add_argument("--timeout", type=float, default=180.0, help="多久没进入游戏就报错（秒，重新登录时重新计时）")
     sp.set_defaults(func=cmd_start)
+
+    sp = sub.add_parser("quit", help="退出游戏（结束游戏进程，不关模拟器）；游戏没在运行时什么都不做")
+    sp.set_defaults(func=cmd_quit)
 
     sp = sub.add_parser("switch-account", help="退出当前的 B 站账号，从登录记录里选另一个账号登录（不用密码），然后进入游戏")
     sp.add_argument("account", help="账号名（游戏登录记录里显示的名字，写其中一部分也行，要只对得上一个账号）")
@@ -707,6 +732,11 @@ def register(sub) -> None:
         type=int,
         choices=(200, 400, 800, 1600),
         help="覆盖 game.challenge_cost（挑战演出每局消耗的挑战pt，默认 200）",
+    )
+    sp.add_argument(
+        "--challenge-auto",
+        action="store_true",
+        help="挑战演出每局按持有的挑战pt 自动选消耗（够用的最大一档，先 1600，不够了依次 800、400、200；不看 --challenge-cost）",
     )
     sp.add_argument(
         "--arena",

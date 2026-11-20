@@ -8,6 +8,7 @@ import pytest
 
 from ournotes_auto.nav.lang import localize
 from ournotes_auto.nav.screens import (
+    CHECKIN_REWARDS,
     CP_RADIO,
     NOTIFY_LOGO_Y,
     RESULT_ROW_Y,
@@ -24,7 +25,10 @@ from ournotes_auto.nav.screens import (
     band_confirm_song,
     challenge_rows,
     challenge_selected,
+    checkin_reward_dialog,
+    checkin_reward_radio,
     classify,
+    cp_auto_cost,
     cp_bar_held,
     cp_held,
     home_talk,
@@ -135,6 +139,9 @@ def load(name: str) -> list[OcrItem]:
         ("login_bonus_talk", Screen.LOGIN_BONUS),
         ("reward", Screen.REWARD),
         ("reward_claimed", Screen.REWARD),  # 评级提升奖励，标题在更上面
+        ("checkin_reward", Screen.REWARD),  # 每周第 5 天的演出打卡奖励（选 1 个），下面只有 OK
+        ("checkin", Screen.POPUP),  # 「已完成演出打卡！」，下面只有关闭
+        ("checkin_done", Screen.POPUP),
         ("grade_up", Screen.GRADE_UP),
         ("bond_up", Screen.BOND_UP),  # 羁绊等级的 RANK UP（不是玩家等级）
         ("band_rank_up", Screen.BOND_UP),  # 乐队RANK 的 RANK UP（结算羁绊页之后）
@@ -145,6 +152,9 @@ def load(name: str) -> list[OcrItem]:
         ("home_unlock", Screen.UNLOCK),  # 沉浸式主页解锁（领通行证奖励后回主界面）
         ("new_song", Screen.NEW_SONG),  # 回主界面时的「追加翻唱乐曲！」演出
         ("birthday", Screen.SKIPPABLE),  # 重新登录后的角色生日演出，右上角「跳过」
+        # 全屏视频（乐队周年纪念）点「跳过」后的「要跳过这段视频吗？」，左取消右 OK（标题也是「跳过」，但不在右上角）
+        ("video_skip_confirm", Screen.VIDEO_SKIP),
+        ("recruit_new_card", Screen.UNKNOWN),  # 招募到新成员时的展示画面：整屏立绘，没有按钮（招募演出里另外处理）
         ("story_skip", Screen.STORY_SKIP),  # 「要跳过故事吗？」（中间的「跳过」不算可跳过的演出）
         ("story_player_menu", Screen.STORY_MENU),
         ("bond_player_menu", Screen.STORY_MENU),
@@ -394,6 +404,28 @@ def test_cp_radio_matches_costs():
     assert tuple(CP_RADIO) == CHALLENGE_COSTS
 
 
+@pytest.mark.parametrize(
+    "held, top, want",
+    [
+        (3708, None, 1600),
+        (1600, None, 1600),
+        (1599, None, 800),
+        (939, None, 800),
+        (799, None, 400),
+        (399, None, 200),
+        (200, None, 200),
+        (199, None, None),  # 最少的一档也不够
+        (0, None, None),
+        (3708, 800, 800),  # 再大的选不中
+        (300, 800, 200),
+        (150, 200, None),
+    ],
+)
+def test_cp_auto_cost(held, top, want):
+    """自动选消耗：够用的最大一档。"""
+    assert cp_auto_cost(held, top) == want
+
+
 def test_challenge_rows():
     rows = challenge_rows(load("challenge_song_select"))
     assert [t for t, _ in rows] == ["梦我梦中", "これはぼくたちの生存のあらすじ", "オリオンをなぞる"]  # 不含等级、MV
@@ -572,3 +604,20 @@ def test_home_with_one_entry_unreadable():
     row = [("商店", 690), ("故事", 804), ("乐队", 916)]
     assert classify([OcrItem(x - 20, 650, 40, 20, text) for text, x in row]) is Screen.HOME
     assert classify([OcrItem(784, 650, 40, 20, "故事")]) is Screen.UNKNOWN
+
+
+def test_checkin_reward_dialog():
+    """「演出打卡奖励」（#139）：认得出这个弹窗和每一行的单选按钮；别的「获得奖励」、打卡弹窗本身不算。"""
+    items = load("checkin_reward")
+    assert checkin_reward_dialog(items)
+    rows = {name: checkin_reward_radio(items, text) for name, text in CHECKIN_REWARDS.items()}
+    assert rows == {"gems": (919, 185), "crystal": (919, 278), "sp_ticket": (919, 372), "prism": (919, 464)}
+    assert checkin_reward_radio(items, "金币") is None
+    assert checkin_reward_radio([it for it in items if it.text != "希望棱晶"], "希望棱晶") is None
+    for name in ("reward", "reward_claimed", "checkin", "checkin_done", "daily_studio_reward", "tgw_points_reward", "bond_reward", "arena_tier_reward"):
+        assert not checkin_reward_dialog(load(name)), name
+    # 繁体字的界面转成简体后是同样的字
+    hant = [OcrItem(550, 21, 176, 31, localize("演出打卡獎勵")), OcrItem(513, 95, 243, 26, localize("請從以下獎勵中選擇1個。"))]
+    hant += [OcrItem(370, 264, 87, 28, localize("奇蹟水晶")), OcrItem(368, 448, 89, 31, localize("希望稜晶"))]
+    assert checkin_reward_dialog(hant)
+    assert checkin_reward_radio(hant, "奇迹水晶") == (919, 278) and checkin_reward_radio(hant, "希望棱晶") == (919, 464)

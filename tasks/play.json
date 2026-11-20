@@ -176,6 +176,12 @@
                     "pipeline_override": { "OurNotesParam": { "attach": { "challenge_cost": 1600 } } }
                 },
                 {
+                    "name": "auto",
+                    "label": "$opt.ChallengeCost.auto",
+                    "description": "$opt.ChallengeCost.auto.desc",
+                    "pipeline_override": { "OurNotesParam": { "attach": { "challenge_cost": "auto" } } }
+                },
+                {
                     "name": "keep",
                     "label": "$opt.ChallengeCost.keep",
                     "pipeline_override": { "OurNotesParam": { "attach": { "challenge_cost": "keep" } } }

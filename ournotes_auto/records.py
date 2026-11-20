@@ -302,6 +302,37 @@ class RecordStore:
         self._save_state(state)
         return entry["seconds"]
 
+    def ads_pending(self, package: str, day: str) -> dict | None:
+        """这个服的当前账号在游戏日 ``day`` 还没要到广告的「看广告」项目（游戏说广告获取失败，见 nav/ads.py）：
+        ``{"jobs": [项目的键], "studio_band": 录音室 SKIP 用在哪个乐队, "tries": 挂机里再试过几次,
+        "next": 下次再试的时刻（Unix 秒）}``。没有、不是这一天的、格式不对的为 None。"""
+        state = self._load_state()
+        entries = state.get("ads_pending")
+        entry = entries.get(self._player(state, package)) if isinstance(entries, dict) else None
+        if not isinstance(entry, dict) or entry.get("day") != day:
+            return None
+        jobs = entry.get("jobs")
+        if not isinstance(jobs, list) or not jobs or not all(isinstance(j, str) for j in jobs):
+            return None
+        try:
+            tries, due = int(entry.get("tries", 0)), float(entry.get("next", 0.0))
+        except (TypeError, ValueError):
+            return None
+        return {"jobs": list(jobs), "studio_band": str(entry.get("studio_band", "")), "tries": tries, "next": due}
+
+    def set_ads_pending(self, package: str, day: str, entry: dict | None) -> None:
+        """记下（``entry`` 为 None 时删掉）这个服的当前账号在游戏日 ``day`` 还没要到广告的项目，见 :meth:`ads_pending`。"""
+        state = self._load_state()
+        entries = state.get("ads_pending")
+        if not isinstance(entries, dict):
+            entries = state["ads_pending"] = {}
+        who = self._player(state, package)
+        if entry is not None:
+            entries[who] = {"day": day, **entry}
+        elif entries.pop(who, None) is None:
+            return
+        self._save_state(state)
+
     def lb_all_used(self, package: str) -> str | None:
         """这个服的当前账号（:meth:`account`）上次用完「全部消耗」当天的次数是哪个游戏日（:func:`game_day`），
         没记过为 None。"""

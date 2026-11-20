@@ -257,13 +257,19 @@ class MinitouchTouch:
         self.flush()
 
     def close(self) -> None:
+        """松开触点、结束 minitouch。模拟器、adb 没反应时只记一条警告：都要退出了，不能让它变成「意外错误」。"""
         try:
             self.release_all()
+        except (OSError, RuntimeError, subprocess.SubprocessError) as e:
+            logger.warning("退出时没能松开触点（模拟器或 adb 没反应？）：%s", e)
         finally:
             self._stdin = None
             if self._proc is not None:
                 self._stop_proc()
-                self._kill_server()
+                try:
+                    self._kill_server()
+                except (OSError, subprocess.SubprocessError) as e:
+                    logger.warning("退出时没能结束模拟器里的 minitouch（模拟器或 adb 没反应？）：%s", e)
 
     def _stop_proc(self) -> None:
         self._stdin = None  # 重开失败时 release_all 不再往关掉的管道写

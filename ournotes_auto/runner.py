@@ -23,7 +23,7 @@ from .config import Config, parse_daily_time
 from .humanize import Humanizer
 from .player.guard import LifeDepleted, PlayInterrupted
 from .player.session import PlayOutcome, PlaySession, SyncFailed
-from .player.sync import SyncTimeout
+from .player.sync import NoFirstNote, SyncTimeout
 from .records import ArenaResult, PlayResult, RecordStore, game_day, next_game_day
 from .result_reader import JUDGEMENTS, ResultCounts, timing_counts
 
@@ -85,6 +85,11 @@ class GameUpdateRequired(ScreenFrozen):
 
 class ArenaMissed(ScreenFrozen):
     """激奏舞台连着几局对局开始了、却没认出难度选择页（没适配的语言或版面）：再打也是不演奏、白白消耗 LB 拿最后一名，
+    和画面卡住一样，任务立刻停下。"""
+
+
+class LiveAbnormal(ScreenFrozen):
+    """演奏画面不对劲（重试过还是连首音符都看不到），重启游戏后下一局还是这样：再打也是白白消耗 LB，
     和画面卡住一样，任务立刻停下。"""
 
 
@@ -380,6 +385,7 @@ class Runner:
         self.frame_rate = FrameRateWatch(lc.min_fps)
         self._warned_memory = False  # 这次运行提醒过电脑内存快用完了
         self._no_match_since: float | None = None  # 激奏舞台从这时开始的匹配起一直没匹配到对局
+        self._abnormal_restarted = False  # 因为演奏画面不对劲重启过游戏，之后还没有打成过一局
         if lc.daily_hours > 0:
             used = self.store.play_seconds(config.device.package, game_day(self.wall_clock()))
             logger.info("每个游戏日最多演奏 %g 小时，今天已演奏 %s", lc.daily_hours, _hours_text(used))
@@ -495,6 +501,7 @@ class Runner:
     def _finish(self, result: PlayResult | None) -> None:
         """一局记完之后：计数，离开结算页。"""
         if result is not None:
+            self._abnormal_restarted = False
             self.stats.plays += 1
             self.stats.full_combo += bool(result.full_combo)
             self.stats.all_perfect += bool(result.all_perfect)
@@ -545,6 +552,10 @@ class Runner:
         首音符同步失败、演奏中生命值归零（整体对不上了）、演奏中被暂停时从头重试，最多 ``loop.sync_retries`` 次：
         干等这首歌放完几乎拿不到分，这一局消耗的 LB 就浪费了（「终止」也拿不到演出奖励）。
         激奏舞台没有暂停，不重试；同步不可信只是因为残差偏大时照常演奏（见 ``SyncResult.rough``，#130）。
+
+        重试过还是连首音符都看不到（:class:`NoFirstNote`）：演奏画面不对劲，再试也一样，重启游戏
+        （:meth:`_restart_abnormal`）。这首歌打不成了（放弃、要重启游戏）时不用再等它：开着「停止时打完当前这首」、
+        收到过停止请求就立即停止（:meth:`_give_up`）。
         """
         retries = 0
         while True:
@@ -553,12 +564,19 @@ class Runner:
                 return self.session.play(chart, self.stop, retry=retries > 0, rough_ok=self.cfg.loop.arena)
             except (SyncFailed, SyncTimeout, LifeDepleted, PlayInterrupted) as e:
                 interrupted = isinstance(e, PlayInterrupted)
+                if isinstance(e, NoFirstNote) and retries > 0 and not self.cfg.loop.arena and not self.stop.is_set():
+                    why = f"{e}{self._shot('no_first_note')}"  # 留一张这时的画面，事后好看是哪里不对劲
+                    self._give_up(why)
+                    self._restart_abnormal(why)  # 重启了就抛出 NavigationError
+                    logger.error("本局放弃：%s", why)  # 没法重启游戏：不再试了，等歌曲放完
+                    return None
                 if retries >= self.cfg.loop.sync_retries or self.cfg.loop.arena or self.stop.is_set():
                     if interrupted:
                         # 暂停菜单、闪退后的桌面等交给下一局开头的导航处理
                         raise NavigationError(str(e)) from e
                     # 自由演出 LIFE 归零也不会中断，等歌曲结束后照常离开结算页
                     logger.error("本局放弃：%s", e)
+                    self._give_up(e)
                     return None
                 retries += 1
                 logger.warning("%s，从头重试（第 %d 次）", e, retries)
@@ -572,7 +590,36 @@ class Runner:
                 if interrupted:
                     raise  # 不在演奏画面也不在暂停菜单（闪退等），交给下一局开头的导航处理
                 logger.error("重试失败，本局放弃：%s", e)
+                self._give_up(e)
                 return None
+
+    def _shot(self, name: str) -> str:
+        """把现在的画面存到 debug/nav，返回「（截图 路径）」；存不了（测试里的假导航、截图失败）时为空串。"""
+        shot = getattr(self.nav, "debug_shot", None)
+        path = shot(name) if shot is not None else None
+        return f"（截图 {path}）" if path else ""
+
+    def _give_up(self, why: object) -> None:
+        """这首歌打不成了，不会再有成绩：「停止时打完当前这首」不用再等它放完——收到过停止请求就立即停止
+        （抛出 NavigationError），之后才来的停止请求也立即生效。激奏舞台的对局退不出去，照旧等这局结束。"""
+        if self.gate is None or self.cfg.loop.arena or not self.gate.give_up():
+            return
+        logger.warning("这首歌打不成了（%s），不等它放完，立即停止", why)
+        raise NavigationError("已停止")
+
+    def _restart_abnormal(self, why: object) -> None:
+        """演奏画面不对劲（暂停重试过，还是连首音符都看不到）：重启游戏，这一局算失败（抛出 NavigationError），
+        下一局开头的导航从主界面重新进。重启后还没打成过一局又是这样，就停下（:class:`LiveAbnormal`）：
+        多半是游戏的设置不对（MV、背景）或者模拟器出了问题，再打只是白白消耗 LB。
+        没法重启游戏时什么都不做（调用的地方放弃这一局、等歌曲放完）。"""
+        if self._abnormal_restarted:
+            raise LiveAbnormal(f"{why}；重启游戏后还是这样（请看看游戏画面、模拟器是否正常，MV 关了没有）")
+        logger.warning("%s：重试过还是这样，演奏画面不对劲，重启游戏", why)
+        self._status("restart", "演奏画面不对劲")
+        if not self.nav.restart_game():
+            return
+        self._abnormal_restarted = True
+        raise NavigationError(f"{why}，已重启游戏")
 
     def _record(self, outcome: PlayOutcome, rc: ResultCounts) -> PlayResult:
         if not outcome.stats.aborted:
@@ -745,13 +792,32 @@ class Runner:
             self.frame_rate.enabled = False
 
     def _claim_timed(self) -> None:
-        """挂机的定时领取：录音室练习、每天的日常（到时间才领）。"""
+        """挂机的定时领取：录音室练习、每天的日常（到时间才领），还有「看广告」任务里没要到的广告（到时间再试）。"""
         self._claim_studio()
         if not self.stop.is_set():
             self._claim_daily()
+        if not self.stop.is_set():
+            self._retry_ads()
+
+    def _retry_ads(self) -> None:
+        """挂机：今天的「看广告」任务里没要到广告的项目（游戏说「广告获取失败」，次数没用掉，见 nav/ads.py），
+        到了再试的时间就回主界面再做一遍。只做那次任务留下的项目，没留下就什么都不做；
+        画面卡住不动、服务器维护时照常停止。"""
+        ads_at = self._ads_next()
+        if ads_at is None or self.wall_clock() < ads_at:
+            return
+        self._status("ads")
+        try:
+            self.nav.retry_ads(self.wall_clock())  # 出的错 run_ads 自己记了
+        except (ScreenFrozen, ServerMaintenance):
+            raise
+        except (NavigationError, TimeoutError) as e:
+            if self.stop.is_set():
+                return
+            logger.error("看广告：%s", e)
 
     def _claim_wait(self) -> float:
-        """距下次定时领取（或退出去重跑前面的任务）还有多少秒（都没有时为无穷大）。"""
+        """距下次定时领取（或退出去重跑前面的任务、再试没要到的广告）还有多少秒（都没有时为无穷大）。"""
         wait = float("inf")
         if self.cfg.loop.studio_claim_hours > 0:
             wait = max(0.0, self._next_claim - self.clock())
@@ -759,7 +825,17 @@ class Runner:
             wait = min(wait, max(0.0, self._daily_due() - self.wall_clock()))
         if self._rerun_at is not None:
             wait = min(wait, max(0.0, self._rerun_at - self.wall_clock()))
+        ads_at = self._ads_next()
+        if ads_at is not None:
+            wait = min(wait, max(0.0, ads_at - self.wall_clock()))
         return wait
+
+    def _ads_next(self) -> float | None:
+        """挂机：今天的「看广告」任务里没要到广告的项目下次再试的时刻（Unix 秒）；没有、不是挂机时为 None。"""
+        ads_next = getattr(self.nav, "ads_next", None)
+        if ads_next is None or not self.cfg.loop.wait_lb:
+            return None
+        return ads_next(self.wall_clock())
 
     def _wait_lb(self) -> None:
         """挂机：停在乐队确认页等 LB 恢复到每局消耗数（LB 少于它时每局奖励也少；``game.lb_auto`` 时恢复 1 个就打）。

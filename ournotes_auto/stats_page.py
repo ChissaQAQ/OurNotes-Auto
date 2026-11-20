@@ -146,6 +146,7 @@ LIVE_KINDS = {
     "maintenance": ("等开服", "u-lock"),
     "daily": ("领取日常", "u-spark"),
     "studio": ("领取录音室练习", "u-star"),
+    "ads": ("看广告", "u-play"),  # 挂机里再试之前没要到的广告
     "restart": ("重启游戏", "u-history"),
 }
 LIVE_STALE_S = 1200  # 这么久没更新（进程被强行结束）就当作已经停止：标出来，时间停在最后一次更新

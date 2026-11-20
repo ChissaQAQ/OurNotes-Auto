@@ -46,13 +46,14 @@ ATTACH = {
     "human_timing": 0,
     "human_position": False,
 }
-HUMAN_OFF = {  # 拟人化都关、每日演奏上限不限（ATTACH 是旧资源，没有 human_great_max、daily_hours）
+HUMAN_OFF = {  # 拟人化都关、每日演奏上限不限、演出打卡奖励不改（ATTACH 是旧资源，没有 human_great_max、daily_hours、checkin_reward）
     "play.humanize.enabled": "false",
     "play.touch.great_ratio": "0.0",
     "play.touch.great_ratio_max": "0.0",
     "play.touch.jitter_ms": "0",
     "play.touch.position_jitter": "0",
     "loop.daily_hours": "0",
+    "game.checkin_reward": "default",
 }
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -271,6 +272,7 @@ def test_run_settings_challenge():
         "loop.song_mode": "rotate",
         "game.difficulty": "expert",
         "game.challenge_cost": "200",
+        "game.challenge_auto": "false",
         "game.lb_refill": "false",
         "loop.until_lb_empty": "false",
         "loop.wait_lb": "false",
@@ -283,7 +285,11 @@ def test_run_settings_challenge():
     sets = run_settings("challenge", {**attach, "lb_refill": True, "lb_cost": 0})
     assert sets["loop.song_mode"] == "current" and sets["game.challenge_cost"] == "1600"
     assert sets["game.difficulty"] == "expert" and sets["game.lb_refill"] == "false"
-    assert run_settings("challenge", {**ATTACH, "challenge_cost": "keep"})["game.challenge_cost"] == "null"
+    keep = run_settings("challenge", {**ATTACH, "challenge_cost": "keep"})
+    assert keep["game.challenge_cost"] == "null" and keep["game.challenge_auto"] == "false"
+    # 自动：每局按持有的挑战pt 选（不看固定的消耗）
+    auto = run_settings("challenge", {**ATTACH, "challenge_cost": "Auto"})
+    assert auto["game.challenge_cost"] == "null" and auto["game.challenge_auto"] == "true"
     assert "loop.ap_first_difficulties" not in sets
     # 优先打没 AP 的歌：难度选「优先高难度」时从 EXPERT 往下补
     sets = run_settings("challenge", {**attach, "challenge_song_mode": "ap_first"})
@@ -1375,3 +1381,39 @@ def test_apply_proxy():
     assert apply_proxy("", env, {"HTTPS_PROXY": "http://corp:8080"}) == ""
     assert env == {"PATH": "x", "HTTPS_PROXY": "http://corp:8080"}
     assert apply_proxy(None, env, {}) == "" and env == {"PATH": "x"}
+
+
+def test_quit_task_args():
+    """#144 退出游戏：只带设备和服（日服的包名），不带触控方式（「不重跑」在 test_agent_server.py 的 test_run_history）。"""
+    device = {"device.adb_serial": "127.0.0.1:16416"}
+    assert worker_args("quit", {"touch": "mumu"}, device) == ["--set", "device.adb_serial=127.0.0.1:16416", "quit"]
+    args = worker_args("quit", {"game_language": "ja"}, device)
+    assert args[-1] == "quit" and "device.package=com.bushiroad.sirius" in args
+    assert not any(a.startswith("device.touch") for a in args)
+
+
+def test_checkin_reward_option():
+    """全局选项「演出打卡奖励」（#139）：默认不改，各选项写 OurNotesParam 的 checkin_reward；选项的中文名就是游戏里那一行的名字；
+    5 种语言都有标签和说明；旧资源没有这一项时不改。"""
+    from ournotes_auto.agent import params
+    from ournotes_auto.nav.screens import CHECKIN_REWARD_MODES, CHECKIN_REWARDS
+
+    interface = _load("interface.json")
+    assert "CheckinReward" in interface["global_option"]
+    option = _load("tasks/common.json")["option"]["CheckinReward"]
+    assert (option["type"], option["default_case"]) == ("select", "default")
+    cases = {c["name"]: c["pipeline_override"] for c in option["cases"]}
+    assert cases == {name: {"OurNotesParam": {"attach": {"checkin_reward": name}}} for name in CHECKIN_REWARD_MODES}
+    assert params.CHECKIN_REWARDS == CHECKIN_REWARD_MODES
+    assert _load("resource/pipeline/ournotes.json")["OurNotesParam"]["attach"]["checkin_reward"] == "default"
+    for code, path in interface["languages"].items():
+        texts = _load(path)
+        for key in ("opt.CheckinReward", "opt.CheckinReward.desc", *(f"opt.CheckinReward.{name}" for name in CHECKIN_REWARD_MODES)):
+            assert texts[key].strip(), (code, key)
+    zh = _load("locales/zh_cn.json")
+    assert {name: zh[f"opt.CheckinReward.{name}"] for name in CHECKIN_REWARDS} == CHECKIN_REWARDS
+    for task in ("repeat", "clear_lb", "idle", "ap", "challenge", "arena", "arena_idle"):
+        assert run_settings(task, ATTACH)["game.checkin_reward"] == "default", task
+        assert run_settings(task, {**ATTACH, "checkin_reward": "Crystal"})["game.checkin_reward"] == "crystal", task
+    with pytest.raises(ParamError, match="checkin_reward"):
+        run_settings("idle", {**ATTACH, "checkin_reward": "gold"})

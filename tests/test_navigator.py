@@ -29,6 +29,8 @@ from ournotes_auto.nav.screens import (
     SKIP_ALL_CHECK,
     SELECT_TITLE_ROI,
     LbDrink,
+    Screen,
+    classify,
     in_roi,
 )
 from ournotes_auto.nav.song_select import BTN_DIFFICULTY
@@ -761,6 +763,31 @@ def test_birthday_is_skipped():
     assert tapped(game, (1213, 36), radius=2) == ["birthday"]  # 按 OCR 到的按钮位置点
 
 
+VIDEO_OK, VIDEO_CANCEL = (783, 570), (497, 570)  # 「要跳过这段视频吗？」的 OK、取消
+
+
+def test_video_skip_is_confirmed(monkeypatch):
+    """全屏视频（乐队周年纪念）点「跳过」后弹出「要跳过这段视频吗？」：点 OK 才真的跳过。
+    以前认不出这个确认框，保底只会点「取消」，回到视频又点「跳过」，一直绕到视频自己放完。"""
+    monkeypatch.setitem(TRANSITIONS, "birthday", [((1213, 36), "video_skip_confirm")])
+    monkeypatch.setitem(TRANSITIONS, "video_skip_confirm", [(VIDEO_OK, "home"), (VIDEO_CANCEL, "birthday")])
+    game = FakeGame("birthday")
+    nav = make_nav(game, game, game)
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert [s for s, _ in game.taps] == ["birthday", "video_skip_confirm"]
+    assert tapped(game, VIDEO_OK, radius=2) == ["video_skip_confirm"]  # 按 OCR 到的 OK 的位置点
+
+
+def test_video_skip_ok_unreadable_taps_its_usual_place(monkeypatch):
+    """确认框认出来了但「OK」两个字没读出来：点它平时的位置，不去点「取消」。"""
+    monkeypatch.setitem(TRANSITIONS, "video_skip_confirm", [(VIDEO_OK, "home"), (VIDEO_CANCEL, "birthday")])
+    game = FakeGame("video_skip_confirm")
+    game.read = lambda frame, roi=None: [it for it in load_items(frame) if it.text != "OK"]
+    nav = make_nav(game, game, game)
+    assert nav.ensure_in_game() == navigator.Screen.HOME
+    assert game.taps[0] == ("video_skip_confirm", navigator.BTN_VIDEO_SKIP_OK)
+
+
 class BirthdayGame(FakeGame):
     """截图是真图像：故事播放画面（OCR 什么也认不出）右上角画出菜单按钮。"""
 
@@ -835,6 +862,203 @@ def test_popup_over_result():
         assert rc.counts == TOTALS
         assert rc.fast == {j: v[0] for j, v in TIMING.items()}
         assert [s for s, _ in game.taps] == [*popups, "result"]
+
+
+def test_checkin_popups_over_result():
+    """每周第 5 天的第一局（#132）：达成奖励列表（点了两下才关掉）、「已完成演出打卡！」、「演出打卡奖励」（选 1 个）、
+    又一次「已完成演出打卡！」接连盖在结算页上：都点掉后照常读到结果，不当成关不掉；奖励只点 OK（拿默认选中的）。"""
+    chain = ["achievement", "achievement", "checkin", "checkin_reward", "checkin_done", "result"]
+
+    class CheckinGame(FakeGame):
+        grabs = 0
+        at = None
+
+        def grab(self):
+            if self.at is None and self.state == "result":
+                self.grabs += 1
+                if self.grabs == 2:
+                    self.at, self.state = 0, chain[0]
+            return super().grab()
+
+        def tap(self, x, y):
+            if self.at is None or self.at >= len(chain) - 1:
+                return super().tap(x, y)
+            self.taps.append((self.state, (x * 1280 / self.size[0], y * 720 / self.size[1])))
+            self.at += 1
+            self.state = chain[self.at]
+
+    assert [classify(load_items(n)) for n in chain[2:5]] == [Screen.POPUP, Screen.REWARD, Screen.POPUP]
+    game = CheckinGame("result")
+    nav = make_nav(game, game, game)
+    rc = nav.read_result()
+    assert rc.counts == TOTALS
+    assert [s for s, _ in game.taps] == [*chain[:5], "result"]
+    buttons = {s: p for s, p in game.taps}
+    assert math.dist(buttons["checkin"], (640, 660)) < 25 and math.dist(buttons["checkin_done"], (640, 660)) < 25
+    assert math.dist(buttons["checkin_reward"], (640, 658)) < 25  # 只点 OK，不碰上面的单选项
+
+
+class RewardGame:
+    """「演出打卡奖励」：画面是真的图（选中的那一行单选按钮是亮的），点某一行的单选按钮就选中它，点 OK 关掉。
+    ``stuck``：点单选按钮没反应；``hidden``：这些行的名字读不出来；``blank_selected``：选中的那一行名字读不出来。"""
+
+    size = (1280, 720)
+    ROWS = {"星钻": 185, "奇迹水晶": 278, "SP技能强化券": 372, "希望棱晶": 464}
+    OK = (640, 658)
+
+    def __init__(self, stuck=False, hidden=(), blank_selected=False):
+        self.selected = "星钻"
+        self.open = True
+        self.stuck, self.hidden, self.blank_selected = stuck, set(hidden), blank_selected
+        self.taps: list[tuple[int, int]] = []
+
+    def grab(self):
+        img = np.full((720, 1280, 3), 49, np.uint8)
+        if self.open:
+            y = self.ROWS[self.selected]
+            img[y - 8 : y + 9, 911:928] = 255
+        return img, 0.0
+
+    def read(self, frame, roi=None):
+        if not self.open:
+            return load_items("checkin_done")
+        gone = self.hidden | ({self.selected} if self.blank_selected else set())
+        return [it for it in load_items("checkin_reward") if it.text not in gone]
+
+    def tap(self, x, y):
+        self.taps.append((x, y))
+        if not self.open:
+            return
+        if math.dist((x, y), self.OK) < 40:
+            self.open = False
+        elif not self.stuck and abs(x - 919) < 45:
+            self.selected = next((name for name, row in self.ROWS.items() if abs(y - row) < 35), self.selected)
+
+    def flush(self):
+        pass
+
+
+def pick_reward(game, choice, monkeypatch=None):
+    """把「演出打卡奖励」处理到关掉为止，返回导航器和存下的截图名。"""
+    cfg = Config()
+    cfg.game.checkin_reward = choice
+    nav = GameNavigator(cfg, game, game, game, settle_s=0)
+    nav._sleep = lambda s: None
+    saved = []
+    nav.save_debug = lambda name, *a: saved.append(name)
+    for _ in range(10):
+        screen, items = nav.look()
+        if screen is not Screen.REWARD:
+            break
+        assert nav._common_step(screen, items)
+    assert not game.open
+    return nav, saved
+
+
+@pytest.mark.parametrize(
+    "choice, row", [("gems", "星钻"), ("crystal", "奇迹水晶"), ("sp_ticket", "SP技能强化券"), ("prism", "希望棱晶")]
+)
+def test_checkin_reward_is_picked(choice, row, caplog):
+    """演出打卡奖励（#139）：点选想要的那一行、核对选中了再点 OK；已经选中的（星钻）不用点。"""
+    game = RewardGame()
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.navigator"):
+        _, saved = pick_reward(game, choice)
+    assert game.selected == row
+    radio = [] if choice == "gems" else [(919, RewardGame.ROWS[row])]
+    assert [p for p in game.taps if math.dist(p, RewardGame.OK) >= 40] == radio
+    assert len(game.taps) == len(radio) + 1 and math.dist(game.taps[-1], RewardGame.OK) < 25
+    assert f"演出打卡奖励：选「{row}」" in caplog.text and saved == ["checkin_reward"]
+
+
+def test_checkin_reward_default_only_taps_ok(caplog):
+    """默认不改：只点 OK，拿游戏里选中的那个，不记日志、不存截图。"""
+    game = RewardGame()
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.navigator"):
+        _, saved = pick_reward(game, "default")
+    assert game.selected == "星钻" and len(game.taps) == 1 and math.dist(game.taps[0], RewardGame.OK) < 25
+    assert "演出打卡奖励" not in caplog.text and saved == []
+
+
+def test_checkin_reward_falls_back_when_it_cannot_be_picked(caplog):
+    """选不中（点了没反应）、列表里没有这一行：照旧点 OK 拿游戏里选中的，记一条警告，不卡住。"""
+    game = RewardGame(stuck=True)
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.navigator"):
+        _, saved = pick_reward(game, "crystal")
+    assert game.selected == "星钻"
+    assert game.taps[:-1] == [(919, 278)] * navigator.CHECKIN_TAPS and math.dist(game.taps[-1], RewardGame.OK) < 25
+    assert caplog.text.count("没能选「奇迹水晶」（点了 3 次还没选中）") == 1 and saved == ["checkin_reward"]
+
+    caplog.clear()
+    game = RewardGame(hidden={"希望棱晶"})
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.navigator"):
+        pick_reward(game, "prism")
+    assert game.selected == "星钻" and len(game.taps) == 1
+    assert "没能选「希望棱晶」（列表里没找到这一项）" in caplog.text
+
+
+def test_checkin_reward_checked_by_position_when_selected_row_unreadable(caplog):
+    """选中之后那一行换了底色、名字读不出来：按刚才点的位置核对，照常点 OK，不当成没选上。"""
+    game = RewardGame(blank_selected=True)
+    game.selected = "SP技能强化券"  # 一开始选中的不是想要的，想要的那一行读得出来
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.navigator"):
+        pick_reward(game, "crystal")
+    assert game.selected == "奇迹水晶" and game.taps[0] == (919, 278) and len(game.taps) == 2
+    assert "演出打卡奖励：选「奇迹水晶」" in caplog.text and "没能选" not in caplog.text
+
+
+def test_checkin_reward_counts_anew_next_week(monkeypatch):
+    """上一次点够了次数没选中；隔了很久（下一周）再弹出时重新数。"""
+    game = RewardGame(stuck=True)
+    nav, _ = pick_reward(game, "crystal")
+    assert nav._reward_pick_taps == navigator.CHECKIN_TAPS
+    later = navigator.time.monotonic() + navigator.CHECKIN_FORGET_S + 1
+    monkeypatch.setattr(navigator.time, "monotonic", lambda: later)
+    game.open, game.stuck, game.taps = True, False, []
+    for _ in range(5):
+        screen, items = nav.look()
+        if screen is not Screen.REWARD:
+            break
+        nav._common_step(screen, items)
+    assert game.selected == "奇迹水晶" and game.taps[0] == (919, 278) and len(game.taps) == 2
+
+
+def test_checkin_reward_without_a_real_frame_falls_back():
+    """截不到真的画面（没法看单选按钮亮不亮）：不点单选按钮，照旧点 OK；别的「获得奖励」弹窗不受影响。"""
+    game = FakeGame("checkin_reward")
+    cfg = Config()
+    cfg.game.checkin_reward = "crystal"
+    nav = GameNavigator(cfg, game, game, game, settle_s=0)
+    nav.save_debug = lambda *a: None
+    screen, items = nav.look()
+    assert nav._common_step(screen, items)
+    assert len(game.taps) == 1 and math.dist(game.taps[0][1], (640, 658)) < 25
+    game = FakeGame("reward")
+    nav = GameNavigator(cfg, game, game, game, settle_s=0)
+    screen, items = nav.look()
+    assert nav._common_step(screen, items) and game.state == "notice"
+
+
+def test_checkin_reward_config_is_checked():
+    cfg = Config()
+    cfg.game.checkin_reward = "gold"
+    game = FakeGame("home")
+    with pytest.raises(ValueError, match="game.checkin_reward"):
+        GameNavigator(cfg, game, game, game)
+
+
+def test_result_popups_that_never_close_still_fail():
+    """弹窗怎么点都关不掉：点够 RESULT_POPUP_TAPS 次后照旧报错，不会一直点下去。"""
+
+    class StuckGame(FakeGame):
+        def tap(self, x, y):
+            self.taps.append((self.state, (x, y)))
+
+    game = StuckGame("checkin")
+    nav = make_nav(game, game, game)
+    nav.save_debug = lambda *a: None
+    with pytest.raises(NavigationError, match="关不掉结算页上的弹窗"):
+        nav._result_items()
+    assert len(game.taps) == navigator.RESULT_POPUP_TAPS
 
 
 def test_choose_random_goes_back_to_song_select():
@@ -2633,11 +2857,12 @@ class ChallengeGame(FakeGame):
         super().tap(x, y)
 
 
-def challenge_nav(game, cost=200):
+def challenge_nav(game, cost=200, auto=False):
     cfg = Config()
     cfg.game.difficulty = "expert"
     cfg.loop.challenge = True
     cfg.game.challenge_cost = cost
+    cfg.game.challenge_auto = auto
     nav = GameNavigator(cfg, game, game, game, settle_s=0)
     nav._sleep = lambda s: None
     nav.save_debug = lambda *a, **k: None
@@ -2940,3 +3165,161 @@ def test_read_result_real_ocr_scaled(ocr):
     assert (rc.fast["perfect"], rc.slow["perfect"]) == (333, 82)
     assert rc.score == 1400102
     assert rc.combo == 768
+
+
+# ---------------------------------------------------------------- 等这首歌打完好停止时游戏不在了
+
+
+def test_stop_pending_crashed_game_is_not_restarted(monkeypatch):
+    """收到了停止请求、正等这首歌的结算，游戏却不在了（闪退、被手动退出）：不重启游戏、不干等 5 分钟，报错好停下。"""
+    game = CrashedGame()
+    nav = make_nav(game, game, game)
+    nav.save_debug = lambda *a: None
+    nav.restart_app = game.restart
+    nav.app_running = game.running
+    nav.stop_pending = lambda: True
+    now = fake_clock(monkeypatch, nav)
+    start = now[0]
+    with pytest.raises(NavigationError, match="游戏没有在运行"):
+        nav.read_result()
+    assert game.restarts == 0 and now[0] - start < navigator.APP_CHECK_S + 5
+
+
+def test_stop_pending_cannot_check_app(monkeypatch):
+    """模拟器没反应、查不了游戏进程（2026-11-17）：平时接着等；正等着停止时连着两次都查不了就不再等
+    （只有一次查不了可能是一时的，照常接着等）。"""
+    import subprocess
+
+    def hung():
+        raise subprocess.TimeoutExpired(["adb", "shell", "pidof"], 15.0)
+
+    game = CrashedGame()
+    nav = make_nav(game, game, game)
+    nav.save_debug = lambda *a: None
+    nav.restart_app = game.restart
+    nav.app_running = hung
+    now = fake_clock(monkeypatch, nav)
+    with pytest.raises(NavigationError, match="300s 内没有出现结算页"):
+        nav.read_result()
+    assert game.restarts == 0
+
+    nav.stop_pending = lambda: True
+    start = now[0]
+    nav._app_check_errors, nav._unknown_since = 0, None  # 从头算（上面那一段留下的不算）
+    with pytest.raises(NavigationError, match="确认不了游戏还在运行"):
+        nav.read_result()
+    assert game.restarts == 0 and navigator.APP_CHECK_S * 2 <= now[0] - start < navigator.APP_CHECK_S * 2 + 5
+
+    # 只有一次查不了、下一次查到游戏还在：接着等结算，不提前放弃
+    answers = [hung, lambda: True, lambda: True]
+    nav.app_running = lambda: (answers.pop(0) if answers else (lambda: True))()
+    nav._app_check_errors, nav._unknown_since = 0, None
+    with pytest.raises(NavigationError, match="300s 内没有出现结算页"):
+        nav.read_result()
+    assert game.restarts == 0
+
+
+def test_retry_live_options_still_open(monkeypatch):
+    """要重试时演出前选项设置还开着（开始时的「演出」没点上，演出根本没开始）：再点一次「演出」。"""
+    game, nav = play_nav(monkeypatch, "live_options")
+    nav.retry_live()
+    assert game.state == "loading"
+    assert [s for s, _ in game.taps] == ["live_options"]
+
+
+# ---------------------------------------------------------------- 挑战演出：按持有的挑战pt 自动选消耗
+
+
+def test_challenge_auto_picks_largest_affordable(caplog):
+    """每局选持有的挑战pt 够用的最大一档；顶栏算出来和现在的设置一样就不再打开弹窗；连 200 都不够时停下。"""
+    game = ChallengeGame("challenge_band_confirm", cost=400, held=3708)
+    nav = challenge_nav(game, cost=200, auto=True)  # 开了自动就不看 challenge_cost
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.challenge"):
+        nav.start_live()
+    assert game.cost == 1600 and nav._cp_cost == 1600 and game.state == "loading"
+    assert tapped(game, CP_RADIO[1600]) == ["challenge_cp_setting"] and tapped(game, CP_OK) == ["challenge_cp_setting"]
+    assert "挑战pt 持有 3708：每局消耗 1600（奖励 ×8）" in caplog.text
+
+    game.held, game.state = 2108, "challenge_band_confirm"  # 还够 1600：不用开弹窗
+    nav.start_live()
+    assert len(tapped(game, (920, 665))) == 1 and game.cost == 1600 and game.state == "loading"
+
+    game.held, game.state = 508, "challenge_band_confirm"  # 不够 1600、800 了：改成 400
+    nav.start_live()
+    assert len(tapped(game, (920, 665))) == 2 and game.cost == 400 and nav._cp_cost == 400
+    assert tapped(game, CP_RADIO[400]) == ["challenge_cp_setting"] and game.state == "loading"
+
+    game.held, game.state = 108, "challenge_band_confirm"
+    with pytest.raises(CpExhausted, match="持有 108，每局最少消耗 200"):
+        nav.start_live()
+    assert game.cost == 400 and game.state == "challenge_band_confirm"
+    assert len(tapped(game, CP_CANCEL)) == 1 and len(tapped(game, CP_OK)) == 2
+    assert len(tapped(game, (1140, 648))) == 3  # 最后一次没点 LIVE START
+
+
+class LockedTierGame(ChallengeGame):
+    """最大的一档（1600）点了也选不中（没解锁）。"""
+
+    def tap(self, x, y):
+        p = (x * 1280 / self.size[0], y * 720 / self.size[1])
+        if self.state == "challenge_cp_setting" and math.dist(p, CP_RADIO[1600]) < 20:
+            self.taps.append((self.state, p))
+            return
+        super().tap(x, y)
+
+
+def test_challenge_auto_falls_back_when_tier_locked(caplog):
+    """保底：够用的最大一档点了几次都选不中，就退一档照常打（不报错停下），这次运行不再选它。"""
+    game = LockedTierGame("challenge_band_confirm", cost=200, held=3708)
+    nav = challenge_nav(game, auto=True)
+    with caplog.at_level("WARNING", logger="ournotes_auto.nav.challenge"):
+        nav.start_live()
+    assert game.cost == 800 and nav._cp_cost == 800 and nav._cp_top == 800 and game.state == "loading"
+    assert len(tapped(game, CP_RADIO[1600])) == 3 and "选不中 1600" in caplog.text
+    game.held, game.state = 2908, "challenge_band_confirm"  # 之后不再去点 1600，也不用再开弹窗
+    nav.start_live()
+    assert len(tapped(game, CP_RADIO[1600])) == 3 and len(tapped(game, (920, 665))) == 1 and game.state == "loading"
+
+
+def test_challenge_fixed_cost_still_fails_when_unselectable():
+    """没开自动时选不中照旧报错（玩家指定了这一档，不替他换）。"""
+    game = LockedTierGame("challenge_band_confirm", cost=200, held=3708)
+    nav = challenge_nav(game, cost=1600)
+    with pytest.raises(NavigationError, match="选不中 1600"):
+        nav.start_live()
+    assert game.cost == 200
+
+
+def test_challenge_auto_unreadable_held_keeps_setting(caplog):
+    """保底：顶栏和弹窗上的持有数都读不到时不改设置（只点取消），照游戏里现在的设置打。"""
+    game = ChallengeGame("challenge_band_confirm", cost=400, held=3708, bar="", popup="")
+    nav = challenge_nav(game, auto=True)
+    nav.start_live()
+    assert game.cost == 400 and nav._cp_cost == 400 and game.state == "loading"
+    assert tapped(game, CP_CANCEL) == ["challenge_cp_setting"] and not tapped(game, CP_OK)
+    assert not any(tapped(game, p) for p in CP_RADIO.values())
+
+
+def test_challenge_auto_rechecks_when_bar_disagrees():
+    """顶栏读错（少读一位）时算出来和现在的设置不一样：打开弹窗，按弹窗上的持有数选。"""
+    game = ChallengeGame("challenge_band_confirm", cost=1600, held=3708, bar="370")
+    nav = challenge_nav(game, auto=True)
+    nav._cp_cost = 1600
+    nav.start_live()
+    assert game.cost == 1600 and game.state == "loading" and len(tapped(game, (920, 665))) == 1
+    assert tapped(game, CP_OK) == ["challenge_cp_setting"] and not any(tapped(game, p) for p in CP_RADIO.values())
+
+
+def test_debug_shot(tmp_path, monkeypatch):
+    """留底的截图：存到 debug/nav；截图失败时返回 None，不抛出。"""
+    monkeypatch.chdir(tmp_path)
+    game = FrozenGame("home")
+    nav = make_nav(game, game, game)
+    path = nav.debug_shot("no_first_note")
+    assert path is not None and path.is_file() and path.name.endswith("_no_first_note.png")
+
+    def broken():
+        raise RuntimeError("模拟器没反应")
+
+    game.grab = broken
+    assert nav.debug_shot("no_first_note") is None

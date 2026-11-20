@@ -56,6 +56,7 @@ ournotes-auto run --arena --until-lb-empty --wait-lb --lb-cost 3   # 放置周�
 
 # ゲームを起動してホーム画面に入る。デイリー報酬を受け取る（デフォルトではストーリー閲覧・イベントストーリー以外の 7 項目をすべて受け取り、--jobs で一部だけ実行）
 ournotes-auto start
+ournotes-auto quit   # ゲームを終了（エミュレーターは閉じない）。ゲームが起動していなければ何もしない
 ournotes-auto switch-account user_123   # 現在のアカウントからログアウトし、ログイン履歴からアカウント名に user_123 を含むアカウントを選んでログインし、ホーム画面に入る
 ournotes-auto daily
 ournotes-auto daily --jobs studio,missions,pass,limited,beginner,tgw,recruit,gifts   # スタジオ練習、ミッション、パス、期間限定ミッション、ビギナーミッション、T.G.W CARD、無料ガチャ、プレゼントボックス
@@ -114,7 +115,7 @@ ournotes-auto calibrate motion "迷星叫" --tap 1140,648 --tap 782,612
 - `rotate`：チャレンジライブ（`--challenge` / `loop.challenge`）専用です。毎回終了後にチャレンジライブの楽曲選択画面で次の曲を選び、最後の曲の後は最初の曲に戻ります。チャレンジライブで使えるのは `current`、`rotate`、`ap_first` だけです。
 - チャレンジライブの `ap_first`：チャレンジライブの楽曲選択画面には絞り込みもランダム選曲もないため、代わりに選択中の曲から下へ 1 曲ずつ、右側のパネルに ALL PERFECT のマークがあるかを確認し、最初に見つかった未 AP の曲をプレイします（同じ曲を `loop.ap_max_attempts` 回プレイしても AP できなければ、もうプレイしません）。`loop.ap_first_difficulties` の使い方は上と同じで、すべて埋め終わったら `-d` の難易度で全曲を順番にプレイします。
 
-チャレンジライブ（`--challenge`）は 1 回ごとに `game.challenge_cost`（`--challenge-cost`、200 / 400 / 800 / 1600、デフォルト 200。null ならゲーム内の設定を変更しない）のチャレンジpt を消費し、LB は消費せず、CP が 1 回分に足りなくなるまでプレイします。そのため `--until-lb-empty`、`--wait-lb`、`--lb-refill` とは併用できません。
+チャレンジライブ（`--challenge`）は 1 回ごとに `game.challenge_cost`（`--challenge-cost`、200 / 400 / 800 / 1600、デフォルト 200。null ならゲーム内の設定を変更しない）のチャレンジpt を消費し（`--challenge-auto` / `game.challenge_auto` のときは毎回、所持数で足りる最大の消費数を選びます。まず 1600、足りなくなったら 800、400、200）、LB は消費せず、CP が 1 回分に足りなくなるまでプレイします。そのため `--until-lb-empty`、`--wait-lb`、`--lb-refill` とは併用できません。
 
 撃奏アリーナ（`--arena` / `loop.arena`）：ルーレットで曲が決まり、`game.difficulty`（`-d`、デフォルトは EXPERT）をプレイし、スキップせず、`play.touch.great_ratio` は少なくとも 0.01 として扱います（マルチ対戦は AP の必要がないため）。`--lb-cost`、`--lb-auto`、`--lb-refill`、`--until-lb-empty`、`--wait-lb` の使い方はフリーライブと同じで、撃奏アリーナのトップの「LB消費」で設定します。`--arena-band`（`loop.arena_band`）でバンドを選びます：`current`（デフォルト）は変えません。`mygo` / `avemujica` / `mewtype` / `millsage` / `dumbrock` は毎回の前にそのバンドに切り替えます。`rotate` はいまのバンドから始め、ゲーム内の順に各バンドで `--arena-games`（`loop.arena_games_per_band`、デフォルト 1）回プレイしたら次のバンドに替えます。`--challenge` とは併用できません。毎回のバンド、順位、ランクポイントの増減、増減後のランクポイント、消費した LB、判定数は `data/arena.jsonl` に記録します。
 
