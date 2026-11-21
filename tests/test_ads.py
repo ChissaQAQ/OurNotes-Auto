@@ -24,10 +24,13 @@ from ournotes_auto.nav.ads import (
     ad_recruit_button,
     ads_left,
     cm_banner,
+    cm_recruit_got,
     home_lb,
+    lb_ad_got,
     lb_ad_watch,
     same_panels,
     studio_ad_button,
+    studio_ad_got,
     studio_ads_left,
     studio_band,
     studio_detail,
@@ -81,6 +84,7 @@ BTN_RESUME = (787, 438)
 BTN_FAILED_OK = (640, 570)  # 「广告获取失败。请稍后再试。」的 OK
 WALL = float(calendar.timegm((2026, 11, 19, 14, 0, 0)))  # 假时钟为 0 时的时刻（北京时间 22:00）
 FAIL = "fail"  # 广告的样子：游戏说「广告获取失败」
+PASS = "pass"  # 广告的样子：游戏里开通了跳过广告，不放广告、约 1 秒后奖励直接到手（#146）
 BTN_CLOSE_AD = (692, 438)
 
 BTN_LB_ADD = (517, 44)
@@ -134,7 +138,8 @@ SIMPLE = [Seg(14, "count"), Seg(math.inf, "granted", True)]
 
 class AdGame:
     """同时充当截图源、触控、OCR、前台窗口和返回键。``lb`` ``cm`` ``studio`` 是今天还剩的次数，``plan`` 是接下来每次广告的样子
-    （用完了就是 SIMPLE；None 是广告放不出来、什么都不弹，FAIL 是约 1 秒后弹出「广告获取失败」）。``levels`` 是各乐队的练习Lv。
+    （用完了就是 SIMPLE；None 是广告放不出来、什么都不弹，FAIL 是约 1 秒后弹出「广告获取失败」，
+    PASS 是不放广告、约 1 秒后奖励直接到手）。``levels`` 是各乐队的练习Lv。
     ``show``：观看 CM 招募到新成员，招募结算之前先停在展示画面上（整屏立绘，没有按钮），要点这么多下才继续。"""
 
     size = (1280, 720)
@@ -154,6 +159,8 @@ class AdGame:
         self.dialog = False
         self.failed_at: float | None = None  # 「广告获取失败」弹出来的时刻（弹着时不是 None）
         self.failed_for: list[float] = []  # 每次「广告获取失败」弹了多久才被点掉
+        self.pass_at: float | None = None  # 跳过广告：奖励在这个时刻直接到手（等着时不是 None）
+        self.passed = 0  # 有几次是没放广告、奖励直接到手的
         self.after = ("", "")  # 广告关掉之后的画面：（奖励到手, 没到手）
         self.taps: list[tuple[str, tuple[int, int]]] = []
         self.backs: list[str] = []  # 每次按返回键时的前台窗口
@@ -171,6 +178,10 @@ class AdGame:
 
     # ---- 广告
     def _advance(self) -> None:
+        if self.pass_at is not None and self.clock[0] >= self.pass_at:
+            self.pass_at = None
+            self.passed += 1
+            self._end_ad(True)
         if self.ad is None:
             return
         elapsed, self.ad_at = self.clock[0] - self.ad_at, self.clock[0]
@@ -192,6 +203,9 @@ class AdGame:
             return
         if plan == FAIL:  # 没要到广告：过 1 秒弹出「广告获取失败」，原来的弹窗还在下面
             self.failed_at = self.clock[0] + 1.0
+            return
+        if plan == PASS:  # 跳过广告：前台一直是游戏，过 1 秒奖励直接到手
+            self.after, self.pass_at = (rewarded, lost), self.clock[0] + 1.0
             return
         self.ad, self.ad_at, self.dialog = [dataclasses.replace(s) for s in plan], self.clock[0], False
         self.after = (rewarded, lost)
@@ -1258,6 +1272,116 @@ def test_ad_failed_text_inside_an_ad_is_not_tapped(clock):
     game.failed_at = 0.0
     fronts = iter([AD])
     nav._front = lambda: next(fronts)
-    assert nav._ad_failed(GAME) is False and game.taps == []
+    assert nav._ad_failed(GAME, nav._ad_items()) is False and game.taps == []
     nav._front = lambda: GAME
-    assert nav._ad_failed(GAME) is True and game.taps == [("ad_failed", BTN_FAILED_OK)]
+    assert nav._ad_failed(GAME, nav._ad_items()) is True and game.taps == [("ad_failed", BTN_FAILED_OK)]
+
+
+# ------------------------------------------------------------ 跳过广告的权益（#146）
+
+
+def test_ad_got_helpers():
+    """奖励到手的画面：恢复 LB 的「已恢复LIVE BOOST。」、录音室的「录音室练习奖励」/ LEVEL UP、招募的演出 / 结算 / 赠品；
+    点「观看」之前的弹窗、「广告获取失败」都不算。"""
+    assert lb_ad_got(load_items("lb_recovered"))
+    for name in ("lb_recover_ad", "lb_recover_ad_left", "home", "ad_failed", "daily_studio_reward", "recruit_cm_result"):
+        assert not lb_ad_got(load_items(name)), name
+    assert studio_ad_got(load_items("daily_studio_reward")) and studio_ad_got(load_items("daily_studio_levelup"))
+    for name in ("studio_skip", "studio_skip_used", "studio_detail", "studio_map", "ad_failed", "lb_recovered"):
+        assert not studio_ad_got(load_items(name)), name
+    for name in ("recruit_ticket", "recruit_cm_result", "recruit_cm_result_last", "recruit_gift"):
+        assert cm_recruit_got(load_items(name)), name  # 招募演出（右上角 SKIP）、招募结算、招募赠品
+    for name in ("recruit_cm_confirm", "recruit_cm", "recruit_cm_list", "ad_failed", "home", "lb_recovered"):
+        assert not cm_recruit_got(load_items(name)), name
+    # 「确认招募」还开着就不算（哪怕画面上读到了 SKIP）
+    assert not cm_recruit_got([*load_items("recruit_cm_confirm"), OcrItem(1180, 25, 60, 30, "SKIP")])
+
+
+def test_lb_ad_skipped_by_pass(clock, tmp_path, caplog):
+    """#146：游戏里开通了跳过广告，点了「观看」不放广告、「已恢复LIVE BOOST。」直接弹出来（前台一直是游戏）：
+    几秒内认出来，照常点 OK、记一次，不干等 AD_START_S 再报「广告没有放出来」；返回键一次都没按。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[PASS, PASS])
+    nav = ad_nav(game, clock, chores=store)
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.ads"):
+        assert nav.run_ads(["lb"]) == []
+    assert (game.state, game.lb, game.passed, game.backs, nav.ads_unavailable) == ("home", 0, 2, [], ())
+    assert [c.kind for c in store.chore_history(limit=None)] == ["ad_lb", "ad_lb"]
+    assert caplog.text.count("没有放广告，奖励直接到手了") == 2 and "广告没有放出来" not in caplog.text
+    assert clock[0] < ads.AD_START_S * 2  # 两次加起来也不到原来干等一次的两倍，远小于报错前等的时间
+    assert [p for s, p in game.taps if s == "lb_recovered"] == [(640, 570)] * 2
+    assert pending(store, clock) is None
+    assert_clean(game)
+
+
+def test_all_ads_skipped_by_pass(clock, tmp_path):
+    """三项都不放广告、奖励直接到手：招募照常存截图、点「招募TOP」，录音室照常点 OK；别的按钮没点，返回键没按。"""
+    store = RecordStore(tmp_path)
+    game = AdGame(clock, plan=[PASS] * 6)
+    nav = ad_nav(game, clock, chores=store)
+    assert nav.run_ads(list(AD_JOBS), studio_band="mygo") == []
+    assert (game.state, game.lb, game.cm, game.studio, game.passed, game.backs) == ("home", 0, 0, 0, 6, [])
+    kinds = [c.kind for c in store.chore_history(limit=None)]
+    assert kinds == ["ad_recruit"] * 3 + ["ad_lb"] * 2 + ["ad_studio"]
+    assert len(nav.recruit_shots) == 3
+    assert [p for s, p in game.taps if s == "recruit_cm_result"] == [BTN_TOP, BTN_TOP]
+    assert [p for s, p in game.taps if s == "recruit_cm_result_last"] == [BTN_TOP_LAST]
+    assert_clean(game)
+
+
+def test_pass_and_real_ads_mixed(clock, caplog):
+    """有的次数放广告、有的不放：各按各的处理（不是靠「没要到广告」之后再试才做完的）。"""
+    game = AdGame(clock, plan=[PASS, SIMPLE])
+    nav = ad_nav(game, clock)
+    with caplog.at_level("INFO", logger="ournotes_auto.nav.ads"):
+        assert nav.run_ads(["lb"]) == []
+    assert (game.state, game.lb, game.passed, game.watched, game.backs) == ("home", 0, 1, 2, [AD])
+    assert caplog.text.count("没有放广告，奖励直接到手了") == 1 and "没要到广告" not in caplog.text
+    assert_clean(game)
+
+
+def test_reward_screen_must_stay_to_count(clock):
+    """保底：奖励到手的画面只闪了一帧（认错了）不算，照旧等到 AD_START_S 当成没放出来。"""
+    game = AdGame(clock, state="lb_recover_ad", plan=[None])
+    read, calls = game.read, [0]
+
+    def flicker(frame, roi=None):
+        calls[0] += 1
+        return load_items("lb_recovered") if calls[0] == 2 else read(frame)
+
+    game.read = flicker
+    nav = ad_nav(game, clock)
+    assert nav._watch_ad(GAME, "看广告恢复LB", lb_ad_got) is False
+    assert ads.AD_START_S < clock[0] < ads.AD_START_S + 10 and game.taps == [] and game.backs == []
+
+
+def test_reward_screen_with_ad_in_front_does_not_count(clock):
+    """保底：这一帧像是奖励到手了，可截完图前台已经是广告（广告正好弹出来，广告右上角也常有「跳过」）：不算。"""
+    game = AdGame(clock, state="lb_recovered")
+    nav = ad_nav(game, clock)
+    fronts = [0]
+
+    def front():  # 每一轮开头读到的是游戏，截完图再读是广告
+        fronts[0] += 1
+        return GAME if fronts[0] % 2 else AD
+
+    nav._front = front
+    assert nav._watch_ad(GAME, "看广告恢复LB", lb_ad_got) is False
+    assert clock[0] > ads.AD_START_S and game.taps == []
+    # 不传 got（旧的调用方式）时和以前一样
+    nav._front = lambda: GAME
+    clock[0] = 0.0
+    assert nav._watch_ad(GAME, "看广告恢复LB") is False and clock[0] > ads.AD_START_S
+
+
+def test_reward_not_granted_after_skip_is_still_an_error(clock):
+    """保底：就算把没放广告的情况错认成奖励到手了，各项目之后照旧自己核对：录音室的奖励没弹出来就关掉 SKIP 弹窗、报错，
+    不会记成做过了。"""
+    game = AdGame(clock, state="studio_skip", plan=[None])
+    game.band = "mygo"
+    nav = ad_nav(game, clock)
+    nav._watch_ad = lambda window, what, got=None: True  # 假装认成了奖励到手
+    nav._watch_or_fail(GAME, "录音室练习SKIP", "「广告」", nav._studio_close_skip, studio_ad_got)
+    with pytest.raises(daily.NavigationError, match="没有拿到练习奖励"):
+        nav._studio_done("录音室练习SKIP")
+    assert (game.studio, game.state, game.backs) == (1, "studio_detail", [])
