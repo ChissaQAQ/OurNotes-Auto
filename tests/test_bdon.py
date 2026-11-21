@@ -500,7 +500,9 @@ def test_outdated_manifest(tmp_path, sleeps, caplog):
         when = time.time() - manifest_age_s
         os.utime(path, (when, when))
         (cache / f"assets/{sha(old)}.json").write_bytes(old)
-        put_index(cache, [{k: v for k, v in {**ENTRY, "bytes": listed}.items() if v is not None}])
+        # 列表记成 1 秒前下载的：os.utime 写的是 time.time()（高精度时钟），之后重新下载的清单由系统记修改时刻
+        # （粗粒度时钟，最多落后一个节拍，十几毫秒），列表记成「现在」的话，后写的清单有时反而显得更早
+        put_index(cache, [{k: v for k, v in {**ENTRY, "bytes": listed}.items() if v is not None}], age_s=1.0)
         return cache
 
     caplog.set_level(logging.INFO, logger=bdon.logger.name)

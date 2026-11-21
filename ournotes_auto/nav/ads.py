@@ -8,6 +8,9 @@
     点了之后 AD_START_S 一直没放出来的也一样算没要到。
   - 别的项目做完后隔一阵把没要到的再做一遍（AD_RETRY_WAITS_S）。还是没要到的记为出错，并记进存档
     （``state.json`` 的 ``ads_pending``，只在当天有效）：之后的挂机隔一阵再试（AD_LATER_GAPS_S，见 :meth:`AdsMixin.retry_ads`）。
+- 游戏里开通了跳过广告的权益（通行证等，#146）：点了「观看」不放广告、奖励直接到手，前台一直是游戏。等广告出现的同时
+  也看画面：连续几帧都是奖励到手的画面（``lb_ad_got`` 等）就当成广告已经关掉，照常往下走，不干等 AD_START_S 再报错。
+  只有恢复 LB 的在玩家的日志里见过，另外两项是按「广告关掉之后本来就等的画面」推的。
 - 广告是另一个界面（AdMob 的 AdActivity），画面认不出，只看两样：经 adb 读到的获得焦点的窗口，和画面顶部提示条的文字
   （文字随模拟器的系统语言，只实测过简体中文）。
   - 提示条：「N 秒后可得奖励」（连播时前面还有「第 2 个广告，共 3 个 ·」）→「奖励已发放」；连播时倒计时走完可能只剩一个 ✕。
@@ -60,12 +63,14 @@ from .daily import (
     cm_recruit_ok,
     page_title,
     practice_level_up,
+    recruit_gift_ok,
+    recruit_top,
     reward_ok,
     studio_skip_close,
     studio_skip_dialog,
 )
 from .jacket import crop_jacket
-from .screens import ARENA_BANDS, LB_TABS_ROI, OK_POPUP_ROI, Rect, Screen, center, find, in_roi
+from .screens import ARENA_BANDS, LB_TABS_ROI, OK_POPUP_ROI, Rect, Screen, center, classify, find, in_roi, skip_button
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +81,9 @@ AD_JOBS_MAX = {"recruit": CHORE_KINDS["ad_recruit"][1], "lb": CHORE_KINDS["ad_lb
 # ---- 广告播放画面
 AD_POLL_S = 2.0
 AD_START_S = 25.0  # 点了「观看」这么久广告还没出现，就算没放出来
+# 游戏里开通了跳过广告的权益（通行证等）时，点了「观看」不放广告、奖励直接到手，前台一直是游戏（#146）：
+# 连续这么多帧都是奖励到手的画面（各项目的 xxx_got）、每帧截完前台都还是游戏，才算奖励到手了
+AD_SKIPPED_FRAMES = 2
 # 游戏的提示「广告获取失败。请稍后再试。」（标题「错误」，只有 OK）：这次没要到广告，点掉 OK 后原来的弹窗还在
 AD_FAILED_TEXT = "广告获取失败"
 BTN_AD_FAILED_OK = (640, 570)
@@ -240,6 +248,24 @@ def lb_ad_watch(items: list[OcrItem]) -> OcrItem | None:
     if find(items, LB_AD_TEXT) is None:
         return None
     return find(items, "观看", LB_AD_WATCH_ROI, exact=True)
+
+
+# 奖励到手的画面：广告关掉之后各项目本来就等这些；有跳过广告的权益时点了「观看」不放广告、直接到这里（见 AD_SKIPPED_FRAMES）
+def lb_ad_got(items: list[OcrItem]) -> bool:
+    """「已恢复LIVE BOOST。」弹出来了（看广告恢复 LB 的奖励到手了）。"""
+    return classify(items) is Screen.LB_RECOVERED
+
+
+def studio_ad_got(items: list[OcrItem]) -> bool:
+    """「录音室练习奖励」（或者练习Lv 提升的 LEVEL UP）弹出来了（录音室练习 SKIP 的奖励到手了）。"""
+    return reward_ok(items) is not None or practice_level_up(items)
+
+
+def cm_recruit_got(items: list[OcrItem]) -> bool:
+    """观看 CM 招募已经在招募了：「确认招募」关掉了，画面上是招募演出（右上角 SKIP）、招募结算或「获得招募赠品」。"""
+    if cm_recruit_dialog(items):
+        return False
+    return skip_button(items) is not None or recruit_top(items) is not None or recruit_gift_ok(items) is not None
 
 
 def cm_banner(items: list[OcrItem]) -> tuple[int, int] | None:
@@ -519,9 +545,8 @@ class AdsMixin:
 
     # ------------------------------------------------------------ 看广告
 
-    def _ad_failed(self, game: str) -> bool:
-        """点了「观看」之后还在游戏里：弹出了「广告获取失败。请稍后再试。」就点掉 OK、返回 True。"""
-        items = self._ad_items()
+    def _ad_failed(self, game: str, items: list[OcrItem]) -> bool:
+        """点了「观看」之后还在游戏里：这一帧（``items``）上弹出了「广告获取失败。请稍后再试。」就点掉 OK、返回 True。"""
         if find(items, AD_FAILED_TEXT) is None:
             return False
         if self._front() != game:  # 截图之后广告正好弹出来了：广告里的东西不点
@@ -530,11 +555,11 @@ class AdsMixin:
         self._sleep(1.0)
         return True
 
-    def _watch_or_fail(self, game: str, name: str, tapped: str, close) -> None:
-        """点了 ``tapped`` 之后看广告（:meth:`_watch_ad`）。没要到广告时先 ``close()`` 关掉还开着的弹窗，
+    def _watch_or_fail(self, game: str, name: str, tapped: str, close, got) -> None:
+        """点了 ``tapped`` 之后看广告（:meth:`_watch_ad`，``got`` 见那里）。没要到广告时先 ``close()`` 关掉还开着的弹窗，
         再抛 :class:`AdUnavailable`。"""
         try:
-            if self._watch_ad(game, name):
+            if self._watch_ad(game, name, got):
                 return
             error = self._fail(f"{name}：点了{tapped}{AD_START_S:.0f}s 广告没有放出来", AdUnavailable)
         except AdUnavailable as e:
@@ -542,15 +567,19 @@ class AdsMixin:
         close()
         raise error
 
-    def _watch_ad(self, game: str, what: str) -> bool:
+    def _watch_ad(self, game: str, what: str, got=None) -> bool:
         """点了「观看」/ OK 之后：等广告出现、放到奖励到手，按返回键关掉，回到游戏（``game`` 是看之前的游戏界面）。
 
         广告 AD_START_S 内没出现返回 False（什么都没按）；游戏说「广告获取失败」时点掉 OK、抛 :class:`AdUnavailable`。
         AD_TIMEOUT_S 还没关掉时放弃这次奖励、想办法回到游戏再报错。
+
+        ``got(items)``：这一帧是奖励到手的画面。游戏里开通了跳过广告的权益时不放广告、奖励直接到手（#146）：
+        前台一直是游戏、连续 AD_SKIPPED_FRAMES 帧都是这个画面就返回 True，之后和广告关掉了一样处理。
         """
         package = game.split("/")[0]
         start = time.monotonic()
         ad: _AdWatch | None = None
+        got_frames = 0
         while True:
             now = time.monotonic()
             window = self._front()
@@ -558,14 +587,22 @@ class AdsMixin:
                 if ad is not None:
                     logger.info("%s：广告关掉了（放了 %.0f 秒）", what, now - ad.since)
                     return True
-                if self._ad_failed(game):
+                items = self._ad_items()
+                if self._ad_failed(game, items):
                     raise AdUnavailable(f"{what}：广告获取失败（游戏说请稍后再试，次数没用掉）")
-                if now - start > AD_START_S:
+                # 截图之后广告正好弹出来的话，这一帧是广告的画面（广告右上角也常有「跳过」）：前台还是游戏才算
+                got_frames = got_frames + 1 if got is not None and got(items) and self._front() == game else 0
+                if got_frames >= AD_SKIPPED_FRAMES:
+                    logger.info("%s：没有放广告，奖励直接到手了（游戏里开通了跳过广告？）", what)
+                    return True
+                if now - start > AD_START_S and not got_frames:
                     return False
             elif window is None:  # 读不到前台窗口：接着等，一直读不到就放弃
+                got_frames = 0
                 if now - start > AD_START_S + AD_TIMEOUT_S:
                     break
             else:
+                got_frames = 0
                 if ad is None:
                     ad = _AdWatch(game, now)
                     logger.info("%s：广告开始播放（等它放完，不点广告里的东西）", what)
@@ -670,7 +707,7 @@ class AdsMixin:
                 return
             logger.info("%s：%s", name, f"还剩 {left} 次" if left is not None else "开始")
             self.tap(center(watch), "观看")
-            self._watch_or_fail(game, name, "「观看」", self._lb_cancel)
+            self._watch_or_fail(game, name, "「观看」", self._lb_cancel, lb_ad_got)
             self._lb_ad_done(name)
             self._chore("ad_lb")
             self.go_home()
@@ -761,7 +798,7 @@ class AdsMixin:
             logger.info("%s：今天的次数用完了", name)
             return
         self.tap(center(button), "广告（SKIP）")
-        self._watch_or_fail(game, name, "「广告」", self._studio_close_skip)
+        self._watch_or_fail(game, name, "「广告」", self._studio_close_skip, studio_ad_got)
         self._studio_done(name)
         self._chore("ad_studio")
         logger.info("%s：已领取练习奖励", name)
@@ -973,7 +1010,7 @@ class AdsMixin:
             if ok is None:
                 raise self._fail(f"{name}：点了「{AD_RECRUIT_TEXT}」没有弹出确认招募")
             self.tap(center(ok), "OK（观看CM招募）")
-            self._watch_or_fail(game, name, " OK ", self._cm_cancel)
+            self._watch_or_fail(game, name, " OK ", self._cm_cancel, cm_recruit_got)
             shot = self._settle_recruit(what=name, stay_s=CM_STAY_S, tag=RECRUIT_SHOT_CM)
             self._chore("ad_recruit", shot)
             if shot is not None:

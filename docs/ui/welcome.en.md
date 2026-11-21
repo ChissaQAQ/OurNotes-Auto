@@ -1,3 +1,9 @@
+# What's New in v0.2.8.1
+
+- Watch Ads: when the game account has a perk that skips ads (a pass, for example), choosing to watch an ad plays no ad and grants the reward right away; previously the tool waited 25 seconds, reported that the ad did not show up, and treated the item as not obtained (#146). It now recognizes that the reward has already been granted and carries on. Recover LIVE BOOST follows the log in the report; CM gacha and Studio Practice SKIP have not been verified on a real device yet
+
+Full release notes: https://github.com/ChissaQAQ/OurNotes-Auto/releases/tag/v0.2.8.1
+
 # What's New in v0.2.8
 
 - New task "Quit Game" (#144): closes the game without closing the emulator. Put it at the end of the task list and the game is closed once the tasks before it have finished
